@@ -84,6 +84,11 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        externalNativeBuild {
+            cmake {
+                arguments "-DCMAKE_OBJECT_PATH_MAX=245"
+            }
+        }
     }
     signingConfigs {
         debug {
@@ -105,6 +110,11 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+    externalNativeBuild {
+        cmake {
+            buildStagingDirectory = file("D:/b/cxx")
+        }
+    }
 }
 
 dependencies {
@@ -117,3 +127,4 @@ dependencies {
         implementation jscFlavor
     }
 }
+apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"
