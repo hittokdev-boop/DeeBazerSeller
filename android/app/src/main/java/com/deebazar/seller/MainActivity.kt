@@ -1,4 +1,4 @@
-package com.deebazerseller
+package com.deebazar.seller
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

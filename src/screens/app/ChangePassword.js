@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -8,21 +8,22 @@ import {
   StyleSheet,
   SafeAreaView,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Modal,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
+import { updateSellerAccount } from "../../api/auth";
 
 const ChangePassword = ({ navigation }) => {
+  const { colors, isDarkMode } = useTheme();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [storedPassword, setStoredPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState({});
@@ -32,45 +33,58 @@ const ChangePassword = ({ navigation }) => {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  useEffect(() => {
-    const loadProfileData = async () => {
-      setIsLoading(true);
-      try {
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        if (storedProfile) {
-          const parsed = JSON.parse(storedProfile);
-          // Default fallback password is '123456' if none is stored during registration (mock accounts)
-          setStoredPassword(parsed.password || "123456");
-        } else {
-          setStoredPassword("123456");
-        }
-      } catch (err) {
-        console.log("Error loading password", err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Custom Alert State
+  const [alertConfig, setAlertConfig] = useState({
+    visible: false,
+    type: "success",
+    title: "",
+    message: "",
+    buttonText: "Okay",
+    onConfirm: null,
+  });
 
-    loadProfileData();
-  }, []);
+  const showAlert = ({
+    type = "success",
+    title = "",
+    message = "",
+    buttonText = "Okay",
+    onConfirm = null,
+  }) => {
+    setAlertConfig({
+      visible: true,
+      type,
+      title,
+      message,
+      buttonText,
+      onConfirm,
+    });
+  };
+
+  const hideAlert = () => {
+    const callback = alertConfig.onConfirm;
+    setAlertConfig((prev) => ({ ...prev, visible: false }));
+    if (callback) {
+      setTimeout(() => {
+        callback();
+      }, 200);
+    }
+  };
 
   const validate = () => {
     let tempErrors = {};
 
     if (!currentPassword) {
       tempErrors.currentPassword = "Current password is required";
-    } else if (currentPassword !== storedPassword) {
-      tempErrors.currentPassword = "Incorrect current password";
     }
 
-    if (!newPassword) {
-      tempErrors.newPassword = "New password is required";
-    } else if (newPassword.length < 6) {
-      tempErrors.newPassword = "Password must be at least 6 characters";
+    if (!newPassword || newPassword.length < 6) {
+      tempErrors.newPassword = "New password must be at least 6 characters";
+    } else if (newPassword === currentPassword) {
+      tempErrors.newPassword = "New password must be different from current password";
     }
 
     if (!confirmPassword) {
-      tempErrors.confirmPassword = "Please confirm your new password";
+      tempErrors.confirmPassword = "Confirmation password is required";
     } else if (confirmPassword !== newPassword) {
       tempErrors.confirmPassword = "Passwords do not match";
     }
@@ -84,23 +98,34 @@ const ChangePassword = ({ navigation }) => {
 
     setIsSaving(true);
     try {
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
-      const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-
-      const updatedProfile = {
-        ...currentProfile,
+      const response = await updateSellerAccount({
+        current_password: currentPassword,
         password: newPassword,
-      };
+        password_confirmation: confirmPassword,
+      });
 
-      await AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile));
-      setStoredPassword(newPassword);
-
-      Alert.alert("Success", "Password updated successfully!", [
-        { text: "OK", onPress: () => navigation.goBack() }
-      ]);
+      showAlert({
+        type: "success",
+        title: "Password Changed!",
+        message: response?.message || "Your account password has been changed successfully.",
+        buttonText: "Done",
+        onConfirm: () => navigation.goBack(),
+      });
     } catch (err) {
-      console.log("Error updating password", err);
-      Alert.alert("Error", "Failed to update password.");
+      console.log("Error saving password", err);
+      if (err?.data?.errors) {
+        const fieldErrors = {};
+        if (err.data.errors.current_password) fieldErrors.currentPassword = err.data.errors.current_password[0];
+        if (err.data.errors.password) fieldErrors.newPassword = err.data.errors.password[0];
+        if (err.data.errors.password_confirmation) fieldErrors.confirmPassword = err.data.errors.password_confirmation[0];
+        setErrors(fieldErrors);
+      }
+      showAlert({
+        type: "error",
+        title: "Update Failed",
+        message: err.message || "Failed to update password. Please check your inputs.",
+        buttonText: "Try Again",
+      });
     } finally {
       setIsSaving(false);
     }
@@ -108,28 +133,28 @@ const ChangePassword = ({ navigation }) => {
 
   if (isLoading) {
     return (
-      <View style={styles.loaderContainer}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
+      <View style={[styles.loaderContainer, { backgroundColor: colors.backgroundAlt }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
+        style={styles.keyboardContainer}
       >
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.cardBg, borderBottomColor: colors.borderLight }]}>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => navigation.goBack()}
           >
-            <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Change Password</Text>
-          <View style={{ width: 40 }} />
+          <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Change Password</Text>
+          <View style={styles.headerSpacer} />
         </View>
 
         <ScrollView
@@ -273,24 +298,107 @@ const ChangePassword = ({ navigation }) => {
         </ScrollView>
 
         {/* Save Button */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { backgroundColor: colors.cardBg, borderTopColor: colors.borderLight }]}>
           <TouchableOpacity
-            style={styles.saveBtn}
+            style={[styles.saveBtn, { backgroundColor: colors.primary }]}
             activeOpacity={0.9}
             onPress={handleSave}
             disabled={isSaving}
           >
             {isSaving ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={COLORS.textContrast} />
             ) : (
               <>
-                <Ionicons name="shield-checkmark-outline" size={20} color="#fff" style={{ marginRight: 6 }} />
+                <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.textContrast} style={styles.btnIconMarginRight6} />
                 <Text style={styles.saveBtnText}>Update Password</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Custom Alert Modal */}
+      <Modal
+        visible={alertConfig.visible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={hideAlert}
+      >
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.alertCard,
+              {
+                backgroundColor: colors.cardBg,
+                borderColor: isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.06)",
+              },
+            ]}
+          >
+            {/* Animated Badge Icon */}
+            <View
+              style={[
+                styles.alertIconWrapper,
+                alertConfig.type === "success"
+                  ? styles.alertIconWrapperSuccess
+                  : styles.alertIconWrapperError,
+              ]}
+            >
+              <View
+                style={[
+                  styles.alertIconInner,
+                  alertConfig.type === "success"
+                    ? styles.alertIconInnerSuccess
+                    : styles.alertIconInnerError,
+                ]}
+              >
+                <Ionicons
+                  name={
+                    alertConfig.type === "success"
+                      ? "checkmark"
+                      : alertConfig.type === "error"
+                      ? "alert"
+                      : "information"
+                  }
+                  size={26}
+                  color="#FFFFFF"
+                />
+              </View>
+            </View>
+
+            <Text style={[styles.alertTitle, { color: colors.textPrimary }]}>
+              {alertConfig.title}
+            </Text>
+
+            <Text style={[styles.alertMessage, { color: colors.textSecondary }]}>
+              {alertConfig.message}
+            </Text>
+
+            {/* Action Button */}
+            <TouchableOpacity
+              style={[
+                styles.alertBtn,
+                alertConfig.type === "success"
+                  ? { backgroundColor: colors.primary }
+                  : { backgroundColor: "#EF4444" },
+              ]}
+              activeOpacity={0.88}
+              onPress={hideAlert}
+            >
+              <Text style={styles.alertBtnText}>{alertConfig.buttonText || "Okay"}</Text>
+              <Ionicons
+                name={
+                  alertConfig.type === "success"
+                    ? "arrow-forward"
+                    : "refresh-outline"
+                }
+                size={18}
+                color="#FFFFFF"
+                style={styles.alertBtnIcon}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -301,7 +409,10 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.backgroundAlt,
-    paddingTop: (Platform.OS === "android" ? StatusBar.currentHeight : 0) + 15,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 20,
+  },
+  keyboardContainer: {
+    flex: 1,
   },
   loaderContainer: {
     flex: 1,
@@ -330,6 +441,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: COLORS.textPrimary,
+  },
+  headerSpacer: {
+    width: 40,
   },
   scrollView: {
     flex: 1,
@@ -431,9 +545,90 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 4,
   },
+  btnIconMarginRight6: {
+    marginRight: 6,
+  },
   saveBtnText: {
-    color: "#fff",
+    color: COLORS.textContrast,
     fontSize: 16,
     fontWeight: "700",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  alertCard: {
+    width: "100%",
+    maxWidth: 330,
+    borderRadius: 24,
+    paddingVertical: 26,
+    paddingHorizontal: 22,
+    alignItems: "center",
+    borderWidth: 1,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+  },
+  alertIconWrapper: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  alertIconWrapperSuccess: {
+    backgroundColor: "rgba(34, 197, 94, 0.15)",
+  },
+  alertIconWrapperError: {
+    backgroundColor: "rgba(239, 68, 68, 0.15)",
+  },
+  alertIconInner: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  alertIconInnerSuccess: {
+    backgroundColor: "#10B981",
+  },
+  alertIconInnerError: {
+    backgroundColor: "#EF4444",
+  },
+  alertTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  alertMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+    marginBottom: 24,
+    paddingHorizontal: 6,
+  },
+  alertBtn: {
+    width: "100%",
+    height: 48,
+    borderRadius: 14,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  alertBtnText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  alertBtnIcon: {
+    marginLeft: 6,
   },
 });

@@ -7,16 +7,18 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
-  Alert,
+  Modal,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
   StatusBar,
+  DeviceEventEmitter,
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
+import { BASE_URL } from "../../api/auth";
 
 const Login = ({ navigation }) => {
   const [email, setEmail] = useState("");
@@ -26,6 +28,32 @@ const Login = ({ navigation }) => {
   const [errors, setErrors] = useState({});
   const [activeField, setActiveField] = useState(null);
 
+  // Custom alert configuration state
+  const [alertConfig, setAlertConfig] = useState({
+    visible: false,
+    title: "",
+    message: "",
+    type: "success", // success, warning, error
+    onPress: null
+  });
+
+  const showAlert = (title, message, type = "success", onPress = null) => {
+    setAlertConfig({
+      visible: true,
+      title,
+      message,
+      type,
+      onPress
+    });
+  };
+
+  const hideAlert = () => {
+    setAlertConfig(prev => ({ ...prev, visible: false }));
+    if (alertConfig.onPress) {
+      alertConfig.onPress();
+    }
+  };
+
   const validate = () => {
     let tempErrors = {};
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -33,7 +61,7 @@ const Login = ({ navigation }) => {
     if (!email.trim()) {
       tempErrors.email = "Email is required";
     } else if (!emailRegex.test(email.trim())) {
-      tempErrors.email = "Please enter a valid email";
+      tempErrors.email = "Please enter a valid email address";
     }
 
     if (!password) {
@@ -51,58 +79,63 @@ const Login = ({ navigation }) => {
 
     setIsLoading(true);
     try {
-      // Simulate network request
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      const storedProfileStr = await AsyncStorage.getItem("sellerProfile");
-      let profile = null;
-
-      if (storedProfileStr) {
-        profile = JSON.parse(storedProfileStr);
-      }
-
-      // Check credentials:
-      // If a profile exists, check if email matches.
-      // If no profile exists, create a default mock profile.
-      if (profile) {
-        if (profile.email.toLowerCase() === email.trim().toLowerCase()) {
-          // Successfully logged in
-          await AsyncStorage.setItem("isLoggedIn", "true");
-          navigation.replace("SellerTabs");
-        } else {
-          Alert.alert(
-            "Account Not Found",
-            "We couldn't find a seller registered with this email. Do you want to register a new account?",
-            [
-              { text: "Try Again", style: "cancel" },
-              { text: "Register", onPress: () => navigation.navigate("SellerRegistration") }
-            ]
-          );
-        }
-      } else {
-        // Fallback testing account
-        const mockProfile = {
-          ownerName: "Hittok Owner",
+      const response = await fetch(`${BASE_URL}login`, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
           email: email.trim().toLowerCase(),
-          phone: "9876543210",
-          storeName: "Hittok Store",
-          category: "Electronics & Gadgets",
-          address: "123 DeeBazar Hub, Sector 5, Kolkata",
-          description: "Premium electronics and smart devices store on DeeBazar.",
-          bankName: "State Bank of India",
-          accountNo: "123456789012",
-          ifscCode: "SBIN0000123",
-          logoUri: "",
-          registeredAt: new Date().toISOString(),
-        };
+          password: password,
+        }),
+      });
 
-        await AsyncStorage.setItem("isRegistered", "true");
-        await AsyncStorage.setItem("isLoggedIn", "true");
-        await AsyncStorage.setItem("sellerProfile", JSON.stringify(mockProfile));
-        navigation.replace("SellerTabs");
+      const responseText = await response.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+        console.log("responseData", responseData);
+      } catch (e) {
+        throw new Error(`Server returned invalid response: ${responseText}`);
       }
+
+      if (!response.ok) {
+        const error = new Error(responseData.message || "Login failed");
+        error.errors = responseData.errors;
+        throw error;
+      }
+
+      // Check status of account
+      const sellerStatus = responseData.seller_status;
+      if (sellerStatus !== "approved") {
+        showAlert(
+          "Account Pending",
+          "Your account is currently under verification. Please wait for administrator approval.",
+          "warning"
+        );
+        return;
+      }
+
+      // Save token and profile
+      await AsyncStorage.setItem("isLoggedIn", "true");
+      if (responseData.token) {
+        await AsyncStorage.setItem("token", responseData.token);
+        console.log("Logged In Token:", responseData.token);
+      }
+      const profile = responseData.data || responseData.user || {};
+      await AsyncStorage.setItem("sellerProfile", JSON.stringify(profile));
+
+      showAlert("Success", responseData.message || "Login successful!", "success", () => {
+        DeviceEventEmitter.emit("authStateChanged", responseData.token);
+      });
     } catch (e) {
-      Alert.alert("Login Error", "Something went wrong. Please check connection.");
+      if (e.errors) {
+        const errorList = Object.values(e.errors).flat().join("\n");
+        showAlert("Validation Error", errorList || e.message, "error");
+      } else {
+        showAlert("Login Error", e.message || "Something went wrong. Please try again.", "error");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -113,11 +146,11 @@ const Login = ({ navigation }) => {
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
+        style={styles.keyboardContainer}
       >
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ flexGrow: 1 }}
+          contentContainerStyle={styles.scrollContent}
         >
           {/* Top Banner section */}
           <LinearGradient
@@ -231,7 +264,7 @@ const Login = ({ navigation }) => {
                   ) : (
                     <>
                       <Text style={styles.loginBtnText}>Log In</Text>
-                      <Ionicons name="log-in-outline" size={20} color={COLORS.textContrast} style={{ marginLeft: 6 }} />
+                      <Ionicons name="log-in-outline" size={20} color={COLORS.textContrast} style={styles.logInIcon} />
                     </>
                   )}
                 </LinearGradient>
@@ -248,6 +281,57 @@ const Login = ({ navigation }) => {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Beautiful Custom Alert Modal */}
+      <Modal
+        visible={alertConfig.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={hideAlert}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={styles.alertBox}>
+            <View style={[
+              styles.alertIconBg,
+              alertConfig.type === "success" && styles.successIconBg,
+              alertConfig.type === "warning" && styles.warningIconBg,
+              alertConfig.type === "error" && styles.errorIconBg,
+            ]}>
+              <Ionicons
+                name={
+                  alertConfig.type === "success"
+                    ? "checkmark-circle"
+                    : alertConfig.type === "warning"
+                    ? "alert-circle"
+                    : "close-circle"
+                }
+                size={40}
+                color={
+                  alertConfig.type === "success"
+                    ? "#2e7d32"
+                    : alertConfig.type === "warning"
+                    ? "#f57c00"
+                    : "#d32f2f"
+                }
+              />
+            </View>
+            <Text style={styles.alertTitle}>{alertConfig.title}</Text>
+            <Text style={styles.alertMessage}>{alertConfig.message}</Text>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={[
+                styles.alertBtn,
+                alertConfig.type === "success" && styles.successAlertBtn,
+                alertConfig.type === "warning" && styles.warningAlertBtn,
+                alertConfig.type === "error" && styles.errorAlertBtn,
+              ]}
+              onPress={hideAlert}
+            >
+              <Text style={styles.alertBtnText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -258,6 +342,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  keyboardContainer: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
   headerBanner: {
     height: 250,
@@ -392,6 +482,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
   },
+  logInIcon: {
+    marginLeft: 6,
+  },
   loginBtnText: {
     color: COLORS.textContrast,
     fontSize: 16,
@@ -411,6 +504,78 @@ const styles = StyleSheet.create({
   registerLink: {
     fontSize: 14,
     color: COLORS.primary,
+    fontWeight: "700",
+  },
+  alertOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  alertBox: {
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 24,
+    padding: 24,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 320,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  alertIconBg: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  successIconBg: {
+    backgroundColor: "#e8f5e9",
+  },
+  warningIconBg: {
+    backgroundColor: "#fff3e0",
+  },
+  errorIconBg: {
+    backgroundColor: "#ffebee",
+  },
+  alertTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  alertMessage: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  alertBtn: {
+    width: "100%",
+    height: 48,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  successAlertBtn: {
+    backgroundColor: "#2e7d32",
+  },
+  warningAlertBtn: {
+    backgroundColor: "#f57c00",
+  },
+  errorAlertBtn: {
+    backgroundColor: "#d32f2f",
+  },
+  alertBtnText: {
+    color: COLORS.textContrast,
+    fontSize: 15,
     fontWeight: "700",
   },
 });

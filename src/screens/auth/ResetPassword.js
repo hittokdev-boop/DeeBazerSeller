@@ -53,7 +53,6 @@ const ResetPassword = ({ route, navigation }) => {
       const storedProfile = await AsyncStorage.getItem("sellerProfile");
       let currentProfile = storedProfile ? JSON.parse(storedProfile) : null;
 
-      // If no profile exists (for fallback/testing), initialize one
       if (!currentProfile) {
         currentProfile = {
           ownerName: "Hittok Owner",
@@ -104,7 +103,7 @@ const ResetPassword = ({ route, navigation }) => {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
+        style={styles.keyboardContainer}
       >
         {/* Header */}
         <View style={styles.header}>
@@ -115,7 +114,7 @@ const ResetPassword = ({ route, navigation }) => {
             <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Reset Password</Text>
-          <View style={{ width: 40 }} />
+          <View style={styles.headerSpacer} />
         </View>
 
         <ScrollView
@@ -164,7 +163,6 @@ const ResetPassword = ({ route, navigation }) => {
                     }}
                     onFocus={() => setActiveField("newPassword")}
                     onBlur={() => setActiveField(null)}
-                    paddingVertical={0}
                   />
                   <TouchableOpacity
                     onPress={() => setShowNew(!showNew)}
@@ -203,7 +201,6 @@ const ResetPassword = ({ route, navigation }) => {
                     }}
                     onFocus={() => setActiveField("confirmPassword")}
                     onBlur={() => setActiveField(null)}
-                    paddingVertical={0}
                   />
                   <TouchableOpacity
                     onPress={() => setShowConfirm(!showConfirm)}
@@ -226,10 +223,10 @@ const ResetPassword = ({ route, navigation }) => {
                 disabled={isLoading}
               >
                 {isLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={COLORS.textContrast} />
                 ) : (
                   <>
-                    <Ionicons name="checkmark-circle-outline" size={20} color="#fff" style={{ marginRight: 6 }} />
+                    <Ionicons name="checkmark-circle-outline" size={20} color={COLORS.textContrast} style={styles.btnIcon} />
                     <Text style={styles.actionBtnText}>Reset Password</Text>
                   </>
                 )}
@@ -249,6 +246,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.backgroundAlt,
     paddingTop: (Platform.OS === "android" ? StatusBar.currentHeight : 0) + 15,
+  },
+  keyboardContainer: {
+    flex: 1,
   },
   header: {
     height: 56,
@@ -271,6 +271,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: COLORS.textPrimary,
+  },
+  headerSpacer: {
+    width: 40,
   },
   scrollView: {
     flex: 1,
@@ -389,8 +392,11 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     marginTop: 10,
   },
+  btnIcon: {
+    marginRight: 6,
+  },
   actionBtnText: {
-    color: "#fff",
+    color: COLORS.textContrast,
     fontSize: 16,
     fontWeight: "700",
   },

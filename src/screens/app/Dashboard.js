@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from "react";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import {
   View,
@@ -7,1932 +7,1207 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
+  ScrollView,
+  Platform,
+  StatusBar,
+  RefreshControl,
+  ActivityIndicator,
+  DeviceEventEmitter,
 } from "react-native";
-import { ScrollView } from 'react-native';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
+import { getSellerDashboard, getSellerProfile } from "../../api/auth";
 
-const MOCK_DASHBOARD_ORDERS = [
-  { id: "ORD1011", customerName: "Rahul Sharma", price: 1100, status: "Delivered", image: "https://i.pravatar.cc/150?img=21" },
-  { id: "ORD1012", customerName: "Priya Patel", price: 1650, status: "Pending", image: "https://i.pravatar.cc/150?img=22" },
-  { id: "ORD1013", customerName: "Amit Sen", price: 2200, status: "Delivered", image: "https://i.pravatar.cc/150?img=23" },
-  { id: "ORD1014", customerName: "Sneha Reddy", price: 2750, status: "Pending", image: "https://i.pravatar.cc/150?img=24" },
-];
+const formatCurrency = (amount) => {
+  if (amount === undefined || amount === null || isNaN(Number(amount))) return "₹0.00";
+  return `₹${Number(amount).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
+const formatDate = (dateString) => {
+  if (!dateString) return "";
+  try {
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return dateString;
+    return d.toLocaleDateString("en-IN", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch (e) {
+    return dateString;
+  }
+};
+
+const getStatusBadgeStyle = (statusOrItem) => {
+  let s = "";
+  if (typeof statusOrItem === "object" && statusOrItem !== null) {
+    const approval = (statusOrItem.approval_status || "").toLowerCase();
+    const status = (statusOrItem.status || "").toLowerCase();
+    if (approval === "rejected" || status === "rejected") s = "rejected";
+    else if (approval === "approved" || status === "approved") s = "approved";
+    else if (approval === "pending" || status === "pending") s = "pending";
+    else s = approval || status;
+  } else {
+    s = (statusOrItem || "").toLowerCase();
+  }
+
+  if (s === "delivered" || s === "approved" || s === "active") {
+    return { bg: COLORS.successBgLight, text: COLORS.success, label: s === "approved" ? "Approved" : s };
+  }
+  if (s === "pending") {
+    return { bg: COLORS.warningBgLight, text: COLORS.warning, label: "Pending" };
+  }
+  if (s === "processing" || s === "shipped") {
+    return { bg: COLORS.primaryBgLight, text: COLORS.primary, label: s };
+  }
+  if (s === "cancelled" || s === "rejected") {
+    return { bg: COLORS.errorBgLight, text: COLORS.error, label: s };
+  }
+  return { bg: COLORS.backgroundAlt, text: COLORS.textSecondary, label: s || "Draft" };
+};
 
 const SellerDashboard = ({ navigation }) => {
+  const { colors, isDark } = useTheme();
   const [profile, setProfile] = useState(null);
-  const [orders, setOrders] = useState(MOCK_DASHBOARD_ORDERS);
+  const [stats, setStats] = useState({
+    total_products: 0,
+    approved_products: 0,
+    pending_products: 0,
+    rejected_products: 0,
+    total_orders: 0,
+    pending_orders: 0,
+    processing_orders: 0,
+    shipped_orders: 0,
+    delivered_orders: 0,
+    cancelled_orders: 0,
+    total_earnings: 0,
+    wallet_balance: 0,
+    pending_balance: 0,
+  });
+  const [recentOrders, setRecentOrders] = useState([]);
+  const [recentProducts, setRecentProducts] = useState([]);
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
-  useEffect(() => {
-    const loadProfile = async () => {
+  const loadDashboardData = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+    setFetchError(null);
+
+    try {
+      // 1. Load stored profile if available
       try {
         const storedProfile = await AsyncStorage.getItem("sellerProfile");
         if (storedProfile) {
           setProfile(JSON.parse(storedProfile));
         }
       } catch (e) {
-        console.log("Error loading profile on dashboard", e);
+        console.log("Error loading cached profile:", e);
       }
-    };
-    loadProfile();
+
+      // 2. Fetch live dashboard data from API
+      const res = await getSellerDashboard();
+      if (res && res.data) {
+        if (res.data.stats) {
+          setStats(res.data.stats);
+        }
+        if (Array.isArray(res.data.recent_orders)) {
+          setRecentOrders(res.data.recent_orders);
+        }
+        if (Array.isArray(res.data.recent_products)) {
+          setRecentProducts(res.data.recent_products);
+        }
+      }
+
+      // 3. Try to refresh profile in background if needed
+      try {
+        const profileRes = await getSellerProfile();
+        if (profileRes && profileRes.data) {
+          const profileData = profileRes.data.seller || profileRes.data;
+          setProfile(profileData);
+          await AsyncStorage.setItem("sellerProfile", JSON.stringify(profileData));
+        }
+      } catch (pErr) {
+        // Non-blocking profile refresh
+      }
+    } catch (err) {
+      console.error("Failed to load dashboard data:", err);
+      
+      // Auto-logout if session expired / unauthenticated
+      if (err?.status === 401 || (err?.message && err.message.toLowerCase().includes("unauthenticated"))) {
+        AsyncStorage.multiRemove([
+          "token",
+          "isLoggedIn",
+          "sellerProfile",
+          "userData",
+          "sellerData",
+          "isRegistered",
+        ]).then(() => {
+          DeviceEventEmitter.emit("authStateChanged", null);
+        });
+        return;
+      }
+      
+      setFetchError(err?.message || "Failed to load dashboard data");
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  // Filter Orders
-  const filteredOrders = orders.filter((order) => {
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
+
+  const onRefresh = () => {
+    loadDashboardData(true);
+  };
+
+  const filteredOrders = recentOrders.filter((order) => {
+    const query = searchQuery.trim().toLowerCase();
+    const orderNum = (order.order_number || String(order.id) || "").toLowerCase();
+    const custName = (order.customer?.name || "").toLowerCase();
+    const custMobile = (order.customer?.mobile || "").toLowerCase();
+
     const matchesSearch =
-      order.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.id.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "All" || order.status === statusFilter;
+      query === "" ||
+      orderNum.includes(query) ||
+      custName.includes(query) ||
+      custMobile.includes(query);
+
+    const matchesStatus =
+      statusFilter === "All" ||
+      (order.status || "").toLowerCase() === statusFilter.toLowerCase();
+
     return matchesSearch && matchesStatus;
   });
 
   return (
-   <ScrollView
-  showsVerticalScrollIndicator={false}
-  contentContainerStyle={{
-    paddingBottom: 50,
-  }}>
-      <View style={styles.headerContainer}>
-  {/* Top Row */}
-  <View style={styles.headerTop}>
-    <View style={styles.leftSection}>
-      <Text style={styles.welcomeText}>Welcome Back 👋</Text>
-      <Text style={styles.sellerName}>{profile?.storeName || "Hittok Store"}</Text>
-    </View>
-
-    <View style={styles.rightSection}>
-      <TouchableOpacity style={styles.iconBtn}>
-        <Ionicons
-          name="notifications-outline"
-          size={24}
-          color="#222"
-        />
-
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>3</Text>
-        </View>
-      </TouchableOpacity>
-
-      <TouchableOpacity 
-        style={styles.profileBtn}
-        onPress={() => navigation.navigate("Account")}
-      >
-        <Image
-          source={{
-            uri: profile?.logoUri || "https://i.pravatar.cc/150?img=12",
-          }}
-          style={styles.profileImage}
-        />
-      </TouchableOpacity>
-    </View>
-  </View>
-
-  {/* Search Bar */}
-  <View style={styles.searchContainer}>
-    <Ionicons
-      name="search-outline"
-      size={22}
-      color="#888"
-    />
-    <TextInput
-      placeholder="Search Recent Orders..."
-      placeholderTextColor="#888"
-      value={searchQuery}
-      onChangeText={setSearchQuery}
-      style={styles.searchInput}
-    />
-    {searchQuery !== "" && (
-      <TouchableOpacity onPress={() => setSearchQuery("")}>
-        <Ionicons name="close-circle" size={18} color="#aaa" style={{ marginRight: 6 }} />
-      </TouchableOpacity>
-    )}
-    <Ionicons
-      name="options-outline"
-      size={20}
-      color="#555"
-    />
-  </View>
-
-  {/* Status Filter Chips */}
-  <View style={{ height: 38, marginTop: 12 }}>
     <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: 4 }}
+      showsVerticalScrollIndicator={false}
+      style={{ backgroundColor: colors.background }}
+      contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.background }]}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          colors={[COLORS.primary]}
+          tintColor={COLORS.primary}
+        />
+      }
     >
-      {["All", "Pending", "Delivered"].map((status) => {
-        const isSelected = statusFilter === status;
-        return (
-          <TouchableOpacity
-            key={status}
-            onPress={() => setStatusFilter(status)}
-            style={[
-              styles.chip,
-              isSelected && styles.chipActive,
-            ]}
-          >
-            <Text
-              style={[
-                styles.chipText,
-                isSelected && styles.chipTextActive,
-              ]}
-            >
-              {status}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </ScrollView>
-  </View>
-      </View>
-
-        <View style={styles.overviewContainer}>
-
-  <View style={styles.cardRow}>
-
-    {/* Total Sales */}
-    <TouchableOpacity activeOpacity={0.9} style={styles.overviewCard}>
-      <View style={[styles.iconCircle, { backgroundColor: "#E8F7EF" }]}>
-        <Ionicons
-          name="cash-outline"
-          size={24}
-          color="#17A34A"
-        />
-      </View>
-
-      <Text style={styles.cardTitle}>Total Sales</Text>
-
-      <Text style={styles.cardValue}>₹1,28,540</Text>
-
-      <View style={styles.growthRow}>
-        <Ionicons
-          name="trending-up"
-          color="#16A34A"
-          size={15}
-        />
-        <Text style={styles.growthText}>+12.5%</Text>
-      </View>
-    </TouchableOpacity>
-
-    {/* Orders */}
-    <TouchableOpacity activeOpacity={0.9} style={styles.overviewCard}>
-      <View style={[styles.iconCircle, { backgroundColor: "#EEF4FF" }]}>
-        <Ionicons
-          name="cube-outline"
-          size={24}
-          color="#3B82F6"
-        />
-      </View>
-
-      <Text style={styles.cardTitle}>Orders</Text>
-
-      <Text style={styles.cardValue}>1,258</Text>
-
-      <View style={styles.growthRow}>
-        <Ionicons
-          name="trending-up"
-          color="#16A34A"
-          size={15}
-        />
-        <Text style={styles.growthText}>+8.2%</Text>
-      </View>
-    </TouchableOpacity>
-
-  </View>
-
-  <View style={styles.cardRow}>
-
-    {/* Products */}
-    <TouchableOpacity activeOpacity={0.9} style={styles.overviewCard}>
-      <View style={[styles.iconCircle, { backgroundColor: "#FFF7E8" }]}>
-        <Ionicons
-          name="bag-handle-outline"
-          size={24}
-          color="#F59E0B"
-        />
-      </View>
-
-      <Text style={styles.cardTitle}>Products</Text>
-
-      <Text style={styles.cardValue}>326</Text>
-
-      <View style={styles.growthRow}>
-        <Ionicons
-          name="add-circle-outline"
-          color="#F59E0B"
-          size={15}
-        />
-        <Text style={[styles.growthText, { color: "#F59E0B" }]}>
-          12 New
-        </Text>
-      </View>
-    </TouchableOpacity>
-
-    {/* Earnings */}
-    <TouchableOpacity activeOpacity={0.9} style={styles.overviewCard}>
-      <View style={[styles.iconCircle, { backgroundColor: "#F3ECFF" }]}>
-        <Ionicons
-          name="wallet-outline"
-          size={24}
-          color="#8B5CF6"
-        />
-      </View>
-
-      <Text style={styles.cardTitle}>Earnings</Text>
-
-      <Text style={styles.cardValue}>₹45,820</Text>
-
-      <View style={styles.growthRow}>
-        <Ionicons
-          name="trending-up"
-          color="#16A34A"
-          size={15}
-        />
-        <Text style={styles.growthText}>+18%</Text>
-      </View>
-    </TouchableOpacity>
-
-  </View>
-
-         </View>
-           
-      <View style={styles.orderSection}>
-
-  <View style={styles.sectionHeader}>
-    <Text style={styles.sectionTitle}>Recent Orders</Text>
-
-    <TouchableOpacity onPress={() => navigation.navigate("Orders")}>
-      <Text style={styles.seeAll}>See All</Text>
-    </TouchableOpacity>
-  </View>
-
-  {filteredOrders.length === 0 ? (
-    <View style={styles.emptyContainer}>
-      <Ionicons name="receipt-outline" size={40} color="#ccc" style={{ marginBottom: 10 }} />
-      <Text style={styles.emptyText}>No matching orders found</Text>
-    </View>
-  ) : (
-    filteredOrders.map((item) => (
-      <TouchableOpacity
-        activeOpacity={0.9}
-        key={item.id}
-        onPress={() => navigation.navigate("Orders")}
-        style={styles.orderCard}
+      {/* Header Bar */}
+      <View
+        style={[
+          styles.headerContainer,
+          {
+            backgroundColor: colors.cardBg,
+            borderBottomColor: colors.borderLight,
+          },
+        ]}
       >
-        <Image
-          source={{
-            uri: item.image,
-          }}
-          style={styles.customerImage}
-        />
-
-        <View style={styles.orderInfo}>
-          <View style={styles.orderTop}>
-            <View>
-              <Text style={styles.orderId}>
-                #{item.id}
-              </Text>
-              <Text style={styles.customerName}>
-                {item.customerName}
-              </Text>
-            </View>
-
-            <Text style={styles.orderPrice}>
-              ₹{item.price}
+        <View style={styles.headerTop}>
+          <View style={styles.leftSection}>
+            <Text style={[styles.welcomeText, { color: colors.textSecondary }]}>Welcome Back 👋</Text>
+            <Text style={[styles.sellerName, { color: colors.textPrimary }]} numberOfLines={1}>
+              {profile?.store_name || profile?.storeName || profile?.name || "My Store"}
             </Text>
           </View>
 
-          <View style={styles.orderBottom}>
-            <View style={styles.statusRow}>
-              <View style={styles.paymentBadge}>
-                <Text style={styles.paymentText}>
-                  Paid
-                </Text>
-              </View>
+          <View style={styles.rightSection}>
+            <TouchableOpacity
+              style={[styles.iconBtn, { backgroundColor: colors.backgroundAlt }]}
+              onPress={() => navigation.navigate("Orders")}
+            >
+              <Ionicons
+                name="notifications-outline"
+                size={22}
+                color={colors.textPrimary}
+              />
+              {stats.pending_orders > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>
+                    {stats.pending_orders > 9 ? "9+" : stats.pending_orders}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
 
-              <View
-                style={[
-                  styles.deliveryBadge,
-                  {
-                    backgroundColor:
-                      item.status === "Delivered"
-                        ? "#E8F7EF"
-                        : "#FFF4E5",
-                  },
-                ]}
-              >
-                <Text
+            <TouchableOpacity
+              style={styles.profileBtn}
+              onPress={() => navigation.navigate("Account")}
+            >
+              <Image
+                source={{
+                  uri:
+                    profile?.logo ||
+                    profile?.logoUri ||
+                    profile?.logo_url ||
+                    "https://i.pravatar.cc/150?img=12",
+                }}
+                style={styles.profileImage}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Search Bar for Recent Orders */}
+        <View
+          style={[
+            styles.searchContainer,
+            {
+              backgroundColor: colors.backgroundAlt,
+              borderColor: colors.borderLight,
+            },
+          ]}
+        >
+          <Ionicons
+            name="search-outline"
+            size={20}
+            color={colors.textSecondary}
+          />
+          <TextInput
+            placeholder="Search Recent Orders..."
+            placeholderTextColor={colors.textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            style={[styles.searchInput, { color: colors.textPrimary }]}
+          />
+          {searchQuery !== "" && (
+            <TouchableOpacity onPress={() => setSearchQuery("")}>
+              <Ionicons
+                name="close-circle"
+                size={18}
+                color={colors.textSecondary}
+                style={styles.clearSearchIcon}
+              />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Status Filter Chips */}
+        <View style={styles.chipRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipScrollContent}
+          >
+            {["All", "Pending", "Processing", "Shipped", "Delivered", "Cancelled"].map((status) => {
+              const isSelected = statusFilter === status;
+              return (
+                <TouchableOpacity
+                  key={status}
+                  onPress={() => setStatusFilter(status)}
                   style={[
-                    styles.deliveryText,
+                    styles.chip,
                     {
-                      color:
-                        item.status === "Delivered"
-                          ? "#16A34A"
-                          : "#F59E0B",
+                      backgroundColor: isSelected ? COLORS.primaryBgLight : colors.backgroundAlt,
+                      borderColor: isSelected ? COLORS.primary : colors.borderLight,
                     },
                   ]}
                 >
-                  {item.status}
+                  <Text
+                    style={[
+                      styles.chipText,
+                      {
+                        color: isSelected ? COLORS.primary : colors.textSecondary,
+                        fontWeight: isSelected ? "700" : "600",
+                      },
+                    ]}
+                  >
+                    {status}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+
+      {/* Error state banner with retry */}
+      {fetchError && (
+        <View style={styles.errorBanner}>
+          <Ionicons name="alert-circle-outline" size={20} color={COLORS.error} />
+          <Text style={styles.errorBannerText}>{fetchError}</Text>
+          <TouchableOpacity onPress={() => loadDashboardData()} style={styles.retryBtn}>
+            <Text style={styles.retryBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Loading Spinner */}
+      {isLoading && !refreshing ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Loading dashboard data...
+          </Text>
+        </View>
+      ) : (
+        <>
+          {/* Key Overview Cards Grid */}
+          <View style={styles.overviewContainer}>
+            <View style={styles.cardRow}>
+              {/* Total Earnings */}
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={[styles.overviewCard, { backgroundColor: colors.cardBg }]}
+                onPress={() => navigation.navigate("Earnings")}
+              >
+                <View style={[styles.iconCircle, styles.salesIconBg]}>
+                  <Ionicons name="cash-outline" size={22} color={COLORS.success} />
+                </View>
+                <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>Total Earnings</Text>
+                <Text style={[styles.cardValue, { color: colors.textPrimary }]} numberOfLines={1}>
+                  {formatCurrency(stats.total_earnings)}
+                </Text>
+                <View style={styles.subStatsRow}>
+                  <Text style={[styles.subStatsText, { color: COLORS.success }]}>
+                    Delivered: {stats.delivered_orders}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Total Orders */}
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={[styles.overviewCard, { backgroundColor: colors.cardBg }]}
+                onPress={() => navigation.navigate("Orders")}
+              >
+                <View style={[styles.iconCircle, styles.ordersIconBg]}>
+                  <Ionicons name="cube-outline" size={22} color={COLORS.primary} />
+                </View>
+                <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>Total Orders</Text>
+                <Text style={[styles.cardValue, { color: colors.textPrimary }]}>
+                  {stats.total_orders || 0}
+                </Text>
+                <View style={styles.subStatsRow}>
+                  <Text style={[styles.subStatsText, { color: COLORS.warning }]}>
+                    {stats.pending_orders || 0} Pending
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.cardRow}>
+              {/* Products */}
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={[styles.overviewCard, { backgroundColor: colors.cardBg }]}
+                onPress={() => navigation.navigate("Products")}
+              >
+                <View style={[styles.iconCircle, styles.productsIconBg]}>
+                  <Ionicons name="bag-handle-outline" size={22} color={COLORS.warning} />
+                </View>
+                <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>Products</Text>
+                <Text style={[styles.cardValue, { color: colors.textPrimary }]}>
+                  {stats.total_products ?? stats.total ?? 0}
+                </Text>
+                <View style={styles.subStatsRow}>
+                  <Text style={[styles.subStatsText, { color: COLORS.success }]}>
+                    {stats.approved_products ?? stats.active_products ?? stats.approved ?? 0} Approved
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Wallet Balance */}
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={[styles.overviewCard, { backgroundColor: colors.cardBg }]}
+                onPress={() => navigation.navigate("Earnings")}
+              >
+                <View style={[styles.iconCircle, styles.earningsIconBg]}>
+                  <Ionicons name="wallet-outline" size={22} color={COLORS.menuBank} />
+                </View>
+                <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>Wallet Balance</Text>
+                <Text style={[styles.cardValue, { color: colors.textPrimary }]} numberOfLines={1}>
+                  {formatCurrency(stats.wallet_balance)}
+                </Text>
+                <View style={styles.subStatsRow}>
+                  <Text style={[styles.subStatsText, { color: COLORS.textSecondary }]}>
+                    Pending: {formatCurrency(stats.pending_balance)}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Pending Actions & Order Status Breakdown */}
+          <View style={styles.pendingSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Order Status Breakdown</Text>
+              <TouchableOpacity onPress={() => navigation.navigate("Orders")}>
+                <Text style={styles.seeAll}>Manage</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.pendingGrid}>
+              {/* Pending Orders */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.pendingCard, styles.pendingOrdersBg]}
+                onPress={() => navigation.navigate("Orders")}
+              >
+                <View style={[styles.pendingIcon, styles.pendingOrdersIconBg]}>
+                  <Ionicons name="hourglass-outline" size={20} color={COLORS.textContrast} />
+                </View>
+                <Text style={styles.pendingCount}>{stats.pending_orders || 0}</Text>
+                <Text style={styles.pendingTitle}>Pending Orders</Text>
+                <View style={styles.pendingFooter}>
+                  <Text style={styles.pendingLink}>View</Text>
+                  <Ionicons name="arrow-forward" size={14} color={COLORS.primary} />
+                </View>
+              </TouchableOpacity>
+
+              {/* Processing Orders */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.pendingCard, styles.pendingReturnsBg]}
+                onPress={() => navigation.navigate("Orders")}
+              >
+                <View style={[styles.pendingIcon, styles.pendingReturnsIconBg]}>
+                  <Ionicons name="construct-outline" size={20} color={COLORS.textContrast} />
+                </View>
+                <Text style={styles.pendingCount}>{stats.processing_orders || 0}</Text>
+                <Text style={styles.pendingTitle}>Processing</Text>
+                <View style={styles.pendingFooter}>
+                  <Text style={styles.pendingLink}>Track</Text>
+                  <Ionicons name="arrow-forward" size={14} color={COLORS.warning} />
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.pendingGrid}>
+              {/* Shipped Orders */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.pendingCard, styles.pendingMessagesBg]}
+                onPress={() => navigation.navigate("Orders")}
+              >
+                <View style={[styles.pendingIcon, styles.pendingMessagesIconBg]}>
+                  <Ionicons name="airplane-outline" size={20} color={COLORS.textContrast} />
+                </View>
+                <Text style={styles.pendingCount}>{stats.shipped_orders || 0}</Text>
+                <Text style={styles.pendingTitle}>Shipped Orders</Text>
+                <View style={styles.pendingFooter}>
+                  <Text style={styles.pendingLink}>View</Text>
+                  <Ionicons name="arrow-forward" size={14} color={COLORS.success} />
+                </View>
+              </TouchableOpacity>
+
+              {/* Cancelled / Rejected */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={[styles.pendingCard, styles.pendingRefundBg]}
+                onPress={() => navigation.navigate("Orders")}
+              >
+                <View style={[styles.pendingIcon, styles.pendingRefundIconBg]}>
+                  <Ionicons name="close-circle-outline" size={20} color={COLORS.textContrast} />
+                </View>
+                <Text style={styles.pendingCount}>{stats.cancelled_orders || 0}</Text>
+                <Text style={styles.pendingTitle}>Cancelled Orders</Text>
+                <View style={styles.pendingFooter}>
+                  <Text style={styles.pendingLink}>Review</Text>
+                  <Ionicons name="arrow-forward" size={14} color={COLORS.error} />
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Recent Orders Section */}
+          <View style={styles.orderSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Orders</Text>
+              <TouchableOpacity onPress={() => navigation.navigate("Orders")}>
+                <Text style={styles.seeAll}>See All</Text>
+              </TouchableOpacity>
+            </View>
+
+            {filteredOrders.length === 0 ? (
+              <View style={[styles.emptyContainer, { backgroundColor: colors.cardBg }]}>
+                <Ionicons name="receipt-outline" size={38} color={colors.textSecondary} style={styles.emptyIcon} />
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  {searchQuery || statusFilter !== "All"
+                    ? "No matching orders found"
+                    : "No recent orders yet"}
                 </Text>
               </View>
+            ) : (
+              filteredOrders.map((item) => {
+                const badge = getStatusBadgeStyle(item.status);
+                const orderNumber = item.order_number || `#ORD-${item.id}`;
+                const amount = item.seller_amount !== undefined ? item.seller_amount : item.subtotal;
+
+                return (
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    key={item.id}
+                    onPress={() => navigation.navigate("Orders")}
+                    style={[styles.orderCard, { backgroundColor: colors.cardBg }]}
+                  >
+                    <View style={[styles.orderAvatar, { backgroundColor: badge.bg }]}>
+                      <Ionicons name="receipt" size={22} color={badge.text} />
+                    </View>
+
+                    <View style={styles.orderInfo}>
+                      <View style={styles.orderTop}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                          <Text style={[styles.orderId, { color: colors.textSecondary }]}>
+                            {orderNumber}
+                          </Text>
+                          <Text style={[styles.customerName, { color: colors.textPrimary }]} numberOfLines={1}>
+                            {item.customer?.name || "Customer"}
+                          </Text>
+                          {item.customer?.mobile ? (
+                            <Text style={[styles.customerMobile, { color: colors.textSecondary }]}>
+                              📞 {item.customer.mobile}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={[styles.orderPrice, { color: colors.textPrimary }]}>
+                            {formatCurrency(amount)}
+                          </Text>
+                          <Text style={[styles.orderDate, { color: colors.textSecondary }]}>
+                            {formatDate(item.created_at)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.orderBottom}>
+                        <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+                          <Text style={[styles.statusBadgeText, { color: badge.text }]}>
+                            {badge.label.toUpperCase()}
+                          </Text>
+                        </View>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={18}
+                          color={colors.textSecondary}
+                        />
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+
+          {/* Recent Products Section */}
+          <View style={styles.productSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Products</Text>
+              <TouchableOpacity onPress={() => navigation.navigate("Products")}>
+                <Text style={styles.seeAll}>See All</Text>
+              </TouchableOpacity>
             </View>
 
-            <Ionicons
-              name="chevron-forward"
-              size={20}
-              color="#999"
-            />
+            {recentProducts.length === 0 ? (
+              <View style={[styles.emptyContainer, { backgroundColor: colors.cardBg }]}>
+                <Ionicons name="cube-outline" size={38} color={colors.textSecondary} style={styles.emptyIcon} />
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No recent products found</Text>
+              </View>
+            ) : (
+              recentProducts.map((prod) => {
+                const prodBadge = getStatusBadgeStyle(prod);
+                return (
+                  <TouchableOpacity
+                    key={prod.id || prod.product_id}
+                    activeOpacity={0.9}
+                    onPress={() => navigation.navigate("Products")}
+                    style={[styles.productCard, { backgroundColor: colors.cardBg }]}
+                  >
+                    <Image
+                      source={{
+                        uri: prod.image_url || "https://picsum.photos/200?random=50",
+                      }}
+                      style={styles.productImage}
+                    />
+                    <View style={styles.productInfo}>
+                      <View style={styles.productTopRow}>
+                        <Text style={[styles.productName, { color: colors.textPrimary }]} numberOfLines={1}>
+                          {prod.name}
+                        </Text>
+                        <View style={[styles.statusBadge, { backgroundColor: prodBadge.bg }]}>
+                          <Text style={[styles.statusBadgeText, { color: prodBadge.text }]}>
+                            {prodBadge.label.toUpperCase()}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.productMetaRow}>
+                        <Text style={[styles.productPrice, { color: COLORS.primary }]}>
+                          {formatCurrency(prod.price)}
+                        </Text>
+                        <View style={styles.stockBadge}>
+                          <Ionicons
+                            name="layers-outline"
+                            size={13}
+                            color={prod.stock_quantity > 5 ? COLORS.success : COLORS.warning}
+                          />
+                          <Text
+                            style={[
+                              styles.stockBadgeText,
+                              { color: prod.stock_quantity > 5 ? COLORS.success : COLORS.warning },
+                            ]}
+                          >
+                            Stock: {prod.stock_quantity ?? 0}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
           </View>
-        </View>
-      </TouchableOpacity>
-    ))
-  )}
 
-      </View>
-
-      <View style={styles.stockSection}>
-
-  <View style={styles.sectionHeader}>
-    <Text style={styles.sectionTitle}>
-      Low Stock Products
-    </Text>
-
-    <TouchableOpacity>
-      <Text style={styles.seeAll}>
-        See All
-      </Text>
-    </TouchableOpacity>
-  </View>
-
-  {[1,2,3].map((item,index)=>{
-
-    const stock=[4,8,2][index];
-    const percent=(stock/20)*100;
-
-    return(
-
-      <TouchableOpacity
-        key={index}
-        activeOpacity={0.9}
-        style={styles.stockCard}>
-
-        <Image
-          source={{
-            uri:`https://picsum.photos/200?random=${index+20}`
-          }}
-          style={styles.productImage}
-        />
-
-        <View style={styles.stockInfo}>
-
-          <View style={styles.productTop}>
-
-            <View style={{flex:1}}>
-
-              <Text style={styles.productName}>
-                Premium Product {index+1}
-              </Text>
-
-              <Text style={styles.productCategory}>
-                Grocery
-              </Text>
-
+          {/* Revenue & Wallet Detailed Card */}
+          <View style={styles.revenueSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Financial Summary</Text>
+              <TouchableOpacity onPress={() => navigation.navigate("Earnings")}>
+                <Text style={styles.seeAll}>Details</Text>
+              </TouchableOpacity>
             </View>
 
-            <View style={styles.warningBadge}>
-              <Ionicons
-                name="warning"
-                color="#FF9800"
-                size={14}
-              />
-              <Text style={styles.warningText}>
-                Low
-              </Text>
+            <View style={styles.revenueCard}>
+              <View style={styles.revenueTop}>
+                <View>
+                  <Text style={styles.revenueLabel}>Total Lifetime Earnings</Text>
+                  <Text style={styles.revenueAmount}>{formatCurrency(stats.total_earnings)}</Text>
+                </View>
+                <View style={styles.revenueIcon}>
+                  <Ionicons name="wallet-outline" size={28} color={COLORS.textContrast} />
+                </View>
+              </View>
+
+              <View style={styles.analyticsBox}>
+                <View style={styles.analyticsRow}>
+                  <Text style={styles.analyticsLeft}>Available Wallet Balance</Text>
+                  <Text style={styles.analyticsRight}>{formatCurrency(stats.wallet_balance)}</Text>
+                </View>
+                <View style={styles.analyticsRow}>
+                  <Text style={styles.analyticsLeft}>Pending Clearance Balance</Text>
+                  <Text style={styles.analyticsRight}>{formatCurrency(stats.pending_balance)}</Text>
+                </View>
+              </View>
             </View>
-
           </View>
-
-          <Text style={styles.stockText}>
-            Only {stock} items left
-          </Text>
-
-          <View style={styles.progressBackground}>
-            <View
-              style={[
-                styles.progressFill,
-                {
-                  width:`${percent}%`
-                }
-              ]}
-            />
-          </View>
-
-          <TouchableOpacity style={styles.restockBtn}>
-            <Ionicons
-              name="add-circle-outline"
-              size={18}
-              color="#fff"
-            />
-
-            <Text style={styles.restockText}>
-              Restock
-            </Text>
-          </TouchableOpacity>
-
-        </View>
-
-      </TouchableOpacity>
-
-    )
-
-  })}
-
-      </View>
-
-      <View style={styles.topSellingSection}>
-
-  <View style={styles.sectionHeader}>
-    <Text style={styles.sectionTitle}>
-      Top Selling Products
-    </Text>
-
-    <TouchableOpacity>
-      <Text style={styles.seeAll}>
-        See All
-      </Text>
-    </TouchableOpacity>
-  </View>
-
-  {[1,2,3].map((item,index)=>{
-
-    const sold=[850,620,430][index];
-    const revenue=["₹1.2L","₹96K","₹72K"][index];
-    const progress=[95,82,68][index];
-
-    return(
-
-      <TouchableOpacity
-        key={index}
-        activeOpacity={0.9}
-        style={styles.topCard}>
-
-        <View style={styles.rankBadge}>
-          <Text style={styles.rankText}>
-            #{index+1}
-          </Text>
-        </View>
-
-        <Image
-          source={{
-            uri:`https://picsum.photos/200?random=${60+index}`
-          }}
-          style={styles.topImage}
-        />
-
-        <View style={styles.topInfo}>
-
-          <Text style={styles.topName}>
-            Organic Product {index+1}
-          </Text>
-
-          <View style={styles.infoRow}>
-            <Ionicons
-              name="cube-outline"
-              size={15}
-              color="#666"
-            />
-            <Text style={styles.infoText}>
-              {sold} Sold
-            </Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Ionicons
-              name="cash-outline"
-              size={15}
-              color="#18A558"
-            />
-            <Text style={styles.revenueText}>
-              {revenue}
-            </Text>
-          </View>
-
-          <View style={styles.ratingRow}>
-
-            <Ionicons
-              name="star"
-              size={15}
-              color="#FFC107"
-            />
-
-            <Text style={styles.ratingText}>
-              4.9
-            </Text>
-
-          </View>
-
-          <View style={styles.progressBg}>
-            <View
-              style={[
-                styles.progressBar,
-                {width:`${progress}%`}
-              ]}
-            />
-          </View>
-
-        </View>
-
-        <TouchableOpacity style={styles.viewBtn}>
-          <Ionicons
-            name="arrow-forward"
-            size={18}
-            color="#fff"
-          />
-        </TouchableOpacity>
-
-      </TouchableOpacity>
-
-    )
-
-  })}
-
-      </View>
-
-      <View style={styles.pendingSection}>
-
-  <View style={styles.sectionHeader}>
-    <Text style={styles.sectionTitle}>
-      Pending Actions
-    </Text>
-
-    <TouchableOpacity>
-      <Text style={styles.seeAll}>
-        Manage
-      </Text>
-    </TouchableOpacity>
-  </View>
-
-  <View style={styles.pendingGrid}>
-
-    {/* Pending Orders */}
-    <TouchableOpacity
-      activeOpacity={0.9}
-      style={[styles.pendingCard,{backgroundColor:"#EEF5FF"}]}>
-
-      <View style={[styles.pendingIcon,{backgroundColor:"#2E7DFF"}]}>
-        <Ionicons
-          name="bag-handle-outline"
-          size={24}
-          color="#fff"
-        />
-      </View>
-
-      <Text style={styles.pendingCount}>18</Text>
-
-      <Text style={styles.pendingTitle}>
-        Pending Orders
-      </Text>
-
-      <View style={styles.pendingFooter}>
-        <Text style={styles.pendingLink}>View</Text>
-
-        <Ionicons
-          name="arrow-forward"
-          size={18}
-          color="#2E7DFF"
-        />
-      </View>
-
-    </TouchableOpacity>
-
-    {/* Returns */}
-    <TouchableOpacity
-      activeOpacity={0.9}
-      style={[styles.pendingCard,{backgroundColor:"#FFF7EA"}]}>
-
-      <View style={[styles.pendingIcon,{backgroundColor:"#F59E0B"}]}>
-        <Ionicons
-          name="refresh-outline"
-          size={24}
-          color="#fff"
-        />
-      </View>
-
-      <Text style={styles.pendingCount}>6</Text>
-
-      <Text style={styles.pendingTitle}>
-        Return Requests
-      </Text>
-
-      <View style={styles.pendingFooter}>
-        <Text style={styles.pendingLink}>Review</Text>
-
-        <Ionicons
-          name="arrow-forward"
-          size={18}
-          color="#F59E0B"
-        />
-      </View>
-
-    </TouchableOpacity>
-
-  </View>
-
-  <View style={styles.pendingGrid}>
-
-    {/* Refund */}
-    <TouchableOpacity
-      activeOpacity={0.9}
-      style={[styles.pendingCard,{backgroundColor:"#FFF0F3"}]}>
-
-      <View style={[styles.pendingIcon,{backgroundColor:"#E91E63"}]}>
-        <Ionicons
-          name="wallet-outline"
-          size={24}
-          color="#fff"
-        />
-      </View>
-
-      <Text style={styles.pendingCount}>4</Text>
-
-      <Text style={styles.pendingTitle}>
-        Refund Requests
-      </Text>
-
-      <View style={styles.pendingFooter}>
-        <Text style={styles.pendingLink}>Open</Text>
-
-        <Ionicons
-          name="arrow-forward"
-          size={18}
-          color="#E91E63"
-        />
-      </View>
-
-    </TouchableOpacity>
-
-    {/* Messages */}
-    <TouchableOpacity
-      activeOpacity={0.9}
-      style={[styles.pendingCard,{backgroundColor:"#EFFFF6"}]}>
-
-      <View style={[styles.pendingIcon,{backgroundColor:"#16A34A"}]}>
-        <Ionicons
-          name="chatbubble-ellipses-outline"
-          size={24}
-          color="#fff"
-        />
-      </View>
-
-      <Text style={styles.pendingCount}>12</Text>
-
-      <Text style={styles.pendingTitle}>
-        Customer Messages
-      </Text>
-
-      <View style={styles.pendingFooter}>
-        <Text style={styles.pendingLink}>Reply</Text>
-
-        <Ionicons
-          name="arrow-forward"
-          size={18}
-          color="#16A34A"
-        />
-      </View>
-
-    </TouchableOpacity>
-
-  </View>
-
-      </View>
-      
-      <View style={styles.revenueSection}>
-
-  <View style={styles.sectionHeader}>
-    <Text style={styles.sectionTitle}>
-      Revenue Overview
-    </Text>
-
-    <TouchableOpacity>
-      <Text style={styles.seeAll}>
-        Details
-      </Text>
-    </TouchableOpacity>
-  </View>
-
-  {/* Revenue Card */}
-  <View style={styles.revenueCard}>
-
-    <View style={styles.revenueTop}>
-      <View>
-        <Text style={styles.revenueLabel}>
-          Total Revenue
-        </Text>
-
-        <Text style={styles.revenueAmount}>
-          ₹12,48,560
-        </Text>
-      </View>
-
-      <View style={styles.revenueIcon}>
-        <Ionicons
-          name="wallet-outline"
-          size={28}
-          color="#fff"
-        />
-      </View>
-    </View>
-
-    <View style={styles.analyticsBox}>
-      <View style={styles.analyticsBar}>
-        <View style={[styles.analyticsFill,{width:"78%"}]} />
-      </View>
-
-      <View style={styles.analyticsRow}>
-        <Text style={styles.analyticsLeft}>
-          Monthly Growth
-        </Text>
-
-        <Text style={styles.analyticsRight}>
-          +18.4%
-        </Text>
-      </View>
-    </View>
-
-  </View>
-
-  {/* Wallet Cards */}
-
-  <View style={styles.walletRow}>
-
-    <View style={styles.walletCard}>
-      <Ionicons
-        name="card-outline"
-        size={28}
-        color="#16A34A"
-      />
-
-      <Text style={styles.walletTitle}>
-        Wallet Balance
-      </Text>
-
-      <Text style={styles.walletValue}>
-        ₹84,320
-      </Text>
-    </View>
-
-    <View style={styles.walletCard}>
-      <Ionicons
-        name="cash-outline"
-        size={28}
-        color="#FF9800"
-      />
-
-      <Text style={styles.walletTitle}>
-        Withdrawable
-      </Text>
-
-      <Text style={styles.walletValue}>
-        ₹63,950
-      </Text>
-    </View>
-
-  </View>
-
-  {/* Withdraw Button */}
-
-  <TouchableOpacity style={styles.withdrawButton}>
-
-    <Ionicons
-      name="arrow-down-circle-outline"
-      size={22}
-      color="#fff"
-    />
-
-    <Text style={styles.withdrawText}>
-      Withdraw Earnings
-    </Text>
-
-  </TouchableOpacity>
-
-      </View>
-
-      <View style={styles.customerSection}>
-
-  <View style={styles.sectionHeader}>
-    <Text style={styles.sectionTitle}>
-      Customer Analytics
-    </Text>
-
-    <TouchableOpacity>
-      <Text style={styles.seeAll}>
-        View All
-      </Text>
-    </TouchableOpacity>
-  </View>
-
-  <View style={styles.customerGrid}>
-
-    <View style={styles.customerCard}>
-      <Ionicons
-        name="people-outline"
-        size={28}
-        color="#2E7DFF"
-      />
-
-      <Text style={styles.customerCount}>
-        12,560
-      </Text>
-
-      <Text style={styles.customerLabel}>
-        Total Customers
-      </Text>
-    </View>
-
-    <View style={styles.customerCard}>
-      <Ionicons
-        name="person-add-outline"
-        size={28}
-        color="#16A34A"
-      />
-
-      <Text style={styles.customerCount}>
-        1,245
-      </Text>
-
-      <Text style={styles.customerLabel}>
-        New Customers
-      </Text>
-    </View>
-
-  </View>
-
-  <View style={styles.customerGrid}>
-
-    <View style={styles.customerCard}>
-      <Ionicons
-        name="repeat-outline"
-        size={28}
-        color="#FF9800"
-      />
-
-      <Text style={styles.customerCount}>
-        78%
-      </Text>
-
-      <Text style={styles.customerLabel}>
-        Repeat Customers
-      </Text>
-    </View>
-
-    <View style={styles.customerCard}>
-      <Ionicons
-        name="star-outline"
-        size={28}
-        color="#FFD600"
-      />
-
-      <Text style={styles.customerCount}>
-        4.9
-      </Text>
-
-      <Text style={styles.customerLabel}>
-        Satisfaction
-      </Text>
-    </View>
-
-  </View>
-
-      </View>
-
-    <View style={styles.performanceSection}>
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>
-          Store Performance
-        </Text>
-
-        <TouchableOpacity>
-          <Text style={styles.seeAll}>
-            Details
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.performanceCard}>
-
-        <View style={styles.performanceTop}>
-
-          <View>
-            <Text style={styles.performanceTitle}>
-              Store Health Score
-            </Text>
-
-            <Text style={styles.healthScore}>
-              96%
-            </Text>
-          </View>
-
-          <View style={styles.healthBadge}>
-            <Ionicons
-              name="checkmark-circle"
-              size={28}
-              color="#16A34A"
-            />
-          </View>
-
-        </View>
-
-        <View style={styles.progressContainer}>
-          <View style={styles.progressTrack}>
-            <View
-              style={[
-                styles.progressValue,
-                {
-                  width: "96%",
-                },
-              ]}
-            />
-          </View>
-        </View>
-
-        <View style={styles.performanceRow}>
-
-          <View style={styles.performanceItem}>
-            <Ionicons
-              name="star"
-              size={20}
-              color="#FFC107"
-            />
-            <Text style={styles.performanceValue}>
-              4.9
-            </Text>
-            <Text style={styles.performanceLabel}>
-              Rating
-            </Text>
-          </View>
-
-          <View style={styles.performanceItem}>
-            <Ionicons
-              name="car-outline"
-              size={20}
-              color="#2E7DFF"
-            />
-            <Text style={styles.performanceValue}>
-              98%
-            </Text>
-            <Text style={styles.performanceLabel}>
-              Delivery
-            </Text>
-          </View>
-
-          <View style={styles.performanceItem}>
-            <Ionicons
-              name="cube-outline"
-              size={20}
-              color="#16A34A"
-            />
-            <Text style={styles.performanceValue}>
-              99%
-            </Text>
-            <Text style={styles.performanceLabel}>
-              Fulfilled
-            </Text>
-          </View>
-
-        </View>
-
-      </View>
-
-    </View>
-
-    <View style={styles.quickActionSection}>
-
-  <Text style={styles.sectionTitle}>
-    Quick Actions
-  </Text>
-
-  <View style={styles.quickGrid}>
-
-    <TouchableOpacity style={styles.quickCard}>
-      <View style={[styles.quickIcon,{backgroundColor:"#EAF2FF"}]}>
-        <Ionicons
-          name="add-circle-outline"
-          size={26}
-          color="#2E7DFF"
-        />
-      </View>
-
-      <Text style={styles.quickTitle}>
-        Add Product
-      </Text>
-    </TouchableOpacity>
-
-    <TouchableOpacity style={styles.quickCard}>
-      <View style={[styles.quickIcon,{backgroundColor:"#EEFDF3"}]}>
-        <Ionicons
-          name="cube-outline"
-          size={26}
-          color="#16A34A"
-        />
-      </View>
-
-      <Text style={styles.quickTitle}>
-        Products
-      </Text>
-    </TouchableOpacity>
-
-    <TouchableOpacity style={styles.quickCard}>
-      <View style={[styles.quickIcon,{backgroundColor:"#FFF6E8"}]}>
-        <Ionicons
-          name="bag-handle-outline"
-          size={26}
-          color="#FF9800"
-        />
-      </View>
-
-      <Text style={styles.quickTitle}>
-        Orders
-      </Text>
-    </TouchableOpacity>
-
-    <TouchableOpacity style={styles.quickCard}>
-      <View style={[styles.quickIcon,{backgroundColor:"#F4EEFF"}]}>
-        <Ionicons
-          name="stats-chart-outline"
-          size={26}
-          color="#7C3AED"
-        />
-      </View>
-
-      <Text style={styles.quickTitle}>
-        Analytics
-      </Text>
-    </TouchableOpacity>
-
-  </View>
-
-</View>
-
-
+        </>
+      )}
     </ScrollView>
   );
 };
 
-const styles=StyleSheet.create({
-  headerContainer: {
-  backgroundColor: COLORS.cardBg,
-  paddingHorizontal: 18,
-  paddingTop: 55,
-  paddingBottom: 22,
-  borderBottomLeftRadius: 28,
-  borderBottomRightRadius: 28,
-  elevation: 10,
-  shadowColor: COLORS.textPrimary,
-  shadowOpacity: 0.08,
-  shadowRadius: 12,
-},
-
-headerTop: {
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-},
-
-leftSection: {
-  flex: 1,
-},
-
-welcomeText: {
-  fontSize: 15,
-  color: COLORS.textGrayLight,
-  fontWeight: "500",
-},
-
-sellerName: {
-  marginTop: 4,
-  fontSize: 26,
-  fontWeight: "700",
-  color: COLORS.textPrimary,
-},
-
-rightSection: {
-  flexDirection: "row",
-  alignItems: "center",
-},
-
-iconBtn: {
-  width: 48,
-  height: 48,
-  borderRadius: 24,
-  backgroundColor: "#F7F8FA",
-  justifyContent: "center",
-  alignItems: "center",
-  marginRight: 12,
-},
-
-badge: {
-  position: "absolute",
-  top: 8,
-  right: 8,
-  width: 18,
-  height: 18,
-  borderRadius: 9,
-  backgroundColor: "#FF3B30",
-  justifyContent: "center",
-  alignItems: "center",
-},
-
-badgeText: {
-  color: "#fff",
-  fontSize: 10,
-  fontWeight: "700",
-},
-
-profileBtn: {
-  width: 50,
-  height: 50,
-  borderRadius: 25,
-  overflow: "hidden",
-},
-
-profileImage: {
-  width: "100%",
-  height: "100%",
-},
-
-searchContainer: {
-  marginTop: 22,
-  backgroundColor: "#F5F6FA",
-  height: 54,
-  borderRadius: 16,
-  flexDirection: "row",
-  alignItems: "center",
-  paddingHorizontal: 16,
-},
-
-searchInput: {
-  flex: 1,
-  marginLeft: 10,
-  fontSize: 15,
-  color: "#222",
-  padding: 0,
-},
-chip: {
-  paddingHorizontal: 16,
-  paddingVertical: 6,
-  borderRadius: 16,
-  backgroundColor: "#F5F6FA",
-  marginRight: 8,
-  height: 32,
-  justifyContent: "center",
-  borderWidth: 1,
-  borderColor: "#E5E5E5",
-},
-chipActive: {
-  backgroundColor: COLORS.primary,
-  borderColor: COLORS.primary,
-},
-chipText: {
-  fontSize: 12,
-  fontWeight: "600",
-  color: "#555",
-},
-chipTextActive: {
-  color: "#fff",
-},
-emptyContainer: {
-  alignItems: "center",
-  justifyContent: "center",
-  marginTop: 20,
-  marginBottom: 20,
-},
-emptyText: {
-  marginTop: 8,
-  fontSize: 14,
-  color: "#888",
-},
-overviewContainer: {
-  paddingHorizontal: 16,
-  marginTop: 18,
-},
-
-cardRow: {
-  flexDirection: "row",
-  justifyContent: "space-between",
-  marginBottom: 15,
-},
-
-overviewCard: {
-  width: "48%",
-  backgroundColor: "#fff",
-  borderRadius: 18,
-  padding: 16,
-  elevation: 5,
-  shadowColor: "#000",
-  shadowOpacity: 0.08,
-  shadowRadius: 10,
-},
-
-iconCircle: {
-  width: 52,
-  height: 52,
-  borderRadius: 26,
-  justifyContent: "center",
-  alignItems: "center",
-},
-
-cardTitle: {
-  marginTop: 14,
-  fontSize: 14,
-  color: "#777",
-  fontWeight: "500",
-},
-
-cardValue: {
-  marginTop: 6,
-  fontSize: 22,
-  color: "#111",
-  fontWeight: "700",
-},
-
-growthRow: {
-  flexDirection: "row",
-  alignItems: "center",
-  marginTop: 12,
-},
-
-growthText: {
-  marginLeft: 4,
-  color: "#16A34A",
-  fontWeight: "700",
-  fontSize: 13,
-},
-orderSection: {
-  marginTop: 22,
-  paddingHorizontal: 16,
-},
-
-sectionHeader: {
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: 15,
-},
-
-sectionTitle: {
-  fontSize: 20,
-  fontWeight: "700",
-  color: "#111",
-},
-
-seeAll: {
-  color: "#2E7DFF",
-  fontWeight: "600",
-  fontSize: 14,
-},
-
-orderCard: {
-  backgroundColor: "#fff",
-  borderRadius: 18,
-  padding: 14,
-  flexDirection: "row",
-  marginBottom: 14,
-  elevation: 4,
-  shadowColor: "#000",
-  shadowOpacity: 0.08,
-  shadowRadius: 10,
-},
-
-customerImage: {
-  width: 58,
-  height: 58,
-  borderRadius: 29,
-},
-
-orderInfo: {
-  flex: 1,
-  marginLeft: 14,
-},
-
-orderTop: {
-  flexDirection: "row",
-  justifyContent: "space-between",
-},
-
-orderId: {
-  fontSize: 15,
-  fontWeight: "700",
-  color: "#111",
-},
-
-customerName: {
-  marginTop: 3,
-  color: "#777",
-  fontSize: 13,
-},
-
-orderPrice: {
-  fontSize: 18,
-  fontWeight: "700",
-  color: "#16A34A",
-},
-
-orderBottom: {
-  marginTop: 12,
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-},
-
-statusRow: {
-  flexDirection: "row",
-},
-
-paymentBadge: {
-  backgroundColor: "#EAF2FF",
-  paddingHorizontal: 10,
-  paddingVertical: 5,
-  borderRadius: 15,
-  marginRight: 8,
-},
-
-paymentText: {
-  color: "#2E7DFF",
-  fontWeight: "600",
-  fontSize: 12,
-},
-
-deliveryBadge: {
-  paddingHorizontal: 10,
-  paddingVertical: 5,
-  borderRadius: 15,
-},
-
-deliveryText: {
-  fontWeight: "600",
-  fontSize: 12,
-},
-stockSection:{
-  paddingHorizontal:16,
-  marginTop:22,
-},
-
-stockCard:{
-  backgroundColor:"#fff",
-  borderRadius:18,
-  padding:14,
-  marginBottom:16,
-  flexDirection:"row",
-  elevation:4,
-  shadowColor:"#000",
-  shadowOpacity:0.08,
-  shadowRadius:10,
-},
-
-productImage:{
-  width:85,
-  height:85,
-  borderRadius:14,
-},
-
-stockInfo:{
-  flex:1,
-  marginLeft:14,
-  justifyContent:"space-between",
-},
-
-productTop:{
-  flexDirection:"row",
-  justifyContent:"space-between",
-},
-
-productName:{
-  fontSize:16,
-  fontWeight:"700",
-  color:"#222",
-},
-
-productCategory:{
-  marginTop:3,
-  color:"#888",
-  fontSize:13,
-},
-
-warningBadge:{
-  flexDirection:"row",
-  alignItems:"center",
-  backgroundColor:"#FFF4E5",
-  paddingHorizontal:10,
-  paddingVertical:5,
-  borderRadius:20,
-},
-
-warningText:{
-  color:"#FF9800",
-  marginLeft:4,
-  fontWeight:"700",
-  fontSize:12,
-},
-
-stockText:{
-  marginTop:10,
-  color:"#555",
-  fontWeight:"600",
-},
-
-progressBackground:{
-  height:7,
-  backgroundColor:"#ECECEC",
-  borderRadius:8,
-  marginTop:8,
-  overflow:"hidden",
-},
-
-progressFill:{
-  height:7,
-  backgroundColor:"#FF9800",
-  borderRadius:8,
-},
-
-restockBtn:{
-  marginTop:14,
-  alignSelf:"flex-start",
-  backgroundColor:"#2E7DFF",
-  flexDirection:"row",
-  alignItems:"center",
-  paddingHorizontal:16,
-  paddingVertical:9,
-  borderRadius:25,
-},
-
-restockText:{
-  color:"#fff",
-  marginLeft:6,
-  fontWeight:"700",
-  fontSize:13,
-},
-topSellingSection:{
-  paddingHorizontal:16,
-  marginTop:24,
-},
-
-topCard:{
-  backgroundColor:"#fff",
-  borderRadius:18,
-  padding:14,
-  flexDirection:"row",
-  alignItems:"center",
-  marginBottom:16,
-  elevation:4,
-  shadowColor:"#000",
-  shadowOpacity:0.08,
-  shadowRadius:10,
-},
-
-rankBadge:{
-  width:34,
-  height:34,
-  borderRadius:17,
-  backgroundColor:"#FFD54F",
-  justifyContent:"center",
-  alignItems:"center",
-  marginRight:10,
-},
-
-rankText:{
-  fontWeight:"700",
-  color:"#222",
-},
-
-topImage:{
-  width:72,
-  height:72,
-  borderRadius:14,
-},
-
-topInfo:{
-  flex:1,
-  marginLeft:14,
-},
-
-topName:{
-  fontSize:16,
-  fontWeight:"700",
-  color:"#222",
-},
-
-infoRow:{
-  flexDirection:"row",
-  alignItems:"center",
-  marginTop:6,
-},
-
-infoText:{
-  marginLeft:6,
-  color:"#666",
-  fontSize:13,
-},
-
-revenueText:{
-  marginLeft:6,
-  color:"#18A558",
-  fontWeight:"700",
-  fontSize:13,
-},
-
-ratingRow:{
-  flexDirection:"row",
-  alignItems:"center",
-  marginTop:6,
-},
-
-ratingText:{
-  marginLeft:5,
-  fontWeight:"700",
-  color:"#444",
-},
-
-progressBg:{
-  marginTop:10,
-  height:6,
-  backgroundColor:"#ECECEC",
-  borderRadius:6,
-  overflow:"hidden",
-},
-
-progressBar:{
-  height:6,
-  borderRadius:6,
-  backgroundColor:"#18A558",
-},
-
-viewBtn:{
-  width:42,
-  height:42,
-  borderRadius:21,
-  backgroundColor:"#2E7DFF",
-  justifyContent:"center",
-  alignItems:"center",
-},
-pendingSection:{
-  paddingHorizontal:16,
-  marginTop:24,
-},
-
-pendingGrid:{
-  flexDirection:"row",
-  justifyContent:"space-between",
-  marginBottom:16,
-},
-
-pendingCard:{
-  width:"48%",
-  borderRadius:18,
-  padding:16,
-},
-
-pendingIcon:{
-  width:50,
-  height:50,
-  borderRadius:25,
-  justifyContent:"center",
-  alignItems:"center",
-},
-
-pendingCount:{
-  marginTop:18,
-  fontSize:26,
-  fontWeight:"700",
-  color:"#222",
-},
-
-pendingTitle:{
-  marginTop:6,
-  fontSize:14,
-  color:"#555",
-  fontWeight:"600",
-},
-
-pendingFooter:{
-  marginTop:18,
-  flexDirection:"row",
-  justifyContent:"space-between",
-  alignItems:"center",
-},
-
-pendingLink:{
-  fontWeight:"700",
-  color:"#222",
-},
-revenueSection:{
-  paddingHorizontal:16,
-  marginTop:24,
-},
-
-revenueCard:{
-  backgroundColor:"#2E7DFF",
-  borderRadius:22,
-  padding:20,
-},
-
-revenueTop:{
-  flexDirection:"row",
-  justifyContent:"space-between",
-  alignItems:"center",
-},
-
-revenueLabel:{
-  color:"#E6EEFF",
-  fontSize:14,
-},
-
-revenueAmount:{
-  color:"#fff",
-  fontSize:30,
-  fontWeight:"700",
-  marginTop:6,
-},
-
-revenueIcon:{
-  width:58,
-  height:58,
-  borderRadius:29,
-  backgroundColor:"rgba(255,255,255,0.18)",
-  justifyContent:"center",
-  alignItems:"center",
-},
-
-analyticsBox:{
-  marginTop:22,
-},
-
-analyticsBar:{
-  height:8,
-  backgroundColor:"rgba(255,255,255,0.25)",
-  borderRadius:8,
-  overflow:"hidden",
-},
-
-analyticsFill:{
-  height:8,
-  backgroundColor:"#fff",
-  borderRadius:8,
-},
-
-analyticsRow:{
-  marginTop:8,
-  flexDirection:"row",
-  justifyContent:"space-between",
-},
-
-analyticsLeft:{
-  color:"#fff",
-  opacity:0.85,
-},
-
-analyticsRight:{
-  color:"#fff",
-  fontWeight:"700",
-},
-
-walletRow:{
-  flexDirection:"row",
-  justifyContent:"space-between",
-  marginTop:18,
-},
-
-walletCard:{
-  width:"48%",
-  backgroundColor:"#fff",
-  borderRadius:18,
-  padding:18,
-  alignItems:"center",
-  elevation:4,
-  shadowColor:"#000",
-  shadowOpacity:0.08,
-  shadowRadius:10,
-},
-
-walletTitle:{
-  marginTop:10,
-  color:"#666",
-  fontSize:13,
-},
-
-walletValue:{
-  marginTop:8,
-  fontSize:22,
-  fontWeight:"700",
-  color:"#222",
-},
-
-withdrawButton:{
-  marginTop:20,
-  backgroundColor:"#16A34A",
-  borderRadius:16,
-  height:56,
-  justifyContent:"center",
-  alignItems:"center",
-  flexDirection:"row",
-},
-
-withdrawText:{
-  color:"#fff",
-  fontSize:16,
-  fontWeight:"700",
-  marginLeft:10,
-},
-customerSection:{
-  paddingHorizontal:16,
-  marginTop:24,
-},
-
-customerGrid:{
-  flexDirection:"row",
-  justifyContent:"space-between",
-  marginTop:16,
-},
-
-customerCard:{
-  width:"48%",
-  backgroundColor:"#fff",
-  borderRadius:18,
-  padding:18,
-  alignItems:"center",
-  elevation:4,
-  shadowColor:"#000",
-  shadowOpacity:0.08,
-  shadowRadius:10,
-},
-
-customerCount:{
-  fontSize:24,
-  fontWeight:"700",
-  color:"#222",
-  marginTop:12,
-},
-
-customerLabel:{
-  marginTop:6,
-  fontSize:13,
-  color:"#666",
-  textAlign:"center",
-},
-performanceSection:{
-  paddingHorizontal:16,
-  marginTop:24,
-},
-
-performanceCard:{
-  backgroundColor:"#fff",
-  borderRadius:22,
-  padding:20,
-  elevation:5,
-  shadowColor:"#000",
-  shadowOpacity:0.08,
-  shadowRadius:10,
-},
-
-performanceTop:{
-  flexDirection:"row",
-  justifyContent:"space-between",
-  alignItems:"center",
-},
-
-performanceTitle:{
-  fontSize:14,
-  color:"#666",
-},
-
-healthScore:{
-  fontSize:34,
-  fontWeight:"700",
-  color:"#16A34A",
-  marginTop:5,
-},
-
-healthBadge:{
-  width:60,
-  height:60,
-  borderRadius:30,
-  backgroundColor:"#ECFDF3",
-  justifyContent:"center",
-  alignItems:"center",
-},
-
-progressContainer:{
-  marginTop:18,
-},
-
-progressTrack:{
-  height:10,
-  backgroundColor:"#ECECEC",
-  borderRadius:10,
-  overflow:"hidden",
-},
-
-progressValue:{
-  height:10,
-  backgroundColor:"#16A34A",
-},
-
-performanceRow:{
-  flexDirection:"row",
-  justifyContent:"space-between",
-  marginTop:24,
-},
-
-performanceItem:{
-  alignItems:"center",
-  flex:1,
-},
-
-performanceValue:{
-  marginTop:8,
-  fontSize:20,
-  fontWeight:"700",
-  color:"#222",
-},
-
-performanceLabel:{
-  marginTop:4,
-  color:"#777",
-  fontSize:12,
-},
-quickActionSection:{
-  marginTop:25,
-  paddingHorizontal:16,
-},
-
-quickGrid:{
-  flexDirection:"row",
-  flexWrap:"wrap",
-  justifyContent:"space-between",
-  marginTop:15,
-},
-
-quickCard:{
-  width:"48%",
-  backgroundColor:"#fff",
-  borderRadius:18,
-  paddingVertical:20,
-  alignItems:"center",
-  marginBottom:15,
-  elevation:4,
-  shadowColor:"#000",
-  shadowOpacity:0.08,
-  shadowRadius:10,
-},
-
-quickIcon:{
-  width:60,
-  height:60,
-  borderRadius:30,
-  justifyContent:"center",
-  alignItems:"center",
-},
-
-quickTitle:{
-  marginTop:12,
-  fontSize:14,
-  fontWeight:"700",
-  color:"#222",
-},
-
-bottomNav:{
-  marginTop:30,
-  backgroundColor:"#fff",
-  borderTopLeftRadius:24,
-  borderTopRightRadius:24,
-  paddingVertical:15,
-  flexDirection:"row",
-  justifyContent:"space-around",
-  alignItems:"center",
-  elevation:12,
-},
-
-navItem:{
-  alignItems:"center",
-},
-
-navText:{
-  marginTop:4,
-  fontSize:12,
-  color:"#777",
-},
-
-fab:{
-  width:64,
-  height:64,
-  borderRadius:32,
-  backgroundColor:"#2E7DFF",
-  justifyContent:"center",
-  alignItems:"center",
-  marginTop:-35,
-  elevation:10,
-},
-})
 export default SellerDashboard;
+
+const styles = StyleSheet.create({
+  scrollContent: {
+    paddingBottom: 50,
+    backgroundColor: COLORS.background,
+  },
+  headerContainer: {
+    backgroundColor: COLORS.cardBg,
+    paddingHorizontal: 16,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  headerTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  leftSection: {
+    flex: 1,
+    marginRight: 10,
+  },
+  welcomeText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontWeight: "500",
+  },
+  sellerName: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    marginTop: 2,
+  },
+  rightSection: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.backgroundAlt,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  badge: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    backgroundColor: COLORS.error,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 3,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  badgeText: {
+    color: COLORS.textContrast,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  profileBtn: {
+    borderRadius: 20,
+    overflow: "hidden",
+  },
+  profileImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.backgroundAlt,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+    paddingVertical: 0,
+    marginLeft: 8,
+  },
+  clearSearchIcon: {
+    marginRight: 6,
+  },
+  chipRow: {
+    height: 38,
+    marginTop: 12,
+  },
+  chipScrollContent: {
+    paddingHorizontal: 2,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: COLORS.backgroundAlt,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: COLORS.borderMedium,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  chipText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: COLORS.textSecondary,
+  },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.errorBgLight,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 10,
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: COLORS.error,
+    marginLeft: 8,
+    fontWeight: "500",
+  },
+  retryBtn: {
+    backgroundColor: COLORS.error,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  retryBtnText: {
+    color: COLORS.textContrast,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  loadingContainer: {
+    paddingVertical: 60,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingText: {
+    fontSize: 14,
+    marginTop: 12,
+    fontWeight: "500",
+  },
+  overviewContainer: {
+    paddingHorizontal: 16,
+    marginTop: 16,
+  },
+  cardRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  overviewCard: {
+    width: "48%",
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 18,
+    padding: 14,
+    elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  iconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  salesIconBg: {
+    backgroundColor: COLORS.successBgLight,
+  },
+  ordersIconBg: {
+    backgroundColor: COLORS.primaryBgLight,
+  },
+  productsIconBg: {
+    backgroundColor: COLORS.warningBgLight,
+  },
+  earningsIconBg: {
+    backgroundColor: COLORS.infoBgLight,
+  },
+  cardTitle: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: "500",
+  },
+  cardValue: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    marginTop: 3,
+  },
+  subStatsRow: {
+    marginTop: 6,
+  },
+  subStatsText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  pendingSection: {
+    paddingHorizontal: 16,
+    marginTop: 12,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  seeAll: {
+    fontSize: 13,
+    color: COLORS.primary,
+    fontWeight: "700",
+  },
+  pendingGrid: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  pendingCard: {
+    width: "48%",
+    borderRadius: 16,
+    padding: 14,
+  },
+  pendingOrdersBg: {
+    backgroundColor: COLORS.primaryBgLight,
+  },
+  pendingOrdersIconBg: {
+    backgroundColor: COLORS.primary,
+  },
+  pendingReturnsBg: {
+    backgroundColor: COLORS.warningBgLight,
+  },
+  pendingReturnsIconBg: {
+    backgroundColor: COLORS.warning,
+  },
+  pendingRefundBg: {
+    backgroundColor: COLORS.errorBgLight,
+  },
+  pendingRefundIconBg: {
+    backgroundColor: COLORS.error,
+  },
+  pendingMessagesBg: {
+    backgroundColor: COLORS.successBgLight,
+  },
+  pendingMessagesIconBg: {
+    backgroundColor: COLORS.success,
+  },
+  pendingIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pendingCount: {
+    marginTop: 10,
+    fontSize: 22,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  pendingTitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: "600",
+  },
+  pendingFooter: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  pendingLink: {
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    fontSize: 12,
+  },
+  orderSection: {
+    paddingHorizontal: 16,
+    marginTop: 16,
+  },
+  emptyContainer: {
+    alignItems: "center",
+    paddingVertical: 26,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 16,
+  },
+  emptyIcon: {
+    marginBottom: 8,
+    opacity: 0.6,
+  },
+  emptyText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontWeight: "500",
+  },
+  orderCard: {
+    flexDirection: "row",
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
+    elevation: 2,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    alignItems: "center",
+  },
+  orderAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  orderInfo: {
+    flex: 1,
+  },
+  orderTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  orderId: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    fontWeight: "600",
+  },
+  customerName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    marginTop: 1,
+  },
+  customerMobile: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  orderPrice: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+  },
+  orderDate: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  orderBottom: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  productSection: {
+    paddingHorizontal: 16,
+    marginTop: 16,
+  },
+  productCard: {
+    flexDirection: "row",
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 14,
+    padding: 10,
+    marginBottom: 10,
+    alignItems: "center",
+    elevation: 2,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+  },
+  productImage: {
+    width: 54,
+    height: 54,
+    borderRadius: 10,
+    marginRight: 12,
+    backgroundColor: COLORS.backgroundAlt,
+  },
+  productInfo: {
+    flex: 1,
+  },
+  productTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  productName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.textPrimary,
+    marginRight: 8,
+  },
+  productMetaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 6,
+  },
+  productPrice: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: COLORS.primary,
+  },
+  stockBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  stockBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginLeft: 4,
+  },
+  revenueSection: {
+    paddingHorizontal: 16,
+    marginTop: 16,
+  },
+  revenueCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 18,
+    padding: 18,
+  },
+  revenueTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  revenueLabel: {
+    color: COLORS.primaryLight,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  revenueAmount: {
+    color: COLORS.textContrast,
+    fontSize: 26,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  revenueIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  analyticsBox: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 255, 255, 0.2)",
+  },
+  analyticsRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  analyticsLeft: {
+    color: COLORS.textContrast,
+    opacity: 0.9,
+    fontSize: 12,
+  },
+  analyticsRight: {
+    color: COLORS.textContrast,
+    fontWeight: "700",
+    fontSize: 13,
+  },
+});

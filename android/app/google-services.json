@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "1024081188332",
+    "project_id": "deebazar-f0279",
+    "storage_bucket": "deebazar-f0279.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1024081188332:android:4b6694c571d7cc5b60dcc9",
+        "android_client_info": {
+          "package_name": "com.deebazar.seller"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAbuWepgDG_HqDr78Ivgkkt-GFK2O3APtw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1024081188332:android:5be712e28c5d589660dcc9",
+        "android_client_info": {
+          "package_name": "com.deebazar.shopping"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAbuWepgDG_HqDr78Ivgkkt-GFK2O3APtw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

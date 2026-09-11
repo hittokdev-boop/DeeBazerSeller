@@ -36,13 +36,11 @@ const ForgotPassword = ({ navigation }) => {
 
     setIsLoading(true);
     try {
-      // Simulate network request
       await new Promise((resolve) => setTimeout(resolve, 1200));
 
       const storedProfile = await AsyncStorage.getItem("sellerProfile");
       const profile = storedProfile ? JSON.parse(storedProfile) : null;
 
-      // Check if email matches registered seller profile
       if (profile && profile.email.toLowerCase() !== email.trim().toLowerCase()) {
         setErrors({ email: "This email is not registered as a seller" });
         setIsLoading(false);
@@ -75,7 +73,7 @@ const ForgotPassword = ({ navigation }) => {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
+        style={styles.keyboardContainer}
       >
         {/* Header */}
         <View style={styles.header}>
@@ -86,7 +84,7 @@ const ForgotPassword = ({ navigation }) => {
             <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Password Recovery</Text>
-          <View style={{ width: 40 }} />
+          <View style={styles.headerSpacer} />
         </View>
 
         <ScrollView
@@ -147,11 +145,11 @@ const ForgotPassword = ({ navigation }) => {
                 disabled={isLoading}
               >
                 {isLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={COLORS.textContrast} />
                 ) : (
                   <>
                     <Text style={styles.actionBtnText}>Send Code</Text>
-                    <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 6 }} />
+                    <Ionicons name="arrow-forward" size={18} color={COLORS.textContrast} style={styles.actionBtnIcon} />
                   </>
                 )}
               </TouchableOpacity>
@@ -170,6 +168,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.backgroundAlt,
     paddingTop: (Platform.OS === "android" ? StatusBar.currentHeight : 0) + 15,
+  },
+  keyboardContainer: {
+    flex: 1,
   },
   header: {
     height: 56,
@@ -192,6 +193,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: COLORS.textPrimary,
+  },
+  headerSpacer: {
+    width: 40,
   },
   scrollView: {
     flex: 1,
@@ -309,8 +313,11 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   actionBtnText: {
-    color: "#fff",
+    color: COLORS.textContrast,
     fontSize: 16,
     fontWeight: "700",
+  },
+  actionBtnIcon: {
+    marginLeft: 6,
   },
 });

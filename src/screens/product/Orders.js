@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,83 +8,97 @@ import {
   Image,
   StyleSheet,
   Alert,
+  Platform,
+  StatusBar,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../../constants/theme";
-
-const MOCK_ORDERS = [
-  { id: "ORD202601", customerName: "Rahul Sharma", date: "22 Jul 2026", price: 1350, status: "Pending", items: "Organic Honey x2", image: "https://i.pravatar.cc/150?img=11" },
-  { id: "ORD202602", customerName: "Priya Patel", date: "21 Jul 2026", price: 2499, status: "Delivered", items: "Bluetooth Speaker x1", image: "https://i.pravatar.cc/150?img=20" },
-  { id: "ORD202603", customerName: "Amit Sen", date: "20 Jul 2026", price: 499, status: "Cancelled", items: "Cotton T-Shirt x1", image: "https://i.pravatar.cc/150?img=33" },
-  { id: "ORD202604", customerName: "Sneha Reddy", date: "19 Jul 2026", price: 1798, status: "Delivered", items: "Stainless Water Bottle x2", image: "https://i.pravatar.cc/150?img=47" },
-  { id: "ORD202605", customerName: "Vikram Malhotra", date: "18 Jul 2026", price: 590, status: "Pending", items: "Lipstick Cherry Red x1", image: "https://i.pravatar.cc/150?img=59" },
-  { id: "ORD202606", customerName: "Ananya Das", date: "17 Jul 2026", price: 1299, status: "Delivered", items: "Yoga Mat x1", image: "https://i.pravatar.cc/150?img=65" },
-];
+import { useTheme } from "../../context/ThemeContext";
+import { getOrders, updateOrderStatusAPI } from "../../api/orders";
 
 const STATUS_FILTERS = ["All", "Pending", "Delivered", "Cancelled"];
 
-const Orders = () => {
-  const [orders, setOrders] = useState(MOCK_ORDERS);
+const Orders = ({ navigation }) => {
+  const { colors } = useTheme();
+  const [orders, setOrders] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Filter Orders
-  const filteredOrders = orders.filter((order) => {
-    const matchesSearch =
-      order.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.items.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "All" || order.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
-  // Calculate dynamic stats
-  const totalCount = orders.length;
-  const pendingCount = orders.filter((o) => o.status === "Pending").length;
-  const deliveredCount = orders.filter((o) => o.status === "Delivered").length;
-
-  const handleOrderPress = (order) => {
-    if (order.status === "Pending") {
-      Alert.alert(
-        "Order Actions",
-        `Manage Order #${order.id}\nCustomer: ${order.customerName}\nItems: ${order.items}`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Mark Delivered",
-            onPress: () => updateOrderStatus(order.id, "Delivered"),
-          },
-          {
-            text: "Cancel Order",
-            style: "destructive",
-            onPress: () => updateOrderStatus(order.id, "Cancelled"),
-          },
-        ]
-      );
-    } else {
-      Alert.alert(
-        "Order Details",
-        `Order ID: #${order.id}\nCustomer: ${order.customerName}\nDate: ${order.date}\nItems: ${order.items}\nPrice: ₹ ${order.price}\nStatus: ${order.status}`
-      );
+  const fetchOrders = async () => {
+    try {
+      const response = await getOrders();
+      const ordersList = response?.data?.orders || response?.orders || response?.data || response || [];
+      setOrders(ordersList);
+    } catch (error) {
+      Alert.alert("Error", error.message || "Failed to load orders");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const updateOrderStatus = (id, newStatus) => {
-    setOrders((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, status: newStatus } : o))
-    );
+  useEffect(() => {
+    fetchOrders();
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchOrders();
+  };
+
+  const safeOrders = Array.isArray(orders) ? orders : [];
+
+  const filteredOrders = safeOrders.filter((order) => {
+    const customerName = (order.customer?.name || order.customerName || "").toString();
+    const orderIdStr = (order.order_number || order.id || "").toString();
+    const itemsStr = (order.items || "").toString();
+
+    const matchesSearch =
+      customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      orderIdStr.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      itemsStr.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const statusStr = (order.status || "").toString();
+    const formattedStatus = statusStr ? statusStr.charAt(0).toUpperCase() + statusStr.slice(1) : "";
+    const matchesStatus = statusFilter === "All" || formattedStatus === statusFilter;
+    
+    return matchesSearch && matchesStatus;
+  });
+
+  const totalCount = safeOrders.length;
+  const pendingCount = safeOrders.filter((o) => (o.status || "").toString().toLowerCase() === "pending").length;
+  const deliveredCount = safeOrders.filter((o) => (o.status || "").toString().toLowerCase() === "delivered").length;
+
+  const updateOrderStatus = async (id, newStatus) => {
+    try {
+      await updateOrderStatusAPI(id, newStatus);
+      setOrders((prev) =>
+        prev.map((o) => (o.id === id ? { ...o, status: newStatus } : o))
+      );
+      Alert.alert("Success", `Order #${id} status updated to ${newStatus}`);
+    } catch (error) {
+      Alert.alert("Error", error.message || "Failed to update order status");
+    }
+  };
+
+  const handleOrderPress = (order) => {
+    navigation.navigate("OrderDetails", { orderId: order.id });
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#F5F7FB", paddingTop: 15 }}>
+    <View style={[styles.container, { backgroundColor: colors.backgroundAlt }]}>
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Orders</Text>
-          <Text style={styles.subTitle}>Manage all customer orders</Text>
+          <Text style={[styles.title, { color: colors.textGrayDark }]}>Orders</Text>
+          <Text style={[styles.subTitle, { color: colors.textGrayLight }]}>Manage all customer orders</Text>
         </View>
-        <TouchableOpacity style={styles.notification}>
-          <Ionicons name="notifications-outline" size={24} color="#222" />
+        <TouchableOpacity style={[styles.notification, { backgroundColor: colors.cardBg }]}>
+          <Ionicons name="notifications-outline" size={24} color={colors.textGrayDark} />
         </TouchableOpacity>
       </View>
 
@@ -95,39 +109,39 @@ const Orders = () => {
           <Text style={styles.summaryLabel}>Total</Text>
         </View>
         <View style={styles.summaryCard}>
-          <Text style={[styles.summaryCount, { color: "#F59E0B" }]}>{pendingCount}</Text>
+          <Text style={[styles.summaryCount, styles.pendingSummaryCount]}>{pendingCount}</Text>
           <Text style={styles.summaryLabel}>Pending</Text>
         </View>
         <View style={styles.summaryCard}>
-          <Text style={[styles.summaryCount, { color: "#16A34A" }]}>{deliveredCount}</Text>
+          <Text style={[styles.summaryCount, styles.deliveredSummaryCount]}>{deliveredCount}</Text>
           <Text style={styles.summaryLabel}>Delivered</Text>
         </View>
       </View>
 
       {/* Search Bar */}
       <View style={styles.searchBox}>
-        <Ionicons name="search-outline" size={20} color="#777" />
+        <Ionicons name="search-outline" size={20} color={COLORS.textGrayLight} />
         <TextInput
           placeholder="Search Customer or Order ID..."
-          placeholderTextColor="#777"
+          placeholderTextColor={COLORS.textGrayLight}
           value={searchQuery}
           onChangeText={setSearchQuery}
           style={styles.searchInput}
         />
         {searchQuery !== "" && (
           <TouchableOpacity onPress={() => setSearchQuery("")}>
-            <Ionicons name="close-circle" size={20} color="#aaa" style={{ marginRight: 8 }} />
+            <Ionicons name="close-circle" size={20} color={COLORS.textGrayPlaceholder} style={styles.clearSearchIcon} />
           </TouchableOpacity>
         )}
-        <Ionicons name="options-outline" size={22} color="#555" />
+        <Ionicons name="options-outline" size={22} color={COLORS.textGrayMedium} />
       </View>
 
       {/* Status Filter Chips */}
-      <View style={{ height: 42, marginBottom: 12 }}>
+      <View style={styles.chipRow}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16 }}
+          contentContainerStyle={styles.chipScrollContent}
         >
           {STATUS_FILTERS.map((status) => {
             const isSelected = statusFilter === status;
@@ -157,62 +171,74 @@ const Orders = () => {
       {/* Orders List */}
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={styles.listScrollContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />
+        }
       >
-        {filteredOrders.length === 0 ? (
+        {loading ? (
+          <View style={{ marginTop: 60, alignItems: "center" }}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
+          </View>
+        ) : filteredOrders.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Ionicons name="receipt-outline" size={60} color="#ccc" />
+            <Ionicons name="receipt-outline" size={60} color={COLORS.borderDark} />
             <Text style={styles.emptyText}>No orders found</Text>
           </View>
         ) : (
-          filteredOrders.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              activeOpacity={0.9}
-              onPress={() => handleOrderPress(item)}
-              style={styles.orderCard}
-            >
-              <Image source={{ uri: item.image }} style={styles.customerImage} />
+          filteredOrders.map((item) => {
+            const statusStr = (item.status || "").toString();
+            const formattedStatus = statusStr ? statusStr.charAt(0).toUpperCase() + statusStr.slice(1) : "Unknown";
+            const custName = item.customer?.name || item.customerName || "Customer";
+            let formattedDate = item.created_at || item.date || "N/A";
+            if (typeof formattedDate === "string" && formattedDate.includes("T")) {
+              formattedDate = new Date(formattedDate).toLocaleDateString();
+            }
 
-              <View style={styles.orderInfo}>
-                <Text style={styles.orderId}>#{item.id}</Text>
-                <Text style={styles.customerName}>{item.customerName}</Text>
-                <Text style={styles.orderDate}>{item.date} • {item.items}</Text>
-              </View>
+            return (
+              <TouchableOpacity
+                key={item.id || item._id}
+                activeOpacity={0.9}
+                onPress={() => handleOrderPress(item)}
+                style={styles.orderCard}
+              >
+                <Image source={{ uri: item.image || "https://i.pravatar.cc/150?u=" + (item.id || 0) }} style={styles.customerImage} />
 
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={styles.orderPrice}>₹ {item.price}</Text>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    {
-                      backgroundColor:
-                        item.status === "Delivered"
-                          ? "#E8F7EF"
-                          : item.status === "Pending"
-                          ? "#FFF4E5"
-                          : "#FFECEC",
-                    },
-                  ]}
-                >
-                  <Text
-                    style={{
-                      color:
-                        item.status === "Delivered"
-                          ? "#16A34A"
-                          : item.status === "Pending"
-                          ? "#F59E0B"
-                          : "#E53935",
-                      fontWeight: "700",
-                      fontSize: 12,
-                    }}
-                  >
-                    {item.status}
-                  </Text>
+                <View style={styles.orderInfo}>
+                  <Text style={styles.orderId}>{item.order_number || "#" + (item.id || item._id)}</Text>
+                  <Text style={styles.customerName}>{custName}</Text>
+                  <Text style={styles.orderDate}>{formattedDate}</Text>
                 </View>
-              </View>
-            </TouchableOpacity>
-          ))
+
+                <View style={styles.priceContainer}>
+                  <Text style={styles.orderPrice}>₹ {item.subtotal || item.price || 0}</Text>
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      formattedStatus === "Delivered"
+                        ? styles.deliveredBadgeBg
+                        : formattedStatus === "Pending"
+                        ? styles.pendingBadgeBg
+                        : styles.cancelledBadgeBg,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.statusBadgeText,
+                        formattedStatus === "Delivered"
+                          ? styles.deliveredBadgeText
+                          : formattedStatus === "Pending"
+                          ? styles.pendingBadgeText
+                          : styles.cancelledBadgeText,
+                      ]}
+                    >
+                      {formattedStatus}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })
         )}
       </ScrollView>
     </View>
@@ -222,6 +248,11 @@ const Orders = () => {
 export default Orders;
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.backgroundAlt,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 15,
+  },
   header: {
     paddingHorizontal: 16,
     paddingTop: 20,
@@ -233,22 +264,22 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: "#222",
+    color: COLORS.textGrayDark,
   },
   subTitle: {
     marginTop: 4,
     fontSize: 14,
-    color: "#777",
+    color: COLORS.textGrayLight,
   },
   notification: {
     width: 50,
     height: 50,
     borderRadius: 15,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     justifyContent: "center",
     alignItems: "center",
     elevation: 3,
-    shadowColor: "#000",
+    shadowColor: COLORS.textPrimary,
     shadowOpacity: 0.08,
     shadowRadius: 8,
   },
@@ -260,36 +291,42 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     width: "31%",
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     borderRadius: 16,
     paddingVertical: 18,
     alignItems: "center",
     elevation: 3,
-    shadowColor: "#000",
+    shadowColor: COLORS.textPrimary,
     shadowOpacity: 0.08,
     shadowRadius: 8,
   },
   summaryCount: {
     fontSize: 24,
     fontWeight: "700",
-    color: "#2E7DFF",
+    color: COLORS.primary,
+  },
+  pendingSummaryCount: {
+    color: COLORS.warning,
+  },
+  deliveredSummaryCount: {
+    color: COLORS.success,
   },
   summaryLabel: {
     marginTop: 6,
     fontSize: 13,
-    color: "#666",
+    color: COLORS.textSecondary,
   },
   searchBox: {
     marginHorizontal: 16,
     marginBottom: 20,
     height: 55,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     borderRadius: 15,
     paddingHorizontal: 15,
     flexDirection: "row",
     alignItems: "center",
     elevation: 3,
-    shadowColor: "#000",
+    shadowColor: COLORS.textPrimary,
     shadowOpacity: 0.08,
     shadowRadius: 8,
   },
@@ -297,16 +334,26 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 10,
     fontSize: 15,
-    color: "#222",
+    color: COLORS.textGrayDark,
+  },
+  clearSearchIcon: {
+    marginRight: 8,
+  },
+  chipRow: {
+    height: 42,
+    marginBottom: 12,
+  },
+  chipScrollContent: {
+    paddingHorizontal: 16,
   },
   chip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     marginRight: 8,
     borderWidth: 1,
-    borderColor: "#E5E5E5",
+    borderColor: COLORS.borderInactive,
     height: 38,
     justifyContent: "center",
   },
@@ -317,21 +364,24 @@ const styles = StyleSheet.create({
   chipText: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#555",
+    color: COLORS.textGrayMedium,
   },
   chipTextActive: {
-    color: "#fff",
+    color: COLORS.textContrast,
+  },
+  listScrollContent: {
+    paddingBottom: 100,
   },
   orderCard: {
     marginHorizontal: 16,
     marginBottom: 15,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     borderRadius: 18,
     padding: 14,
     flexDirection: "row",
     alignItems: "center",
     elevation: 3,
-    shadowColor: "#000",
+    shadowColor: COLORS.textPrimary,
     shadowOpacity: 0.08,
     shadowRadius: 8,
   },
@@ -347,28 +397,53 @@ const styles = StyleSheet.create({
   orderId: {
     fontSize: 15,
     fontWeight: "700",
-    color: "#222",
+    color: COLORS.textGrayDark,
   },
   customerName: {
     marginTop: 5,
     fontSize: 14,
-    color: "#555",
+    color: COLORS.textGrayMedium,
   },
   orderDate: {
     marginTop: 4,
     fontSize: 12,
-    color: "#999",
+    color: COLORS.textGrayPlaceholder,
+  },
+  priceContainer: {
+    alignItems: "flex-end",
   },
   orderPrice: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#16A34A",
+    color: COLORS.success,
     marginBottom: 8,
   },
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
+  },
+  deliveredBadgeBg: {
+    backgroundColor: COLORS.successBgLight,
+  },
+  pendingBadgeBg: {
+    backgroundColor: COLORS.warningBgLight,
+  },
+  cancelledBadgeBg: {
+    backgroundColor: COLORS.errorBgLight,
+  },
+  statusBadgeText: {
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  deliveredBadgeText: {
+    color: COLORS.success,
+  },
+  pendingBadgeText: {
+    color: COLORS.warning,
+  },
+  cancelledBadgeText: {
+    color: COLORS.error,
   },
   emptyContainer: {
     alignItems: "center",
@@ -378,6 +453,6 @@ const styles = StyleSheet.create({
   emptyText: {
     marginTop: 12,
     fontSize: 15,
-    color: "#888",
+    color: COLORS.textMuted,
   },
 });

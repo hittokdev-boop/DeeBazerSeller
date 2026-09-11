@@ -14,10 +14,11 @@ import {
   StatusBar,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
 
-const ForgotPasswordOtp = ({ route, navigation }) => {
-  const { email } = route.params || { email: "" };
+const LoginOtp = ({ route, navigation }) => {
+  const { identifier } = route.params || { identifier: "" };
   
   const [isLoading, setIsLoading] = useState(false);
   const [otpCode, setOtpCode] = useState(["", "", "", ""]);
@@ -70,7 +71,59 @@ const ForgotPasswordOtp = ({ route, navigation }) => {
       await new Promise((resolve) => setTimeout(resolve, 1200));
 
       if (otpString === "9999") {
-        navigation.navigate("ResetPassword", { email });
+        const storedProfileStr = await AsyncStorage.getItem("sellerProfile");
+        let profile = null;
+
+        if (storedProfileStr) {
+          profile = JSON.parse(storedProfileStr);
+        }
+
+        const isEmail = identifier.includes("@");
+        const cleanIdentifier = identifier.trim().toLowerCase();
+
+        if (profile) {
+          const profileEmail = (profile.email || "").trim().toLowerCase();
+          const profilePhone = (profile.phone || "").trim();
+
+          const isMatch = isEmail 
+            ? profileEmail === cleanIdentifier 
+            : profilePhone === cleanIdentifier;
+
+          if (isMatch) {
+            await AsyncStorage.setItem("isLoggedIn", "true");
+            navigation.replace("SellerTabs");
+          } else {
+            Alert.alert(
+              "Account Mismatch",
+              "The entered credentials do not match the registered seller profile. Would you like to register a new account?",
+              [
+                { text: "Try Again", style: "cancel" },
+                { text: "Register", onPress: () => navigation.navigate("SellerRegistration") }
+              ]
+            );
+          }
+        } else {
+          // Create a mock profile if none exists
+          const mockProfile = {
+            ownerName: "Hittok Owner",
+            email: isEmail ? cleanIdentifier : "owner@example.com",
+            phone: isEmail ? "9876543210" : cleanIdentifier,
+            storeName: "Hittok Store",
+            category: "Electronics & Gadgets",
+            address: "123 DeeBazar Hub, Sector 5, Kolkata",
+            description: "Premium electronics and smart devices store on DeeBazar.",
+            bankName: "State Bank of India",
+            accountNo: "123456789012",
+            ifscCode: "SBIN0000123",
+            logoUri: "",
+            registeredAt: new Date().toISOString(),
+          };
+
+          await AsyncStorage.setItem("isRegistered", "true");
+          await AsyncStorage.setItem("isLoggedIn", "true");
+          await AsyncStorage.setItem("sellerProfile", JSON.stringify(mockProfile));
+          navigation.replace("SellerTabs");
+        }
       } else {
         setOtpError("Invalid verification code. Please try again.");
       }
@@ -87,8 +140,8 @@ const ForgotPasswordOtp = ({ route, navigation }) => {
     setOtpCode(["", "", "", ""]);
     setOtpError("");
     Alert.alert(
-      "Reset Code Sent",
-      `A new mock reset code [ 9999 ] has been sent to ${email}.`
+      "OTP Sent",
+      `A new mock verification code [ 9999 ] has been sent to ${identifier}.`
     );
   };
 
@@ -106,7 +159,7 @@ const ForgotPasswordOtp = ({ route, navigation }) => {
           >
             <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Verify Recovery Code</Text>
+          <Text style={styles.headerTitle}>Verify Login</Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -120,9 +173,9 @@ const ForgotPasswordOtp = ({ route, navigation }) => {
             <View style={styles.iconCircle}>
               <Ionicons name="mail-open-outline" size={44} color={COLORS.primary} />
             </View>
-            <Text style={styles.bannerTitle}>Check Your Inbox</Text>
+            <Text style={styles.bannerTitle}>Enter Verification Code</Text>
             <Text style={styles.bannerSubtitle}>
-              We have dispatched a verification code. Please type it below to proceed.
+              We have sent a verification code to your email or phone number.
             </Text>
           </View>
 
@@ -130,7 +183,7 @@ const ForgotPasswordOtp = ({ route, navigation }) => {
             <View style={styles.formCard}>
               <Text style={styles.stepTitle}>Enter 4-Digit Code</Text>
               <Text style={styles.stepSubtitle}>
-                Verification code sent to {email}
+                Verification code sent to {identifier}
               </Text>
 
               <View style={styles.otpInputRow}>
@@ -176,7 +229,7 @@ const ForgotPasswordOtp = ({ route, navigation }) => {
                 ) : (
                   <>
                     <Ionicons name="shield-checkmark" size={18} color={COLORS.textContrast} style={styles.btnIcon} />
-                    <Text style={styles.actionBtnText}>Verify Code</Text>
+                    <Text style={styles.actionBtnText}>Verify & Log In</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -188,7 +241,7 @@ const ForgotPasswordOtp = ({ route, navigation }) => {
   );
 };
 
-export default ForgotPasswordOtp;
+export default LoginOtp;
 
 const styles = StyleSheet.create({
   safeArea: {

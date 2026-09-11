@@ -16,8 +16,11 @@ import {
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
+import { updateSellerAccount, getSellerMe } from "../../api/auth";
 
 const ContactNumber = ({ navigation }) => {
+  const { colors } = useTheme();
   const [currentPhone, setCurrentPhone] = useState("");
   const [newPhone, setNewPhone] = useState("");
   
@@ -32,52 +35,58 @@ const ContactNumber = ({ navigation }) => {
   const [otpCode, setOtpCode] = useState(["", "", "", ""]);
   const [timer, setTimer] = useState(30);
   const [otpError, setOtpError] = useState("");
-  const otpInputRefs = useRef([]);
+  const inputRefs = useRef([]);
 
   useEffect(() => {
-    const loadPhone = async () => {
+    const loadPhoneData = async () => {
       setIsLoading(true);
       try {
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        if (storedProfile) {
-          const parsed = JSON.parse(storedProfile);
-          setCurrentPhone(parsed.phone || "Not Set");
+        const [storedProfile, storedUser] = await Promise.all([
+          AsyncStorage.getItem("sellerProfile"),
+          AsyncStorage.getItem("userData"),
+        ]);
+        const parsedProfile = storedProfile ? JSON.parse(storedProfile) : {};
+        const parsedUser = storedUser ? JSON.parse(storedUser) : {};
+        setCurrentPhone(parsedUser.mobile || parsedProfile.phone || parsedProfile.mobile || "");
+
+        try {
+          const fresh = await getSellerMe();
+          if (fresh?.data?.user?.mobile) {
+            setCurrentPhone(fresh.data.user.mobile);
+          }
+        } catch (e) {
+          // offline fallback
         }
       } catch (err) {
-        console.log("Error loading contact", err);
+        console.log("Error loading contact number", err);
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadPhone();
+    loadPhoneData();
   }, []);
 
   // Timer countdown
   useEffect(() => {
-    let interval = null;
+    let interval;
     if (showOtpScreen && timer > 0) {
       interval = setInterval(() => {
         setTimer((prev) => prev - 1);
       }, 1000);
-    } else {
-      clearInterval(interval);
     }
     return () => clearInterval(interval);
   }, [showOtpScreen, timer]);
 
   const handleSendOtp = async () => {
-    const phoneRegex = /^[0-9]{10}$/;
-    if (!newPhone.trim()) {
-      setError("Phone number is required");
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!newPhone.trim() || !phoneRegex.test(newPhone.trim())) {
+      setError("Enter a valid 10-digit mobile number");
       return;
     }
-    if (!phoneRegex.test(newPhone.trim())) {
-      setError("Please enter a valid 10-digit phone number");
-      return;
-    }
-    if (newPhone.trim() === currentPhone) {
-      setError("New phone number cannot be the same as current number");
+
+    if (newPhone.trim() === currentPhone.trim()) {
+      setError("New phone number must be different from current phone number");
       return;
     }
 
@@ -85,19 +94,16 @@ const ContactNumber = ({ navigation }) => {
     setIsSendingOtp(true);
 
     try {
-      // Simulate network request
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       
-      // Reset OTP values
-      setOtpCode(["", "", "", ""]);
-      setTimer(30);
-      setOtpError("");
       setShowOtpScreen(true);
+      setTimer(30);
+      setOtpCode(["", "", "", ""]);
+      setOtpError("");
       
-      // Auto alert the mock code for testing
       Alert.alert(
-        "Verification Code",
-        `A mock OTP code [ 1234 ] has been sent to +91 ${newPhone}.`
+        "Verification Code Sent",
+        `Use OTP [ 1234 ] to verify your new mobile number +91 ${newPhone}.`
       );
     } catch (err) {
       setError("Failed to send OTP. Please try again.");
@@ -113,18 +119,14 @@ const ContactNumber = ({ navigation }) => {
     setOtpCode(newOtp);
     setOtpError("");
 
-    // Move to next input if text is entered
     if (cleanText && index < 3) {
-      otpInputRefs.current[index + 1].focus();
+      inputRefs.current[index + 1].focus();
     }
   };
 
   const handleOtpKeyPress = (e, index) => {
     if (e.nativeEvent.key === "Backspace" && !otpCode[index] && index > 0) {
-      const newOtp = [...otpCode];
-      newOtp[index - 1] = "";
-      setOtpCode(newOtp);
-      otpInputRefs.current[index - 1].focus();
+      inputRefs.current[index - 1].focus();
     }
   };
 
@@ -137,19 +139,29 @@ const ContactNumber = ({ navigation }) => {
 
     setIsVerifying(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
       if (otpString === "1234") {
-        // Save to AsyncStorage
+        await updateSellerAccount({ mobile: newPhone.trim() });
+
         const storedProfile = await AsyncStorage.getItem("sellerProfile");
         const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
 
         const updatedProfile = {
           ...currentProfile,
           phone: newPhone.trim(),
+          mobile: newPhone.trim(),
         };
 
-        await AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile));
+        const storedUser = await AsyncStorage.getItem("userData");
+        const currentUser = storedUser ? JSON.parse(storedUser) : {};
+        const updatedUser = {
+          ...currentUser,
+          mobile: newPhone.trim(),
+        };
+
+        await Promise.all([
+          AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile)),
+          AsyncStorage.setItem("userData", JSON.stringify(updatedUser)),
+        ]);
 
         Alert.alert("Success", "Contact number updated successfully!", [
           { text: "OK", onPress: () => navigation.goBack() }
@@ -158,7 +170,9 @@ const ContactNumber = ({ navigation }) => {
         setOtpError("Invalid verification code. Please try again.");
       }
     } catch (err) {
-      setOtpError("Verification failed. Please try again.");
+      console.log("Verification / update mobile failed:", err);
+      setOtpError(err.message || "Verification failed. Please try again.");
+      Alert.alert("Error", err.message || "Failed to update contact number.");
     } finally {
       setIsVerifying(false);
     }
@@ -179,20 +193,20 @@ const ContactNumber = ({ navigation }) => {
 
   if (isLoading) {
     return (
-      <View style={styles.loaderContainer}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
+      <View style={[styles.loaderContainer, { backgroundColor: colors.backgroundAlt }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
+        style={styles.keyboardContainer}
       >
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.cardBg, borderBottomColor: colors.borderLight }]}>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => {
@@ -203,12 +217,12 @@ const ContactNumber = ({ navigation }) => {
               }
             }}
           >
-            <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {showOtpScreen ? "Verify OTP" : "Contact Number"}
+          <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
+            {showOtpScreen ? "Verify Number" : "Change Contact Number"}
           </Text>
-          <View style={{ width: 40 }} />
+          <View style={styles.headerSpacer} />
         </View>
 
         {!showOtpScreen ? (
@@ -329,11 +343,11 @@ const ContactNumber = ({ navigation }) => {
               disabled={isSendingOtp}
             >
               {isSendingOtp ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={COLORS.textContrast} />
               ) : (
                 <>
                   <Text style={styles.actionBtnText}>Send Verification OTP</Text>
-                  <Ionicons name="arrow-forward" size={18} color="#fff" style={{ marginLeft: 6 }} />
+                  <Ionicons name="arrow-forward" size={18} color={COLORS.textContrast} style={styles.btnIconMarginLeft6} />
                 </>
               )}
             </TouchableOpacity>
@@ -345,10 +359,10 @@ const ContactNumber = ({ navigation }) => {
               disabled={isVerifying}
             >
               {isVerifying ? (
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color={COLORS.textContrast} />
               ) : (
                 <>
-                  <Ionicons name="shield-checkmark" size={18} color="#fff" style={{ marginRight: 6 }} />
+                  <Ionicons name="shield-checkmark" size={18} color={COLORS.textContrast} style={styles.btnIconMarginRight6} />
                   <Text style={styles.actionBtnText}>Verify & Save</Text>
                 </>
               )}
@@ -366,7 +380,10 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.backgroundAlt,
-    paddingTop: (Platform.OS === "android" ? StatusBar.currentHeight : 0) + 15,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 20,
+  },
+  keyboardContainer: {
+    flex: 1,
   },
   loaderContainer: {
     flex: 1,
@@ -395,6 +412,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: COLORS.textPrimary,
+  },
+  headerSpacer: {
+    width: 40,
   },
   scrollView: {
     flex: 1,
@@ -587,8 +607,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 4,
   },
+  btnIconMarginLeft6: {
+    marginLeft: 6,
+  },
+  btnIconMarginRight6: {
+    marginRight: 6,
+  },
   actionBtnText: {
-    color: "#fff",
+    color: COLORS.textContrast,
     fontSize: 16,
     fontWeight: "700",
   },

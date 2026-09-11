@@ -1,4 +1,4 @@
-import React, {useState} from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -8,11 +8,17 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  Platform,
+  StatusBar,
+  PermissionsAndroid,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import {launchImageLibrary, launchCamera} from "react-native-image-picker";
+import { launchImageLibrary, launchCamera } from "react-native-image-picker";
+import COLORS from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 
-const AIProductStudio = ({navigation}) => {
+const AIProductStudio = ({ navigation }) => {
+  const { colors } = useTheme();
   const [selectedImage, setSelectedImage] = useState(null);
   const [processedImage, setProcessedImage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -22,37 +28,54 @@ const AIProductStudio = ({navigation}) => {
   const [activePreset, setActivePreset] = useState(null);
   const [compareTab, setCompareTab] = useState("after");
 
-  const handlePickImage = () => {
-    Alert.alert(
-      "Upload Product Image",
-      "Choose source to pick image for AI Studio",
-      [
+  const requestCameraPermission = async () => {
+    if (Platform.OS !== "android") return true;
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.CAMERA,
         {
-          text: "Camera",
-          onPress: () => {
-            launchCamera({ mediaType: 'photo', quality: 0.8 }, response => {
-              if (!response.didCancel && response.assets && response.assets.length > 0) {
-                setSelectedImage(response.assets[0].uri);
-                setProcessedImage(null);
-                setCompareTab("before");
-              }
-            });
-          }
-        },
-        {
-          text: "Gallery",
-          onPress: () => {
-            launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, response => {
-              if (!response.didCancel && response.assets && response.assets.length > 0) {
-                setSelectedImage(response.assets[0].uri);
-                setProcessedImage(null);
-                setCompareTab("before");
-              }
-            });
-          }
-        },
-        { text: "Cancel", style: "cancel" }
-      ]
+          title: "Camera Permission",
+          message: "DeeBazar Seller needs camera access to capture product photos for AI Studio.",
+          buttonNeutral: "Ask Me Later",
+          buttonNegative: "Cancel",
+          buttonPositive: "OK",
+        }
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    } catch (err) {
+      return false;
+    }
+  };
+
+  const handlePickImage = async (source) => {
+    if (source === "camera") {
+      const hasPerm = await requestCameraPermission();
+      if (!hasPerm) {
+        Alert.alert("Permission Required", "Camera permission is needed to take product photos.");
+        return;
+      }
+    }
+
+    const launcher = source === "camera" ? launchCamera : launchImageLibrary;
+    launcher(
+      {
+        mediaType: "photo",
+        quality: 0.9,
+      },
+      (response) => {
+        if (response.didCancel) return;
+        if (response.errorCode) {
+          Alert.alert("Error", "Could not pick image.");
+          return;
+        }
+        if (response.assets && response.assets.length > 0) {
+          const uri = response.assets[0].uri;
+          setSelectedImage(uri);
+          setProcessedImage(null);
+          setCompareTab("before");
+          setProcessingStatus("Image uploaded. Select an AI tool below.");
+        }
+      }
     );
   };
 
@@ -131,18 +154,19 @@ const AIProductStudio = ({navigation}) => {
 
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: "#F6F7FB", paddingTop: 15 }}
-      showsVerticalScrollIndicator={false}>
-
+      style={styles.container}
+      showsVerticalScrollIndicator={false}
+    >
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backBtn}
-          onPress={() => navigation.goBack()}>
+          onPress={() => navigation.goBack()}
+        >
           <Ionicons
             name="arrow-back"
             size={22}
-            color="#222"
+            color={COLORS.textGrayDark}
           />
         </TouchableOpacity>
 
@@ -154,7 +178,7 @@ const AIProductStudio = ({navigation}) => {
           <Ionicons
             name="sparkles"
             size={26}
-            color="#7C3AED"
+            color={COLORS.menuBank}
           />
         </TouchableOpacity>
       </View>
@@ -163,11 +187,12 @@ const AIProductStudio = ({navigation}) => {
       <View style={styles.uploadCard}>
         <TouchableOpacity
           style={styles.uploadArea}
-          onPress={handlePickImage}>
+          onPress={handlePickImage}
+        >
           <Ionicons
             name="cloud-upload-outline"
             size={55}
-            color="#2E7DFF"
+            color={COLORS.primary}
           />
           <Text style={styles.uploadTitle}>
             Upload Product Image
@@ -190,7 +215,7 @@ const AIProductStudio = ({navigation}) => {
           <Ionicons
             name={compareTab === 'after' && processedImage ? "checkmark-circle" : "image-outline"}
             size={14}
-            color="#fff"
+            color={COLORS.textContrast}
           />
           <Text style={styles.badgeText}>
             {compareTab === 'after' && processedImage ? "BG Removed (Studio HD)" : "Original Image"}
@@ -199,7 +224,7 @@ const AIProductStudio = ({navigation}) => {
 
         {isProcessing && (
           <View style={styles.processingOverlay}>
-            <ActivityIndicator size="large" color="#7C3AED" />
+            <ActivityIndicator size="large" color={COLORS.menuBank} />
             <Text style={styles.overlayText}>Processing AI Edit...</Text>
           </View>
         )}
@@ -209,7 +234,8 @@ const AIProductStudio = ({navigation}) => {
       <View style={styles.compareRow}>
         <TouchableOpacity
           style={[styles.compareBox, compareTab === "before" && styles.compareBoxActive]}
-          onPress={() => setCompareTab("before")}>
+          onPress={() => setCompareTab("before")}
+        >
           <Text style={[styles.compareTitle, compareTab === "before" && styles.compareTitleActive]}>
             Before (Original)
           </Text>
@@ -217,7 +243,8 @@ const AIProductStudio = ({navigation}) => {
 
         <TouchableOpacity
           style={[styles.compareBox, compareTab === "after" && styles.compareBoxActive]}
-          onPress={() => setCompareTab("after")}>
+          onPress={() => setCompareTab("after")}
+        >
           <Text style={[styles.compareTitle, compareTab === "after" && styles.compareTitleActive]}>
             After (BG Removed)
           </Text>
@@ -233,11 +260,12 @@ const AIProductStudio = ({navigation}) => {
         <View style={styles.toolsGrid}>
           <TouchableOpacity
             style={[styles.toolItem, activeTool === 'Remove BG' && styles.toolItemActive]}
-            onPress={() => handleApplyTool('Remove BG')}>
+            onPress={() => handleApplyTool('Remove BG')}
+          >
             <Ionicons
               name="cut-outline"
               size={28}
-              color="#2E7DFF"
+              color={COLORS.primary}
             />
             <Text style={styles.toolText}>
               Remove BG
@@ -246,11 +274,12 @@ const AIProductStudio = ({navigation}) => {
 
           <TouchableOpacity
             style={[styles.toolItem, activeTool === 'AI Enhance' && styles.toolItemActive]}
-            onPress={() => handleApplyTool('AI Enhance')}>
+            onPress={() => handleApplyTool('AI Enhance')}
+          >
             <Ionicons
               name="sparkles-outline"
               size={28}
-              color="#7C3AED"
+              color={COLORS.menuBank}
             />
             <Text style={styles.toolText}>
               AI Enhance
@@ -259,11 +288,12 @@ const AIProductStudio = ({navigation}) => {
 
           <TouchableOpacity
             style={[styles.toolItem, activeTool === 'HD Upscale' && styles.toolItemActive]}
-            onPress={() => handleApplyTool('HD Upscale')}>
+            onPress={() => handleApplyTool('HD Upscale')}
+          >
             <Ionicons
               name="scan-outline"
               size={28}
-              color="#16A34A"
+              color={COLORS.success}
             />
             <Text style={styles.toolText}>
               HD Upscale
@@ -272,11 +302,12 @@ const AIProductStudio = ({navigation}) => {
 
           <TouchableOpacity
             style={[styles.toolItem, activeTool === 'Studio Light' && styles.toolItemActive]}
-            onPress={() => handleApplyTool('Studio Light')}>
+            onPress={() => handleApplyTool('Studio Light')}
+          >
             <Ionicons
               name="sunny-outline"
               size={28}
-              color="#FF9800"
+              color={COLORS.menuContact}
             />
             <Text style={styles.toolText}>
               Studio Light
@@ -285,11 +316,12 @@ const AIProductStudio = ({navigation}) => {
 
           <TouchableOpacity
             style={[styles.toolItem, activeTool === 'White BG' && styles.toolItemActive]}
-            onPress={() => handleApplyTool('White BG')}>
+            onPress={() => handleApplyTool('White BG')}
+          >
             <Ionicons
               name="image-outline"
               size={28}
-              color="#009688"
+              color={COLORS.infoText}
             />
             <Text style={styles.toolText}>
               White BG
@@ -298,11 +330,12 @@ const AIProductStudio = ({navigation}) => {
 
           <TouchableOpacity
             style={[styles.toolItem, activeTool === 'Auto Color' && styles.toolItemActive]}
-            onPress={() => handleApplyTool('Auto Color')}>
+            onPress={() => handleApplyTool('Auto Color')}
+          >
             <Ionicons
               name="contrast-outline"
               size={28}
-              color="#E91E63"
+              color={COLORS.menuPassword}
             />
             <Text style={styles.toolText}>
               Auto Color
@@ -311,11 +344,12 @@ const AIProductStudio = ({navigation}) => {
 
           <TouchableOpacity
             style={[styles.toolItem, activeTool === 'Magic Eraser' && styles.toolItemActive]}
-            onPress={() => handleApplyTool('Magic Eraser')}>
+            onPress={() => handleApplyTool('Magic Eraser')}
+          >
             <Ionicons
               name="brush-outline"
               size={28}
-              color="#F44336"
+              color={COLORS.error}
             />
             <Text style={styles.toolText}>
               Magic Eraser
@@ -324,11 +358,12 @@ const AIProductStudio = ({navigation}) => {
 
           <TouchableOpacity
             style={[styles.toolItem, activeTool === 'Smart Crop' && styles.toolItemActive]}
-            onPress={() => handleApplyTool('Smart Crop')}>
+            onPress={() => handleApplyTool('Smart Crop')}
+          >
             <Ionicons
               name="crop-outline"
               size={28}
-              color="#3F51B5"
+              color={COLORS.primaryDark}
             />
             <Text style={styles.toolText}>
               Smart Crop
@@ -372,7 +407,8 @@ const AIProductStudio = ({navigation}) => {
 
         <ScrollView
           horizontal
-          showsHorizontalScrollIndicator={false}>
+          showsHorizontalScrollIndicator={false}
+        >
           {[
             "Amazon",
             "Flipkart",
@@ -384,7 +420,8 @@ const AIProductStudio = ({navigation}) => {
             <TouchableOpacity
               key={index}
               style={[styles.presetChip, activePreset === item && styles.presetChipActive]}
-              onPress={() => handleApplyPreset(item)}>
+              onPress={() => handleApplyPreset(item)}
+            >
               <Text style={[styles.presetText, activePreset === item && styles.presetTextActive]}>
                 {item}
               </Text>
@@ -397,11 +434,12 @@ const AIProductStudio = ({navigation}) => {
       <View style={styles.actionContainer}>
         <TouchableOpacity
           style={styles.resetBtn}
-          onPress={handleReset}>
+          onPress={handleReset}
+        >
           <Ionicons
             name="refresh-outline"
             size={22}
-            color="#E53935"
+            color={COLORS.error}
           />
           <Text style={styles.resetText}>
             Reset
@@ -410,11 +448,12 @@ const AIProductStudio = ({navigation}) => {
 
         <TouchableOpacity
           style={styles.downloadBtn}
-          onPress={handleDownload}>
+          onPress={handleDownload}
+        >
           <Ionicons
             name="download-outline"
             size={22}
-            color="#fff"
+            color={COLORS.textContrast}
           />
           <Text style={styles.downloadText}>
             Download
@@ -426,17 +465,17 @@ const AIProductStudio = ({navigation}) => {
       <TouchableOpacity
         activeOpacity={0.9}
         style={styles.usePhotoBtn}
-        onPress={handleUsePhoto}>
+        onPress={handleUsePhoto}
+      >
         <Ionicons
           name="checkmark-circle"
           size={24}
-          color="#fff"
+          color={COLORS.textContrast}
         />
         <Text style={styles.usePhotoText}>
           Use This Photo
         </Text>
       </TouchableOpacity>
-
     </ScrollView>
   );
 };
@@ -444,9 +483,14 @@ const AIProductStudio = ({navigation}) => {
 export default AIProductStudio;
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.backgroundAlt,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 10,
+  },
   header: {
     height: 60,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -461,45 +505,51 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#222",
+    color: COLORS.textGrayDark,
   },
   uploadCard: {
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     borderRadius: 20,
     padding: 16,
     elevation: 2,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
   },
   uploadArea: {
     borderWidth: 2,
-    borderColor: "#D0E1FF",
+    borderColor: COLORS.primaryLight,
     borderStyle: "dashed",
     borderRadius: 16,
     paddingVertical: 24,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F4F8FF",
+    backgroundColor: COLORS.primaryBgLight,
   },
   uploadTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#2E7DFF",
+    color: COLORS.primary,
     marginTop: 10,
   },
   uploadSub: {
     fontSize: 12,
-    color: "#777",
+    color: COLORS.textGrayLight,
     marginTop: 4,
   },
   previewCard: {
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     borderRadius: 20,
     overflow: "hidden",
     elevation: 3,
     position: "relative",
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
   previewImage: {
     width: "100%",
@@ -517,20 +567,20 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   badgeSuccess: {
-    backgroundColor: "#16A34A",
+    backgroundColor: COLORS.success,
   },
   badgeDefault: {
     backgroundColor: "rgba(0,0,0,0.6)",
   },
   badgeText: {
-    color: "#fff",
+    color: COLORS.textContrast,
     fontSize: 12,
     fontWeight: "600",
     marginLeft: 6,
   },
   processingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(255,255,255,0.85)",
+    backgroundColor: COLORS.cardBgOverlay,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -538,7 +588,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 15,
     fontWeight: "700",
-    color: "#7C3AED",
+    color: COLORS.menuBank,
   },
   compareRow: {
     flexDirection: "row",
@@ -548,39 +598,42 @@ const styles = StyleSheet.create({
   },
   compareBox: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     paddingVertical: 12,
     borderRadius: 14,
     alignItems: "center",
     marginHorizontal: 4,
     borderWidth: 1.5,
-    borderColor: "#E5E7EB",
+    borderColor: COLORS.borderMedium,
   },
   compareBoxActive: {
-    borderColor: "#7C3AED",
-    backgroundColor: "#F3E8FF",
+    borderColor: COLORS.menuBank,
+    backgroundColor: COLORS.menuBankLight,
   },
   compareTitle: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#666",
+    color: COLORS.textSecondary,
   },
   compareTitleActive: {
-    color: "#7C3AED",
+    color: COLORS.menuBank,
     fontWeight: "700",
   },
   toolsCard: {
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     borderRadius: 20,
     padding: 18,
     elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#222",
+    color: COLORS.textGrayDark,
     marginBottom: 14,
   },
   toolsGrid: {
@@ -590,7 +643,7 @@ const styles = StyleSheet.create({
   },
   toolItem: {
     width: "23%",
-    backgroundColor: "#F7F8FB",
+    backgroundColor: COLORS.backgroundAlt,
     borderRadius: 16,
     alignItems: "center",
     paddingVertical: 14,
@@ -599,23 +652,26 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   toolItemActive: {
-    borderColor: "#7C3AED",
-    backgroundColor: "#F3E8FF",
+    borderColor: COLORS.menuBank,
+    backgroundColor: COLORS.menuBankLight,
   },
   toolText: {
     marginTop: 8,
     fontSize: 11,
-    color: "#444",
+    color: COLORS.textGrayMedium,
     fontWeight: "600",
     textAlign: "center",
   },
   processingCard: {
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     borderRadius: 20,
     padding: 18,
     elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
   processingHeader: {
     flexDirection: "row",
@@ -625,36 +681,39 @@ const styles = StyleSheet.create({
   progressText: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#7C3AED",
+    color: COLORS.menuBank,
   },
   progressBg: {
     height: 10,
-    backgroundColor: "#ECECEC",
+    backgroundColor: COLORS.borderLight,
     borderRadius: 10,
     marginTop: 14,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    backgroundColor: "#7C3AED",
+    backgroundColor: COLORS.menuBank,
     borderRadius: 10,
   },
   processingStatus: {
     marginTop: 12,
-    color: "#666",
+    color: COLORS.textSecondary,
     fontSize: 13,
     fontWeight: "500",
   },
   card: {
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     borderRadius: 20,
     padding: 18,
     elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
   presetChip: {
-    backgroundColor: "#EEF5FF",
+    backgroundColor: COLORS.primaryBgLight,
     paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 25,
@@ -663,14 +722,14 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   presetChipActive: {
-    backgroundColor: "#7C3AED",
+    backgroundColor: COLORS.menuBank,
   },
   presetText: {
-    color: "#2E7DFF",
+    color: COLORS.primary,
     fontWeight: "700",
   },
   presetTextActive: {
-    color: "#fff",
+    color: COLORS.textContrast,
   },
   actionContainer: {
     flexDirection: "row",
@@ -682,14 +741,14 @@ const styles = StyleSheet.create({
     width: "30%",
     height: 52,
     borderWidth: 1.5,
-    borderColor: "#E53935",
+    borderColor: COLORS.error,
     borderRadius: 15,
     justifyContent: "center",
     alignItems: "center",
     flexDirection: "row",
   },
   resetText: {
-    color: "#E53935",
+    color: COLORS.error,
     marginLeft: 6,
     fontWeight: "700",
   },
@@ -697,13 +756,13 @@ const styles = StyleSheet.create({
     width: "66%",
     height: 52,
     borderRadius: 15,
-    backgroundColor: "#2E7DFF",
+    backgroundColor: COLORS.primary,
     justifyContent: "center",
     alignItems: "center",
     flexDirection: "row",
   },
   downloadText: {
-    color: "#fff",
+    color: COLORS.textContrast,
     marginLeft: 8,
     fontWeight: "700",
   },
@@ -713,13 +772,13 @@ const styles = StyleSheet.create({
     marginBottom: 40,
     height: 56,
     borderRadius: 16,
-    backgroundColor: "#16A34A",
+    backgroundColor: COLORS.success,
     justifyContent: "center",
     alignItems: "center",
     flexDirection: "row",
   },
   usePhotoText: {
-    color: "#fff",
+    color: COLORS.textContrast,
     fontSize: 16,
     fontWeight: "700",
     marginLeft: 8,

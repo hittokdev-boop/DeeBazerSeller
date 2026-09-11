@@ -16,8 +16,10 @@ import {
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
 
 const BankDetails = ({ navigation }) => {
+  const { colors } = useTheme();
   const [gstin, setGstin] = useState("");
   const [bankName, setBankName] = useState("");
   const [accountNo, setAccountNo] = useState("");
@@ -104,28 +106,28 @@ const BankDetails = ({ navigation }) => {
 
   if (isLoading) {
     return (
-      <View style={styles.loaderContainer}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
+      <View style={[styles.loaderContainer, { backgroundColor: colors.backgroundAlt }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
+        style={styles.keyboardContainer}
       >
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.cardBg, borderBottomColor: colors.borderLight }]}>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => navigation.goBack()}
           >
-            <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Bank Details</Text>
-          <View style={{ width: 40 }} />
+          <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Bank Details</Text>
+          <View style={styles.headerSpacer} />
         </View>
 
         <ScrollView
@@ -158,7 +160,7 @@ const BankDetails = ({ navigation }) => {
               >
                 <Ionicons name="document-text-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
                 <TextInput
-                  style={[styles.textInput, { autoCapitalize: "characters" }]}
+                  style={[styles.textInput, styles.autoCaps]}
                   placeholder="Enter 15-character GSTIN number"
                   placeholderTextColor={COLORS.textGrayPlaceholder}
                   autoCapitalize="characters"
@@ -233,7 +235,7 @@ const BankDetails = ({ navigation }) => {
               >
                 <Ionicons name="barcode-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
                 <TextInput
-                  style={[styles.textInput, { autoCapitalize: "characters" }]}
+                  style={[styles.textInput, styles.autoCaps]}
                   placeholder="e.g. SBIN0001234"
                   placeholderTextColor={COLORS.textGrayPlaceholder}
                   autoCapitalize="characters"
@@ -258,10 +260,10 @@ const BankDetails = ({ navigation }) => {
             disabled={isSaving}
           >
             {isSaving ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={COLORS.textContrast} />
             ) : (
               <>
-                <Ionicons name="checkmark-circle-outline" size={20} color="#fff" style={{ marginRight: 6 }} />
+                <Ionicons name="checkmark-circle-outline" size={20} color={COLORS.textContrast} style={styles.btnIconMarginRight6} />
                 <Text style={styles.saveBtnText}>Save Account Details</Text>
               </>
             )}
@@ -278,7 +280,10 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.backgroundAlt,
-    paddingTop: (Platform.OS === "android" ? StatusBar.currentHeight : 0) + 15,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 20,
+  },
+  keyboardContainer: {
+    flex: 1,
   },
   loaderContainer: {
     flex: 1,
@@ -307,6 +312,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
     color: COLORS.textPrimary,
+  },
+  headerSpacer: {
+    width: 40,
   },
   scrollView: {
     flex: 1,
@@ -381,6 +389,9 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     fontWeight: "500",
   },
+  autoCaps: {
+    autoCapitalize: "characters",
+  },
   errorText: {
     fontSize: 12,
     color: COLORS.error,
@@ -405,8 +416,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 4,
   },
+  btnIconMarginRight6: {
+    marginRight: 6,
+  },
   saveBtnText: {
-    color: "#fff",
+    color: COLORS.textContrast,
     fontSize: 16,
     fontWeight: "700",
   },

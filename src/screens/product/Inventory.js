@@ -1,13 +1,19 @@
-import React, {useState} from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Image,StyleSheet
+  Image,
+  StyleSheet,
+  Alert,
+  Platform,
+  StatusBar,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import COLORS from '../../constants/theme';
+import { useTheme } from '../../context/ThemeContext';
 
 const MOCK_INVENTORY = [
   { id: 1, name: "Organic Honey Premium", sku: "DBZ-001", stock: 120, image: "https://picsum.photos/200?random=31" },
@@ -22,14 +28,12 @@ const MOCK_INVENTORY = [
 
 const STOCK_FILTERS = ["All", "In Stock", "Low Stock", "Out Of Stock"];
 
-import { Alert } from 'react-native';
-
-const Inventory = ({navigation}) => {
+const Inventory = ({ navigation }) => {
+  const { colors } = useTheme();
   const [inventory, setInventory] = useState(MOCK_INVENTORY);
   const [search, setSearch] = useState('');
   const [selectedStockFilter, setSelectedStockFilter] = useState('All');
 
-  // Filter items
   const filteredInventory = inventory.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(search.toLowerCase()) || 
                          item.sku.toLowerCase().includes(search.toLowerCase());
@@ -46,106 +50,87 @@ const Inventory = ({navigation}) => {
     return matchesSearch && matchesStock;
   });
 
-  // Calculate dynamic stats
   const totalCount = inventory.length;
   const inStockCount = inventory.filter(i => i.stock > 20).length;
   const lowStockCount = inventory.filter(i => i.stock > 0 && i.stock <= 20).length;
   const outOfStockCount = inventory.filter(i => i.stock === 0).length;
 
-  const handleStockAdjust = (id, currentStock, name) => {
-    Alert.alert(
-      "Adjust Stock",
-      `Manage stock for "${name}" (Current: ${currentStock})`,
+  const handleUpdateStock = (id, currentStock) => {
+    Alert.prompt(
+      "Update Stock",
+      "Enter new stock quantity for this item:",
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Set Out of Stock", 
-          style: "destructive",
-          onPress: () => {
-            setInventory(prev => prev.map(item => item.id === id ? { ...item, stock: 0 } : item));
-          }
+        {
+          text: "Update",
+          onPress: (val) => {
+            const num = parseInt(val, 10);
+            if (!isNaN(num) && num >= 0) {
+              setInventory((prev) =>
+                prev.map((item) => (item.id === id ? { ...item, stock: num } : item))
+              );
+            }
+          },
         },
-        { 
-          text: "+10 Stock", 
-          onPress: () => {
-            setInventory(prev => prev.map(item => item.id === id ? { ...item, stock: item.stock + 10 } : item));
-          }
-        },
-        { 
-          text: "-10 Stock", 
-          onPress: () => {
-            setInventory(prev => prev.map(item => item.id === id ? { ...item, stock: Math.max(0, item.stock - 10) } : item));
-          }
-        }
-      ]
+      ],
+      "plain-text",
+      currentStock.toString()
     );
   };
 
   return (
-
     <ScrollView
-      style={{ flex:1,backgroundColor:'#F6F7FB', paddingTop: 15 }}
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={{paddingBottom:100}}>
-
+      style={[styles.container, { backgroundColor: colors.backgroundAlt }]}
+      contentContainerStyle={styles.scrollContent}
+    >
       {/* Header */}
-
-      <View style={styles.header}>
-
+      <View style={[styles.header, { backgroundColor: colors.cardBg }]}>
         <TouchableOpacity
           style={styles.backBtn}
-          onPress={()=>navigation.goBack()}>
-
+          onPress={() => navigation.goBack()}
+        >
           <Ionicons
             name="arrow-back"
             size={22}
-            color="#222"
+            color={colors.textGrayDark}
           />
-
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>
+        <Text style={[styles.headerTitle, { color: colors.textGrayDark }]}>
           Inventory
         </Text>
 
         <TouchableOpacity style={styles.filterBtn}>
-
           <Ionicons
             name="options-outline"
             size={22}
-            color="#2E7DFF"
+            color={COLORS.primary}
           />
-
         </TouchableOpacity>
-
       </View>
 
       {/* Search */}
-
       <View style={styles.searchBox}>
-
         <Ionicons
           name="search-outline"
           size={22}
-          color="#888"
+          color={COLORS.textGrayPlaceholder}
         />
-
         <TextInput
           placeholder="Search Product..."
-          placeholderTextColor="#888"
+          placeholderTextColor={COLORS.textGrayPlaceholder}
           value={search}
           onChangeText={setSearch}
           style={styles.searchInput}
         />
-
       </View>
 
       {/* Stock Filter Chips */}
-      <View style={{ height: 42, marginBottom: 12 }}>
+      <View style={styles.chipRow}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16 }}
+          contentContainerStyle={styles.chipScrollContent}
         >
           {STOCK_FILTERS.map((filter) => {
             const isSelected = selectedStockFilter === filter;
@@ -173,120 +158,92 @@ const Inventory = ({navigation}) => {
       </View>
 
       {/* Summary Cards */}
-
       <View style={styles.summaryRow}>
-
         <View style={styles.summaryCard}>
-
           <Ionicons
             name="cube-outline"
             size={26}
-            color="#2E7DFF"
+            color={COLORS.primary}
           />
-
           <Text style={styles.summaryValue}>
             {totalCount}
           </Text>
-
           <Text style={styles.summaryLabel}>
             Total Products
           </Text>
-
         </View>
 
         <View style={styles.summaryCard}>
-
           <Ionicons
             name="checkmark-circle-outline"
             size={26}
-            color="#16A34A"
+            color={COLORS.success}
           />
-
           <Text style={styles.summaryValue}>
             {inStockCount}
           </Text>
-
           <Text style={styles.summaryLabel}>
             In Stock
           </Text>
-
         </View>
-
       </View>
 
       <View style={styles.summaryRow}>
-
         <View style={styles.summaryCard}>
-
           <Ionicons
             name="warning-outline"
             size={26}
-            color="#FF9800"
+            color={COLORS.warning}
           />
-
           <Text style={styles.summaryValue}>
             {lowStockCount}
           </Text>
-
           <Text style={styles.summaryLabel}>
             Low Stock
           </Text>
-
         </View>
 
         <View style={styles.summaryCard}>
-
           <Ionicons
             name="close-circle-outline"
             size={26}
-            color="#F44336"
+            color={COLORS.error}
           />
-
           <Text style={styles.summaryValue}>
             {outOfStockCount}
           </Text>
-
           <Text style={styles.summaryLabel}>
             Out Of Stock
           </Text>
-
         </View>
-
       </View>
 
       {/* Inventory List */}
-
       <View style={styles.sectionHeader}>
-
         <Text style={styles.sectionTitle}>
           Inventory List
         </Text>
-
         <TouchableOpacity>
-
           <Text style={styles.seeAll}>
             View All
           </Text>
-
         </TouchableOpacity>
-
       </View>
 
       {filteredInventory.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="cube-outline" size={60} color="#ccc" />
+          <Ionicons name="cube-outline" size={60} color={COLORS.borderDark} />
           <Text style={styles.emptyText}>No inventory items found</Text>
         </View>
       ) : (
         filteredInventory.map((item) => {
-          return(
-
+          return (
             <TouchableOpacity
               key={item.id}
               activeOpacity={0.9}
               onPress={() => handleStockAdjust(item.id, item.stock, item.name)}
-              style={styles.productCard}>
-
+              style={styles.productCard}
+            >
               <Image
                 source={{
                   uri: item.image
@@ -295,569 +252,469 @@ const Inventory = ({navigation}) => {
               />
 
               <View style={styles.productInfo}>
-
                 <Text style={styles.productName}>
                   {item.name}
                 </Text>
-
                 <Text style={styles.sku}>
                   SKU : {item.sku}
                 </Text>
-
-                <Text style={styles.stockText}>
+                <Text style={styles.stockItemText}>
                   Stock : {item.stock}
                 </Text>
 
                 <View style={styles.progressBg}>
-
                   <View
                     style={[
                       styles.progressFill,
-                      {
-                        width:`${Math.min(item.stock,100)}%`,
-                        backgroundColor:
-                          item.stock===0
-                          ?"#F44336"
-                          :item.stock<20
-                          ?"#FF9800"
-                          :"#16A34A"
-                      }
+                      { width: `${Math.min(item.stock, 100)}%` },
+                      item.stock === 0
+                        ? styles.errorFill
+                        : item.stock < 20
+                        ? styles.warningFill
+                        : styles.successFill,
                     ]}
                   />
-
                 </View>
-
               </View>
 
               <TouchableOpacity 
                 style={styles.moreBtn}
                 onPress={() => handleStockAdjust(item.id, item.stock, item.name)}
               >
-
                 <Ionicons
                   name="ellipsis-vertical"
                   size={20}
-                  color="#666"
+                  color={COLORS.textSecondary}
                 />
-
               </TouchableOpacity>
-
             </TouchableOpacity>
-
-          )
-
+          );
         })
       )}
-{/* Inventory Analytics */}
 
-<View style={styles.analyticsCard}>
+      {/* Inventory Analytics */}
+      <View style={styles.analyticsCard}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>
+            Inventory Analytics
+          </Text>
+          <TouchableOpacity>
+            <Text style={styles.seeAll}>
+              Report
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-  <View style={styles.sectionHeader}>
+        <View style={styles.analyticsRow}>
+          <View style={styles.analyticsItem}>
+            <Ionicons
+              name="trending-up-outline"
+              size={28}
+              color={COLORS.success}
+            />
+            <Text style={styles.analyticsValue}>
+              +18%
+            </Text>
+            <Text style={styles.analyticsLabel}>
+              Monthly Growth
+            </Text>
+          </View>
 
-    <Text style={styles.sectionTitle}>
-      Inventory Analytics
-    </Text>
+          <View style={styles.analyticsItem}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={28}
+              color={COLORS.warning}
+            />
+            <Text style={styles.analyticsValue}>
+              {lowStockCount}
+            </Text>
+            <Text style={styles.analyticsLabel}>
+              Low Stock
+            </Text>
+          </View>
 
-    <TouchableOpacity>
-      <Text style={styles.seeAll}>
-        Report
-      </Text>
-    </TouchableOpacity>
+          <View style={styles.analyticsItem}>
+            <Ionicons
+              name="close-circle-outline"
+              size={28}
+              color={COLORS.error}
+            />
+            <Text style={styles.analyticsValue}>
+              {outOfStockCount}
+            </Text>
+            <Text style={styles.analyticsLabel}>
+              Out Of Stock
+            </Text>
+          </View>
+        </View>
+      </View>
 
-  </View>
+      {/* Warehouse */}
+      <View style={styles.warehouseCard}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>
+            Warehouse
+          </Text>
+          <TouchableOpacity>
+            <Text style={styles.seeAll}>
+              Manage
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-  <View style={styles.analyticsRow}>
+        <View style={styles.warehouseRow}>
+          <Ionicons
+            name="business-outline"
+            size={30}
+            color={COLORS.primary}
+          />
+          <View style={styles.warehouseTextContainer}>
+            <Text style={styles.warehouseName}>
+              Main Warehouse
+            </Text>
+            <Text style={styles.warehouseSub}>
+              {totalCount} Products Available
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={22}
+            color={COLORS.textGrayLight}
+          />
+        </View>
+      </View>
 
-    <View style={styles.analyticsItem}>
+      {/* Inventory Alerts */}
+      <View style={styles.alertCard}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>
+            Inventory Alerts
+          </Text>
+        </View>
 
-      <Ionicons
-        name="trending-up-outline"
-        size={28}
-        color="#16A34A"
-      />
+        <View style={styles.alertItem}>
+          <Ionicons
+            name="warning"
+            size={22}
+            color={COLORS.warning}
+          />
+          <Text style={styles.alertText}>
+            {lowStockCount} products are running low on stock.
+          </Text>
+        </View>
 
-      <Text style={styles.analyticsValue}>
-        +18%
-      </Text>
+        <View style={styles.alertItem}>
+          <Ionicons
+            name="close-circle"
+            size={22}
+            color={COLORS.error}
+          />
+          <Text style={styles.alertText}>
+            {outOfStockCount} products are out of stock.
+          </Text>
+        </View>
+      </View>
 
-      <Text style={styles.analyticsLabel}>
-        Monthly Growth
-      </Text>
-
-    </View>
-
-    <View style={styles.analyticsItem}>
-
-      <Ionicons
-        name="alert-circle-outline"
-        size={28}
-        color="#FF9800"
-      />
-
-      <Text style={styles.analyticsValue}>
-        {lowStockCount}
-      </Text>
-
-      <Text style={styles.analyticsLabel}>
-        Low Stock
-      </Text>
-
-    </View>
-
-    <View style={styles.analyticsItem}>
-
-      <Ionicons
-        name="close-circle-outline"
-        size={28}
-        color="#F44336"
-      />
-
-      <Text style={styles.analyticsValue}>
-        {outOfStockCount}
-      </Text>
-
-      <Text style={styles.analyticsLabel}>
-        Out Of Stock
-      </Text>
-
-    </View>
-
-  </View>
-
-</View>
-
-{/* Warehouse */}
-
-<View style={styles.warehouseCard}>
-
-  <View style={styles.sectionHeader}>
-
-    <Text style={styles.sectionTitle}>
-      Warehouse
-    </Text>
-
-    <TouchableOpacity>
-      <Text style={styles.seeAll}>
-        Manage
-      </Text>
-    </TouchableOpacity>
-
-  </View>
-
-  <View style={styles.warehouseRow}>
-
-    <Ionicons
-      name="business-outline"
-      size={30}
-      color="#2E7DFF"
-    />
-
-    <View style={{flex:1,marginLeft:15}}>
-
-      <Text style={styles.warehouseName}>
-        Main Warehouse
-      </Text>
-
-      <Text style={styles.warehouseSub}>
-        {totalCount} Products Available
-      </Text>
-
-    </View>
-
-    <Ionicons
-      name="chevron-forward"
-      size={22}
-      color="#999"
-    />
-
-  </View>
-
-</View>
-
-{/* Inventory Alerts */}
-
-<View style={styles.alertCard}>
-
-  <View style={styles.sectionHeader}>
-
-    <Text style={styles.sectionTitle}>
-      Inventory Alerts
-    </Text>
-
-  </View>
-
-  <View style={styles.alertItem}>
-
-    <Ionicons
-      name="warning"
-      size={22}
-      color="#FF9800"
-    />
-
-    <Text style={styles.alertText}>
-      {lowStockCount} products are running low on stock.
-    </Text>
-
-  </View>
-
-  <View style={styles.alertItem}>
-
-    <Ionicons
-      name="close-circle"
-      size={22}
-      color="#F44336"
-    />
-
-    <Text style={styles.alertText}>
-      {outOfStockCount} products are out of stock.
-    </Text>
-
-  </View>
-
-</View>
-
-{/* Floating Button */}
-
-<TouchableOpacity style={styles.fab}>
-
-  <Ionicons
-    name="add"
-    size={34}
-    color="#fff"
-  />
-
-</TouchableOpacity>
+      {/* Floating Button */}
+      <TouchableOpacity style={styles.fab}>
+        <Ionicons
+          name="add"
+          size={34}
+          color={COLORS.textContrast}
+        />
+      </TouchableOpacity>
     </ScrollView>
-
   );
-
 };
 
 export default Inventory;
 
-
-
 const styles = StyleSheet.create({
-
-  header:{
-    height:70,
-    backgroundColor:"#fff",
-    flexDirection:"row",
-    justifyContent:"space-between",
-    alignItems:"center",
-    paddingHorizontal:18,
-    elevation:3,
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.backgroundAlt,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 10,
   },
-
-  backBtn:{
-    width:42,
-    height:42,
-    borderRadius:12,
-    backgroundColor:"#F5F6FA",
-    justifyContent:"center",
-    alignItems:"center",
+  scrollContent: {
+    paddingBottom: 100,
   },
-
-  headerTitle:{
-    fontSize:21,
-    fontWeight:"700",
-    color:"#222",
+  header: {
+    height: 70,
+    backgroundColor: COLORS.cardBg,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 18,
+    elevation: 3,
   },
-
-  filterBtn:{
-    width:42,
-    height:42,
-    borderRadius:12,
-    backgroundColor:"#EEF5FF",
-    justifyContent:"center",
-    alignItems:"center",
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: COLORS.borderLight,
+    justifyContent: "center",
+    alignItems: "center",
   },
-
-  searchBox:{
-    margin:16,
-    backgroundColor:"#fff",
-    height:56,
-    borderRadius:16,
-    flexDirection:"row",
-    alignItems:"center",
-    paddingHorizontal:15,
-    elevation:2,
+  headerTitle: {
+    fontSize: 21,
+    fontWeight: "700",
+    color: COLORS.textGrayDark,
   },
-
-  searchInput:{
-    flex:1,
-    marginLeft:10,
-    fontSize:15,
-    color:"#222",
+  filterBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: COLORS.primaryBgLight,
+    justifyContent: "center",
+    alignItems: "center",
   },
-
-  summaryRow:{
-    flexDirection:"row",
-    justifyContent:"space-between",
-    marginHorizontal:16,
-    marginBottom:15,
+  searchBox: {
+    margin: 16,
+    backgroundColor: COLORS.cardBg,
+    height: 56,
+    borderRadius: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 15,
+    elevation: 2,
   },
-
-  summaryCard:{
-    width:"48%",
-    backgroundColor:"#fff",
-    borderRadius:20,
-    padding:18,
-    elevation:3,
-    alignItems:"center",
+  searchInput: {
+    flex: 1,
+    marginLeft: 10,
+    fontSize: 15,
+    color: COLORS.textGrayDark,
   },
-
-  summaryValue:{
-    fontSize:24,
-    fontWeight:"700",
-    color:"#222",
-    marginTop:10,
+  chipRow: {
+    height: 42,
+    marginBottom: 12,
   },
-
-  summaryLabel:{
-    marginTop:5,
-    color:"#666",
-    fontSize:14,
-    textAlign:"center",
+  chipScrollContent: {
+    paddingHorizontal: 16,
   },
-
-  sectionHeader:{
-    marginHorizontal:16,
-    marginTop:10,
-    marginBottom:15,
-    flexDirection:"row",
-    justifyContent:"space-between",
-    alignItems:"center",
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginHorizontal: 16,
+    marginBottom: 15,
   },
-
-  sectionTitle:{
-    fontSize:18,
-    fontWeight:"700",
-    color:"#222",
+  summaryCard: {
+    width: "48%",
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 20,
+    padding: 18,
+    elevation: 3,
+    alignItems: "center",
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
-
-  seeAll:{
-    color:"#2E7DFF",
-    fontWeight:"700",
+  summaryValue: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: COLORS.textGrayDark,
+    marginTop: 10,
   },
-
-  productCard:{
-    marginHorizontal:16,
-    marginBottom:16,
-    backgroundColor:"#fff",
-    borderRadius:18,
-    padding:14,
-    flexDirection:"row",
-    elevation:3,
+  summaryLabel: {
+    marginTop: 5,
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    textAlign: "center",
   },
-
-  productImage:{
-    width:85,
-    height:85,
-    borderRadius:14,
+  sectionHeader: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 15,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-
-  productInfo:{
-    flex:1,
-    marginLeft:14,
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: COLORS.textGrayDark,
   },
-
-  productName:{
-    fontSize:16,
-    fontWeight:"700",
-    color:"#222",
+  seeAll: {
+    color: COLORS.primary,
+    fontWeight: "700",
   },
-
-  sku:{
-    marginTop:5,
-    color:"#888",
-    fontSize:13,
+  productCard: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 18,
+    padding: 14,
+    flexDirection: "row",
+    elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
-
-  stockText:{
-    marginTop:8,
-    color:"#333",
-    fontWeight:"600",
+  productImage: {
+    width: 85,
+    height: 85,
+    borderRadius: 14,
   },
-
-  progressBg:{
-    marginTop:10,
-    height:8,
-    backgroundColor:"#ECECEC",
-    borderRadius:8,
-    overflow:"hidden",
+  productInfo: {
+    flex: 1,
+    marginLeft: 14,
   },
-
-  progressFill:{
-    height:"100%",
-    borderRadius:8,
+  productName: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.textGrayDark,
   },
-
-  moreBtn:{
-    justifyContent:"center",
-    alignItems:"center",
-    paddingHorizontal:5,
+  sku: {
+    marginTop: 5,
+    color: COLORS.textGrayPlaceholder,
+    fontSize: 13,
   },
-
-  stockBadge:{
-    alignSelf:"flex-start",
-    marginTop:10,
-    paddingHorizontal:10,
-    paddingVertical:5,
-    borderRadius:20,
+  stockItemText: {
+    marginTop: 8,
+    color: COLORS.textSlateDark,
+    fontWeight: "600",
   },
-
-  stockBadgeText:{
-    fontSize:12,
-    fontWeight:"700",
+  progressBg: {
+    marginTop: 10,
+    height: 8,
+    backgroundColor: COLORS.borderMedium,
+    borderRadius: 8,
+    overflow: "hidden",
   },
-
-  actionRow:{
-    flexDirection:"row",
-    marginTop:14,
+  progressFill: {
+    height: "100%",
+    borderRadius: 8,
   },
-
-  restockBtn:{
-    flex:1,
-    height:42,
-    borderRadius:12,
-    backgroundColor:"#16A34A",
-    justifyContent:"center",
-    alignItems:"center",
-    flexDirection:"row",
-    marginRight:8,
+  errorFill: {
+    backgroundColor: COLORS.error,
   },
-
-  editBtn:{
-    flex:1,
-    height:42,
-    borderRadius:12,
-    backgroundColor:"#2E7DFF",
-    justifyContent:"center",
-    alignItems:"center",
-    flexDirection:"row",
+  warningFill: {
+    backgroundColor: COLORS.warning,
   },
-
-  actionText:{
-    color:"#fff",
-    fontWeight:"700",
-    marginLeft:6,
+  successFill: {
+    backgroundColor: COLORS.success,
   },
-
-  fab:{
-    position:"absolute",
-    right:20,
-    bottom:25,
-    width:60,
-    height:60,
-    borderRadius:30,
-    backgroundColor:"#2E7DFF",
-    justifyContent:"center",
-    alignItems:"center",
-    elevation:8,
+  moreBtn: {
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 5,
   },
-analyticsCard:{
-  margin:16,
-  backgroundColor:"#fff",
-  borderRadius:20,
-  padding:18,
-  elevation:3,
-},
-
-analyticsRow:{
-  flexDirection:"row",
-  justifyContent:"space-between",
-  marginTop:15,
-},
-
-analyticsItem:{
-  width:"31%",
-  alignItems:"center",
-},
-
-analyticsValue:{
-  marginTop:10,
-  fontSize:22,
-  fontWeight:"700",
-  color:"#222",
-},
-
-analyticsLabel:{
-  marginTop:5,
-  fontSize:13,
-  color:"#777",
-  textAlign:"center",
-},
-
-warehouseCard:{
-  marginHorizontal:16,
-  marginBottom:18,
-  backgroundColor:"#fff",
-  borderRadius:20,
-  padding:18,
-  elevation:3,
-},
-
-warehouseRow:{
-  flexDirection:"row",
-  alignItems:"center",
-  marginTop:15,
-},
-
-warehouseName:{
-  fontSize:17,
-  fontWeight:"700",
-  color:"#222",
-},
-
-warehouseSub:{
-  marginTop:5,
-  color:"#777",
-},
-
-alertCard:{
-  marginHorizontal:16,
-  marginBottom:30,
-  backgroundColor:"#fff",
-  borderRadius:20,
-  padding:18,
-  elevation:3,
-},
-
-alertItem:{
-  flexDirection:"row",
-  alignItems:"center",
-  marginTop:15,
-},
-
-alertText:{
-  flex:1,
-  marginLeft:10,
-  color:"#555",
-  fontSize:14,
-},
+  fab: {
+    position: "absolute",
+    right: 20,
+    bottom: 25,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 8,
+  },
+  analyticsCard: {
+    margin: 16,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 20,
+    padding: 18,
+    elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+  },
+  analyticsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 15,
+  },
+  analyticsItem: {
+    width: "31%",
+    alignItems: "center",
+  },
+  analyticsValue: {
+    marginTop: 10,
+    fontSize: 22,
+    fontWeight: "700",
+    color: COLORS.textGrayDark,
+  },
+  analyticsLabel: {
+    marginTop: 5,
+    fontSize: 13,
+    color: COLORS.textGrayLight,
+    textAlign: "center",
+  },
+  warehouseCard: {
+    marginHorizontal: 16,
+    marginBottom: 18,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 20,
+    padding: 18,
+    elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+  },
+  warehouseRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 15,
+  },
+  warehouseTextContainer: {
+    flex: 1,
+    marginLeft: 15,
+  },
+  warehouseName: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: COLORS.textGrayDark,
+  },
+  warehouseSub: {
+    marginTop: 5,
+    color: COLORS.textGrayLight,
+  },
+  alertCard: {
+    marginHorizontal: 16,
+    marginBottom: 30,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 20,
+    padding: 18,
+    elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+  },
+  alertItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 15,
+  },
+  alertText: {
+    flex: 1,
+    marginLeft: 10,
+    color: COLORS.textGrayMedium,
+    fontSize: 14,
+  },
   chip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.cardBg,
     marginRight: 8,
     borderWidth: 1,
-    borderColor: "#E5E5E5",
+    borderColor: COLORS.borderInactive,
     height: 38,
     justifyContent: "center",
   },
   chipActive: {
-    backgroundColor: "#2E7DFF",
-    borderColor: "#2E7DFF",
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
   },
   chipText: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#555",
+    color: COLORS.textGrayMedium,
   },
   chipTextActive: {
-    color: "#fff",
+    color: COLORS.textContrast,
   },
   emptyContainer: {
     alignItems: "center",
@@ -868,6 +725,6 @@ alertText:{
   emptyText: {
     marginTop: 12,
     fontSize: 15,
-    color: "#888",
+    color: COLORS.textMuted,
   },
 });

@@ -1,8 +1,9 @@
 import React from "react";
-import { View } from "react-native";
+import { StyleSheet } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../constants/theme";
+import { useTheme } from "../context/ThemeContext";
 
 import Dashboard from "../screens/app/Dashboard";
 import Products from "../screens/product/Products";
@@ -13,28 +14,25 @@ import Account from "../screens/app/Account";
 const Tab = createBottomTabNavigator();
 
 const SellerBottomNavigation = () => {
+  const { colors } = useTheme();
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarHideOnKeyboard: true,
 
-        tabBarActiveTintColor: COLORS.primary,
-        tabBarInactiveTintColor: COLORS.secondary,
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textSecondary,
 
-        tabBarStyle: {
-          height: 70,
-          paddingBottom: 8,
-          paddingTop: 8,
-          backgroundColor: COLORS.cardBg,
-          borderTopWidth: 0.5,
-          borderTopColor: COLORS.borderInactive,
-        },
-
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "600",
-        },
+        tabBarStyle: [
+          styles.tabBar,
+          {
+            backgroundColor: colors.cardBg,
+            borderTopColor: colors.borderLight,
+          },
+        ],
+        tabBarLabelStyle: styles.tabBarLabel,
 
         tabBarIcon: ({ focused, color, size }) => {
           let iconName;
@@ -84,3 +82,18 @@ const SellerBottomNavigation = () => {
 };
 
 export default SellerBottomNavigation;
+
+const styles = StyleSheet.create({
+  tabBar: {
+    height: 70,
+    paddingBottom: 8,
+    paddingTop: 8,
+    backgroundColor: COLORS.cardBg,
+    borderTopWidth: 0.5,
+    borderTopColor: COLORS.borderInactive,
+  },
+  tabBarLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+});

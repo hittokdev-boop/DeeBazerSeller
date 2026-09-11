@@ -19,6 +19,7 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { launchImageLibrary } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
+import { BASE_URL } from "../../api/auth";
 
 const CATEGORIES = [
   "Electronics & Gadgets",
@@ -37,32 +38,58 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // Custom alert configuration state
+  const [alertConfig, setAlertConfig] = useState({
+    visible: false,
+    title: "",
+    message: "",
+    type: "success", // success, warning, error
+    onPress: null
+  });
+
+  const showAlert = (title, message, type = "success", onPress = null) => {
+    setAlertConfig({
+      visible: true,
+      title,
+      message,
+      type,
+      onPress
+    });
+  };
+
+  const hideAlert = () => {
+    setAlertConfig(prev => ({ ...prev, visible: false }));
+    if (alertConfig.onPress) {
+      alertConfig.onPress();
+    }
+  };
+
   // Form Fields State
   const [form, setForm] = useState({
-    // Step 1: Owner Info
     ownerName: "",
     email: "",
     phone: "",
     password: "",
 
-    // Step 2: Store Info
     storeName: "",
     category: "",
     address: "",
     description: "",
+    city: "",
+    state: "",
+    postalCode: "",
+    businessType: "individual", // individual, company, partnership
 
-    // Step 3: Bank & Verification
     gstin: "",
+    panNumber: "",
     bankName: "",
     accountNo: "",
     ifscCode: "",
+    bankHolderName: "",
     logoUri: "",
   });
 
-  // Errors State
   const [errors, setErrors] = useState({});
-
-  // Input Focus State for Styling
   const [activeField, setActiveField] = useState(null);
 
   const handleInputChange = (field, value) => {
@@ -76,8 +103,6 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
     let stepErrors = {};
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const phoneRegex = /^[0-9]{10}$/;
-    const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-    const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
     if (step === 1) {
       if (!form.ownerName.trim() || form.ownerName.trim().length < 3) {
@@ -104,23 +129,29 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
       if (!form.address.trim() || form.address.trim().length < 10) {
         stepErrors.address = "Address must be at least 10 characters";
       }
-      if (!form.description.trim() || form.description.trim().length < 15) {
-        stepErrors.description = "Description must be at least 15 characters";
+      if (!form.city.trim()) {
+        stepErrors.city = "City is required";
+      }
+      if (!form.state.trim()) {
+        stepErrors.state = "State is required";
+      }
+      if (!form.postalCode.trim()) {
+        stepErrors.postalCode = "Postal code is required";
       }
     }
 
     if (step === 3) {
-      if (form.gstin.trim() && !gstinRegex.test(form.gstin.trim().toUpperCase())) {
-        stepErrors.gstin = "Format must match a 15-character GSTIN format";
-      }
       if (!form.bankName.trim()) {
         stepErrors.bankName = "Bank name is required";
       }
       if (!form.accountNo.trim() || form.accountNo.trim().length < 9) {
-        stepErrors.accountNo = "Enter a valid bank account number (9+ digits)";
+        stepErrors.accountNo = "Enter a valid account number (9+ digits)";
       }
-      if (!form.ifscCode.trim() || !ifscRegex.test(form.ifscCode.trim().toUpperCase())) {
-        stepErrors.ifscCode = "Enter a valid 11-digit IFSC code (e.g. SBIN0001234)";
+      if (!form.ifscCode.trim()) {
+        stepErrors.ifscCode = "IFSC code is required";
+      }
+      if (!form.bankHolderName.trim()) {
+        stepErrors.bankHolderName = "Account holder name is required";
       }
     }
 
@@ -162,24 +193,101 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
   const handleRegister = async () => {
     setIsSubmitting(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const url = `${BASE_URL}register`;
+      const data = new FormData();
+
+      // Mapping screen form fields to API fields
+      data.append("name", form.ownerName || "");
+      data.append("email", form.email || "");
+      data.append("mobile", form.phone || "");
+      data.append("password", form.password || "");
+      data.append("password_confirmation", form.password || "");
+      data.append("store_name", form.storeName || "");
+      data.append("store_description", form.description || "");
+
+      data.append("business_type", form.businessType || "individual");
+      if (form.gstin) {
+        data.append("gst_number", form.gstin);
+      }
+      if (form.panNumber) {
+        data.append("pan_number", form.panNumber);
+      }
+
+      data.append("address", form.address || "");
+      data.append("city", form.city || "");
+      data.append("state", form.state || "");
+      data.append("postal_code", form.postalCode || "");
+
+      data.append("bank_name", form.bankName || "");
+      data.append("bank_account_number", form.accountNo || "");
+      data.append("bank_ifsc_code", form.ifscCode || "");
+      data.append("bank_account_holder_name", form.bankHolderName || form.ownerName || "");
+
+      // Handle Logo Upload if present
+      if (form.logoUri) {
+        const uri = form.logoUri;
+        const filename = uri.split("/").pop();
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : `image/jpeg`;
+
+        data.append("logo", {
+          uri: uri,
+          name: filename || "logo.jpg",
+          type: type,
+        });
+      }
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "multipart/form-data",
+        },
+        body: data,
+      });
+
+      const responseText = await response.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        throw new Error(`Invalid response from server: ${responseText}`);
+      }
+
+      if (!response.ok) {
+        const error = new Error(responseData.message || "Registration failed");
+        error.errors = responseData.errors;
+        throw error;
+      }
 
       const profileData = {
         ...form,
         registeredAt: new Date().toISOString(),
+        ...responseData.data,
       };
 
       await AsyncStorage.setItem("isRegistered", "true");
-      await AsyncStorage.setItem("isLoggedIn", "true");
       await AsyncStorage.setItem("sellerProfile", JSON.stringify(profileData));
 
-      if (onRegisterSuccess) {
-        onRegisterSuccess(profileData);
-      } else {
-        navigation.replace("SellerTabs");
-      }
+      showAlert(
+        "Registration Successful",
+        "Your seller account is registered successfully and is currently pending review. Please wait for administrator approval before logging in.",
+        "success",
+        () => {
+          if (onRegisterSuccess) {
+            onRegisterSuccess(profileData);
+          } else {
+            navigation.navigate("Login");
+          }
+        }
+      );
     } catch (error) {
-      Alert.alert("Registration Error", "Something went wrong. Please try again.");
+      if (error.errors) {
+        const errorList = Object.values(error.errors).flat().join("\n");
+        showAlert("Validation Error", errorList || error.message, "error");
+      } else {
+        showAlert("Registration Error", error.message || "Something went wrong. Please try again.", "error");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -189,7 +297,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
     const steps = [
       { id: 1, label: "Profile" },
       { id: 2, label: "Store" },
-      { id: 3, label: "Verification" },
+      { id: 3, label: "Bank & Legal" },
       { id: 4, label: "Ready" },
     ];
 
@@ -421,12 +529,50 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                 onPress={() => setShowCategoryModal(true)}
               >
                 <Ionicons name="grid-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
-                <Text style={[styles.textInput, { color: form.category ? COLORS.textPrimary : COLORS.textGrayPlaceholder, lineHeight: 20 }]}>
+                <Text
+                  style={[
+                    styles.textInput,
+                    styles.dropdownText,
+                    { color: form.category ? COLORS.textPrimary : COLORS.textGrayPlaceholder },
+                  ]}
+                >
                   {form.category || "Select a store niche"}
                 </Text>
-                <Ionicons name="chevron-down" size={18} color={COLORS.textGrayLight} style={{ marginRight: 10 }} />
+                <Ionicons name="chevron-down" size={18} color={COLORS.textGrayLight} style={styles.dropdownIcon} />
               </TouchableOpacity>
               {errors.category && <Text style={styles.errorText}>{errors.category}</Text>}
+            </View>
+
+            {/* Business Type */}
+            <View style={styles.inputWrapper}>
+              <Text style={styles.inputLabel}>Business Type</Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
+                {["individual", "company", "partnership"].map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    activeOpacity={0.8}
+                    style={{
+                      flex: 1,
+                      alignItems: "center",
+                      paddingVertical: 10,
+                      marginHorizontal: 4,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: form.businessType === type ? COLORS.primary : COLORS.textGrayLight,
+                      backgroundColor: form.businessType === type ? `${COLORS.primary}10` : "transparent",
+                    }}
+                    onPress={() => handleInputChange("businessType", type)}
+                  >
+                    <Text style={{
+                      color: form.businessType === type ? COLORS.primary : COLORS.textGrayMedium,
+                      fontWeight: form.businessType === type ? "bold" : "normal",
+                      fontSize: 13,
+                    }}>
+                      {type.charAt(0).toUpperCase() + type.slice(1)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
 
             {/* Address */}
@@ -444,14 +590,14 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                   name="location-outline"
                   size={20}
                   color={COLORS.textGrayLight}
-                  style={[styles.inputIcon, { marginTop: 10 }]}
+                  style={styles.multilineInputIcon}
                 />
                 <TextInput
                   style={[styles.textInput, styles.multilineInput]}
                   placeholder="Enter full address where items will be picked up"
                   placeholderTextColor={COLORS.textGrayPlaceholder}
                   multiline
-                  numberOfLines={3}
+                  numberOfLines={2}
                   value={form.address}
                   onChangeText={(val) => handleInputChange("address", val)}
                   onFocus={() => setActiveField("address")}
@@ -459,6 +605,52 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                 />
               </View>
               {errors.address && <Text style={styles.errorText}>{errors.address}</Text>}
+            </View>
+
+            {/* City, State, Postal Code Row */}
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <View style={[styles.inputWrapper, { flex: 1, marginRight: 6 }]}>
+                <Text style={styles.inputLabel}>City</Text>
+                <View style={[styles.inputFieldContainer, errors.city && styles.inputFieldError]}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="City"
+                    placeholderTextColor={COLORS.textGrayPlaceholder}
+                    value={form.city}
+                    onChangeText={(val) => handleInputChange("city", val)}
+                  />
+                </View>
+                {errors.city && <Text style={styles.errorText}>{errors.city}</Text>}
+              </View>
+
+              <View style={[styles.inputWrapper, { flex: 1, marginRight: 6 }]}>
+                <Text style={styles.inputLabel}>State</Text>
+                <View style={[styles.inputFieldContainer, errors.state && styles.inputFieldError]}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="State"
+                    placeholderTextColor={COLORS.textGrayPlaceholder}
+                    value={form.state}
+                    onChangeText={(val) => handleInputChange("state", val)}
+                  />
+                </View>
+                {errors.state && <Text style={styles.errorText}>{errors.state}</Text>}
+              </View>
+
+              <View style={[styles.inputWrapper, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>PIN Code</Text>
+                <View style={[styles.inputFieldContainer, errors.postalCode && styles.inputFieldError]}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="1212"
+                    placeholderTextColor={COLORS.textGrayPlaceholder}
+                    keyboardType="number-pad"
+                    value={form.postalCode}
+                    onChangeText={(val) => handleInputChange("postalCode", val)}
+                  />
+                </View>
+                {errors.postalCode && <Text style={styles.errorText}>{errors.postalCode}</Text>}
+              </View>
             </View>
 
             {/* Business Description */}
@@ -476,14 +668,14 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                   name="document-text-outline"
                   size={20}
                   color={COLORS.textGrayLight}
-                  style={[styles.inputIcon, { marginTop: 10 }]}
+                  style={styles.multilineInputIcon}
                 />
                 <TextInput
                   style={[styles.textInput, styles.multilineInput]}
-                  placeholder="Tell buyers what you sell, your specialties, etc."
+                  placeholder="Tell buyers what you sell..."
                   placeholderTextColor={COLORS.textGrayPlaceholder}
                   multiline
-                  numberOfLines={4}
+                  numberOfLines={2}
                   value={form.description}
                   onChangeText={(val) => handleInputChange("description", val)}
                   onFocus={() => setActiveField("description")}
@@ -492,44 +684,72 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
               </View>
               {errors.description && <Text style={styles.errorText}>{errors.description}</Text>}
             </View>
+
+            {/* Logo Image Picker */}
+            <View style={styles.inputWrapper}>
+              <Text style={styles.inputLabel}>Store Logo / Profile Picture (Optional)</Text>
+              {form.logoUri ? (
+                <View style={styles.logoPreviewContainer}>
+                  <Image source={{ uri: form.logoUri }} style={styles.logoPreviewImage} />
+                  <View style={styles.logoDetails}>
+                    <Text style={styles.logoSelectedText}>Logo successfully selected</Text>
+                    <TouchableOpacity onPress={() => handleInputChange("logoUri", "")}>
+                      <Text style={styles.removeLogoText}>Remove logo</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  style={styles.imagePickerBtn}
+                  onPress={selectLogo}
+                >
+                  <Ionicons name="camera-outline" size={28} color={COLORS.primary} />
+                  <Text style={styles.imagePickerText}>Select Store Logo File</Text>
+                  <Text style={styles.imagePickerHint}>JPEG or PNG (Max 2MB)</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         );
 
       case 3:
         return (
           <View style={styles.stepCard}>
-            <Text style={styles.stepTitle}>Payout & Legal</Text>
+            <Text style={styles.stepTitle}>Bank & Legal</Text>
             <Text style={styles.stepSubtitle}>
-              Provide identity and banking details to get paid.
+              Provide legal entity and payout bank details.
             </Text>
 
-            {/* GSTIN */}
-            <View style={styles.inputWrapper}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={styles.inputLabel}>GSTIN (Tax ID)</Text>
-                <Text style={styles.inputLabelOptional}>Optional</Text>
+            {/* GSTIN & PAN Row */}
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <View style={[styles.inputWrapper, { flex: 1, marginRight: 8 }]}>
+                <Text style={styles.inputLabel}>GST Number (Opt)</Text>
+                <View style={styles.inputFieldContainer}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="GSTIN ID"
+                    placeholderTextColor={COLORS.textGrayPlaceholder}
+                    autoCapitalize="characters"
+                    value={form.gstin}
+                    onChangeText={(val) => handleInputChange("gstin", val)}
+                  />
+                </View>
               </View>
-              <View
-                style={[
-                  styles.inputFieldContainer,
-                  activeField === "gstin" && styles.inputFieldFocus,
-                  errors.gstin && styles.inputFieldError,
-                ]}
-              >
-                <Ionicons name="card-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="15-digit GSTIN ID"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
-                  autoCapitalize="characters"
-                  maxLength={15}
-                  value={form.gstin}
-                  onChangeText={(val) => handleInputChange("gstin", val)}
-                  onFocus={() => setActiveField("gstin")}
-                  onBlur={() => setActiveField(null)}
-                />
+
+              <View style={[styles.inputWrapper, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>PAN Number (Opt)</Text>
+                <View style={styles.inputFieldContainer}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="PAN Card No"
+                    placeholderTextColor={COLORS.textGrayPlaceholder}
+                    autoCapitalize="characters"
+                    value={form.panNumber}
+                    onChangeText={(val) => handleInputChange("panNumber", val)}
+                  />
+                </View>
               </View>
-              {errors.gstin && <Text style={styles.errorText}>{errors.gstin}</Text>}
             </View>
 
             {/* Bank Name */}
@@ -554,6 +774,30 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                 />
               </View>
               {errors.bankName && <Text style={styles.errorText}>{errors.bankName}</Text>}
+            </View>
+
+            {/* Account Holder Name */}
+            <View style={styles.inputWrapper}>
+              <Text style={styles.inputLabel}>Bank Account Holder Name</Text>
+              <View
+                style={[
+                  styles.inputFieldContainer,
+                  activeField === "bankHolderName" && styles.inputFieldFocus,
+                  errors.bankHolderName && styles.inputFieldError,
+                ]}
+              >
+                <Ionicons name="person-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Enter name registered in bank"
+                  placeholderTextColor={COLORS.textGrayPlaceholder}
+                  value={form.bankHolderName}
+                  onChangeText={(val) => handleInputChange("bankHolderName", val)}
+                  onFocus={() => setActiveField("bankHolderName")}
+                  onBlur={() => setActiveField(null)}
+                />
+              </View>
+              {errors.bankHolderName && <Text style={styles.errorText}>{errors.bankHolderName}</Text>}
             </View>
 
             {/* Account Number */}
@@ -594,10 +838,9 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                 <Ionicons name="git-branch-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
                 <TextInput
                   style={styles.textInput}
-                  placeholder="11-digit IFSC code (e.g. SBIN0001234)"
+                  placeholder="11-digit IFSC code"
                   placeholderTextColor={COLORS.textGrayPlaceholder}
                   autoCapitalize="characters"
-                  maxLength={11}
                   value={form.ifscCode}
                   onChangeText={(val) => handleInputChange("ifscCode", val)}
                   onFocus={() => setActiveField("ifscCode")}
@@ -605,32 +848,6 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                 />
               </View>
               {errors.ifscCode && <Text style={styles.errorText}>{errors.ifscCode}</Text>}
-            </View>
-
-            {/* Logo Image Picker */}
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Store Logo / Profile Picture</Text>
-              {form.logoUri ? (
-                <View style={styles.logoPreviewContainer}>
-                  <Image source={{ uri: form.logoUri }} style={styles.logoPreviewImage} />
-                  <View style={styles.logoDetails}>
-                    <Text style={styles.logoSelectedText}>Logo successfully selected</Text>
-                    <TouchableOpacity onPress={() => handleInputChange("logoUri", "")}>
-                      <Text style={styles.removeLogoText}>Remove logo</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  style={styles.imagePickerBtn}
-                  onPress={selectLogo}
-                >
-                  <Ionicons name="camera-outline" size={28} color={COLORS.primary} />
-                  <Text style={styles.imagePickerText}>Select Store Logo File</Text>
-                  <Text style={styles.imagePickerHint}>JPEG or PNG (Max 2MB)</Text>
-                </TouchableOpacity>
-              )}
             </View>
           </View>
         );
@@ -659,7 +876,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
 
               <View style={styles.reviewRow}>
                 <Text style={styles.reviewLabel}>Merchant Niche</Text>
-                <Text style={styles.reviewValue}>{form.category}</Text>
+                <Text style={styles.reviewValue}>{form.category} ({form.businessType})</Text>
               </View>
               <View style={styles.reviewDivider} />
 
@@ -688,7 +905,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                 name="information-circle-outline"
                 size={20}
                 color={COLORS.info}
-                style={{ marginRight: 8 }}
+                style={styles.infoBadgeIcon}
               />
               <Text style={styles.infoText}>
                 Your products can be listed immediately once dashboard opens.
@@ -706,7 +923,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1 }}
+        style={styles.keyboardContainer}
       >
         {/* Top Header Section */}
         <LinearGradient
@@ -716,12 +933,12 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
           end={{ x: 1, y: 1 }}
         >
           <View style={styles.headerContent}>
-            {currentStep > 1 && currentStep < 4 && (
+            {currentStep > 1 && (
               <TouchableOpacity onPress={handleBack} style={styles.headerBackBtn}>
                 <Ionicons name="arrow-back" size={24} color={COLORS.textContrast} />
               </TouchableOpacity>
             )}
-            <View style={{ flex: 1, alignItems: "center" }}>
+            <View style={styles.headerCenter}>
               <Text style={styles.logoText}>DeeBazar</Text>
               <Text style={styles.headerSubtitle}>Seller Onboarding Portal</Text>
             </View>
@@ -742,7 +959,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
 
         {/* Footer Navigation Bar */}
         <View style={styles.footerBar}>
-          {currentStep > 1 && currentStep < 4 && (
+          {currentStep > 1 && (
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={handleBack}
@@ -759,7 +976,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
               style={[
                 styles.footerBtn,
                 styles.footerBtnPrimary,
-                currentStep === 1 && { flex: 1 }, // takes full width on step 1
+                currentStep === 1 && styles.footerBtnFullWidth,
               ]}
             >
               <Text style={styles.footerBtnTextPrimary}>Continue</Text>
@@ -767,7 +984,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                 name="arrow-forward-outline"
                 size={18}
                 color={COLORS.textContrast}
-                style={{ marginLeft: 6 }}
+                style={styles.btnIconMarginLeft6}
               />
             </TouchableOpacity>
           ) : (
@@ -786,7 +1003,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                     name="rocket-outline"
                     size={20}
                     color={COLORS.textContrast}
-                    style={{ marginLeft: 8 }}
+                    style={styles.btnIconMarginLeft8}
                   />
                 </>
               )}
@@ -804,7 +1021,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
       >
         <View style={styles.modalOverlay}>
           <TouchableOpacity
-            style={{ flex: 1 }}
+            style={styles.modalDismissArea}
             activeOpacity={1}
             onPress={() => setShowCategoryModal(false)}
           />
@@ -816,7 +1033,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
+            <ScrollView contentContainerStyle={styles.modalScrollContent}>
               {CATEGORIES.map((item, index) => {
                 const isSelected = form.category === item;
                 return (
@@ -836,7 +1053,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                       name="cube-outline"
                       size={20}
                       color={isSelected ? COLORS.primary : COLORS.textGrayMedium}
-                      style={{ marginRight: 12 }}
+                      style={styles.categoryIcon}
                     />
                     <Text
                       style={[
@@ -851,13 +1068,64 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
                         name="checkmark-circle"
                         size={20}
                         color={COLORS.primary}
-                        style={{ marginLeft: "auto" }}
+                        style={styles.categoryCheckmark}
                       />
                     )}
                   </TouchableOpacity>
                 );
               })}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Beautiful Custom Alert Modal */}
+      <Modal
+        visible={alertConfig.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={hideAlert}
+      >
+        <View style={styles.alertOverlay}>
+          <View style={styles.alertBox}>
+            <View style={[
+              styles.alertIconBg,
+              alertConfig.type === "success" && styles.successIconBg,
+              alertConfig.type === "warning" && styles.warningIconBg,
+              alertConfig.type === "error" && styles.errorIconBg,
+            ]}>
+              <Ionicons
+                name={
+                  alertConfig.type === "success"
+                    ? "checkmark-circle"
+                    : alertConfig.type === "warning"
+                    ? "alert-circle"
+                    : "close-circle"
+                }
+                size={40}
+                color={
+                  alertConfig.type === "success"
+                    ? "#2e7d32"
+                    : alertConfig.type === "warning"
+                    ? "#f57c00"
+                    : "#d32f2f"
+                }
+              />
+            </View>
+            <Text style={styles.alertTitle}>{alertConfig.title}</Text>
+            <Text style={styles.alertMessage}>{alertConfig.message}</Text>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={[
+                styles.alertBtn,
+                alertConfig.type === "success" && styles.successAlertBtn,
+                alertConfig.type === "warning" && styles.warningAlertBtn,
+                alertConfig.type === "error" && styles.errorAlertBtn,
+              ]}
+              onPress={hideAlert}
+            >
+              <Text style={styles.alertBtnText}>OK</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -871,6 +1139,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  keyboardContainer: {
+    flex: 1,
   },
   headerGradient: {
     height: 100,
@@ -889,6 +1160,10 @@ const styles = StyleSheet.create({
     left: 20,
     bottom: 16,
     zIndex: 10,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: "center",
   },
   logoText: {
     fontSize: 22,
@@ -914,7 +1189,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.borderLight,
     elevation: 2,
-    shadowColor: "#000",
+    shadowColor: COLORS.textPrimary,
     shadowOpacity: 0.04,
     shadowRadius: 5,
   },
@@ -999,6 +1274,10 @@ const styles = StyleSheet.create({
   inputWrapper: {
     marginBottom: 20,
   },
+  inputLabelHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
   inputLabel: {
     fontSize: 13,
     fontWeight: "600",
@@ -1030,6 +1309,16 @@ const styles = StyleSheet.create({
   },
   inputIcon: {
     marginRight: 10,
+  },
+  dropdownText: {
+    lineHeight: 20,
+  },
+  dropdownIcon: {
+    marginRight: 10,
+  },
+  multilineInputIcon: {
+    marginRight: 10,
+    marginTop: 10,
   },
   textInput: {
     flex: 1,
@@ -1188,6 +1477,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
   },
+  infoBadgeIcon: {
+    marginRight: 8,
+  },
   infoText: {
     flex: 1,
     fontSize: 12,
@@ -1214,6 +1506,9 @@ const styles = StyleSheet.create({
     flex: 2,
     marginLeft: 12,
   },
+  footerBtnFullWidth: {
+    flex: 1,
+  },
   footerBtnSecondary: {
     backgroundColor: COLORS.borderLight,
     flex: 1,
@@ -1231,6 +1526,15 @@ const styles = StyleSheet.create({
     color: COLORS.textSlate,
     fontSize: 15,
     fontWeight: "600",
+  },
+  btnIconMarginLeft6: {
+    marginLeft: 6,
+  },
+  btnIconMarginLeft8: {
+    marginLeft: 8,
+  },
+  modalDismissArea: {
+    flex: 1,
   },
   modalOverlay: {
     flex: 1,
@@ -1255,6 +1559,9 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: COLORS.textPrimary,
   },
+  modalScrollContent: {
+    paddingBottom: 30,
+  },
   categoryItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -1265,6 +1572,9 @@ const styles = StyleSheet.create({
   categoryItemActive: {
     borderBottomColor: COLORS.borderHighlight,
   },
+  categoryIcon: {
+    marginRight: 12,
+  },
   categoryText: {
     fontSize: 14,
     color: COLORS.textSlate,
@@ -1273,6 +1583,9 @@ const styles = StyleSheet.create({
   categoryTextActive: {
     color: COLORS.primary,
     fontWeight: "700",
+  },
+  categoryCheckmark: {
+    marginLeft: "auto",
   },
   loginRedirectContainer: {
     marginTop: 20,
@@ -1286,6 +1599,78 @@ const styles = StyleSheet.create({
   },
   loginRedirectHighlight: {
     color: COLORS.primary,
+    fontWeight: "700",
+  },
+  alertOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  alertBox: {
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 24,
+    padding: 24,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 320,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  alertIconBg: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  successIconBg: {
+    backgroundColor: "#e8f5e9",
+  },
+  warningIconBg: {
+    backgroundColor: "#fff3e0",
+  },
+  errorIconBg: {
+    backgroundColor: "#ffebee",
+  },
+  alertTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.textPrimary,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  alertMessage: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  alertBtn: {
+    width: "100%",
+    height: 48,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  successAlertBtn: {
+    backgroundColor: "#2e7d32",
+  },
+  warningAlertBtn: {
+    backgroundColor: "#f57c00",
+  },
+  errorAlertBtn: {
+    backgroundColor: "#d32f2f",
+  },
+  alertBtnText: {
+    color: COLORS.textContrast,
+    fontSize: 15,
     fontWeight: "700",
   },
 });

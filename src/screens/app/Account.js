@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -6,36 +6,168 @@ import {
   TouchableOpacity,
   Image,
   StyleSheet,
-  Alert
+  Alert,
+  Platform,
+  StatusBar,
+  Switch,
+  RefreshControl,
+  ActivityIndicator,
+  DeviceEventEmitter,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useIsFocused } from "@react-navigation/native";
+import { useIsFocused, CommonActions } from "@react-navigation/native";
 import COLORS from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
+import { CustomAlert } from "../../context/AlertContext";
+import { getSellerMe, logoutSeller } from "../../api/auth";
 
 const Account = ({ navigation }) => {
-  const [profile, setProfile] = React.useState(null);
-  const isFocused = useIsFocused();
+  const [profile, setProfile] = useState(null);
+  const [userData, setUserData] = useState(null);
+  const [sellerData, setSellerData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const loadProfile = async () => {
+  const isFocused = useIsFocused();
+  const { isDarkMode, toggleTheme, themeMode, colors } = useTheme();
+
+  const navigateToLogin = useCallback(() => {
     try {
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
+      if (navigation && typeof navigation.getParent === 'function') {
+        const parentNav = navigation.getParent();
+        if (parentNav) {
+          parentNav.reset({
+            index: 0,
+            routes: [{ name: "Login" }],
+          });
+          return;
+        }
+      }
+      navigation.navigate("Login");
+    } catch (navErr) {
+      console.log("Navigation error:", navErr);
+      navigation.navigate("Login");
+    }
+  }, [navigation]);
+
+  const navigateToRegister = useCallback(() => {
+    try {
+      DeviceEventEmitter.emit("authStateChanged", null);
+    } catch (navErr) {
+      console.log("Navigation error to register:", navErr);
+    }
+  }, []);
+
+  // Load cached profile data first for instant UI response
+  const loadCachedProfile = async () => {
+    try {
+      const [storedProfile, storedUser, storedSeller, token] = await Promise.all([
+        AsyncStorage.getItem("sellerProfile"),
+        AsyncStorage.getItem("userData"),
+        AsyncStorage.getItem("sellerData"),
+        AsyncStorage.getItem("token"),
+      ]);
+
+      console.log("=== SELLER TOKEN ===", token);
+
       if (storedProfile) {
         setProfile(JSON.parse(storedProfile));
       }
+      if (storedUser) {
+        setUserData(JSON.parse(storedUser));
+      }
+      if (storedSeller) {
+        setSellerData(JSON.parse(storedSeller));
+      }
     } catch (e) {
-      console.log("Error loading profile", e);
+      console.log("Error loading cached profile:", e);
     }
   };
 
-  React.useEffect(() => {
-    if (isFocused) {
-      loadProfile();
+  // Fetch live seller details from GET /api/seller/me
+  const fetchSellerDetails = useCallback(async (showFullLoader = false) => {
+    if (showFullLoader) {
+      setIsLoading(true);
     }
-  }, [isFocused]);
+    try {
+      const response = await getSellerMe();
+      if (response && response.data) {
+        const user = response.data.user || {};
+        const seller = response.data.seller || {};
+
+        setUserData(user);
+        setSellerData(seller);
+
+        // Combined profile object for compatibility across screens
+        const mergedProfile = {
+          ...user,
+          ...seller,
+          storeName: seller.store_name || user.name || "",
+          ownerName: user.name || "",
+          email: user.email || "",
+          phone: user.mobile || "",
+          logoUri: user.logo_url || seller.logo_url || "",
+          rating: seller.rating || 0,
+          totalRatings: seller.total_ratings || 0,
+          walletBalance: seller.wallet_balance || 0,
+          totalEarnings: seller.total_earnings || 0,
+          status: seller.status || user.status || "active",
+        };
+
+        setProfile(mergedProfile);
+
+        // Save to AsyncStorage for offline access and sync with other screens
+        await Promise.all([
+          AsyncStorage.setItem("sellerProfile", JSON.stringify(mergedProfile)),
+          AsyncStorage.setItem("userData", JSON.stringify(user)),
+          AsyncStorage.setItem("sellerData", JSON.stringify(seller)),
+        ]);
+      }
+    } catch (error) {
+      console.log("Error fetching seller details:", error);
+      if (error.status === 401) {
+        CustomAlert.alert(
+          "Session Expired",
+          "Your login session has expired. Please log in again.",
+          [
+            {
+              text: "OK",
+              onPress: async () => {
+                await AsyncStorage.multiRemove([
+                  "token",
+                  "isLoggedIn",
+                  "sellerProfile",
+                  "userData",
+                  "sellerData",
+                  "isRegistered",
+                ]);
+                navigateToRegister();
+              },
+            },
+          ]
+        );
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [navigateToLogin]);
+
+  useEffect(() => {
+    if (isFocused) {
+      loadCachedProfile();
+      fetchSellerDetails(false);
+    }
+  }, [isFocused, fetchSellerDetails]);
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    fetchSellerDetails(false);
+  };
 
   const handleLogout = () => {
-    Alert.alert(
+    CustomAlert.alert(
       "Logout",
       "Are you sure you want to log out of your seller account?",
       [
@@ -45,16 +177,38 @@ const Account = ({ navigation }) => {
           style: "destructive",
           onPress: async () => {
             try {
-              await AsyncStorage.removeItem("isLoggedIn");
-              navigation.reset({
-                index: 0,
-                routes: [{ name: "Login" }],
-              });
+              setIsLoading(true);
+              try {
+                const response = await logoutSeller();
+                console.log("Logout API response:", response);
+              } catch (apiErr) {
+                console.log("Logout API call failed:", apiErr);
+              }
+              await AsyncStorage.multiRemove([
+                "token",
+                "isLoggedIn",
+                "sellerProfile",
+                "userData",
+                "sellerData",
+                "isRegistered",
+              ]);
+              navigateToRegister();
             } catch (err) {
-              Alert.alert("Error", "Unable to log out at this time.");
+              console.error("Error during logout:", err);
+              await AsyncStorage.multiRemove([
+                "token",
+                "isLoggedIn",
+                "sellerProfile",
+                "userData",
+                "sellerData",
+                "isRegistered",
+              ]);
+              navigateToRegister();
+            } finally {
+              setIsLoading(false);
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
@@ -67,205 +221,524 @@ const Account = ({ navigation }) => {
     }
   };
 
+  // Derive display values
+  const displayName =
+    sellerData?.store_name ||
+    profile?.storeName ||
+    userData?.name ||
+    "Seller Store";
+
+  const ownerName =
+    userData?.name ||
+    profile?.ownerName ||
+    profile?.name ||
+    "";
+
+  const displayEmail =
+    userData?.email ||
+    profile?.email ||
+    "seller@deebazar.com";
+
+  const displayMobile =
+    userData?.mobile ||
+    profile?.mobile ||
+    profile?.phone ||
+    "";
+
+  const displayRating =
+    sellerData?.rating !== undefined
+      ? Number(sellerData.rating).toFixed(1)
+      : profile?.rating !== undefined
+      ? Number(profile.rating).toFixed(1)
+      : "5.0";
+
+  const totalRatings =
+    sellerData?.total_ratings ||
+    profile?.totalRatings ||
+    0;
+
+  const displayLogo =
+    userData?.logo_url ||
+    sellerData?.logo_url ||
+    profile?.logoUri ||
+    "https://i.pravatar.cc/300?img=12";
+
+  const accountStatus = (
+    sellerData?.status ||
+    userData?.approval_status ||
+    userData?.status ||
+    "active"
+  ).toUpperCase();
+
+  const isApproved = accountStatus === "APPROVED" || accountStatus === "ACTIVE";
+
+  const formatCurrency = (val) => {
+    if (val === undefined || val === null || isNaN(Number(val))) return "0.00";
+    const num = Number(val);
+    const parts = num.toFixed(2).split(".");
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.join(".");
+  };
+
+  const walletBalance = formatCurrency(sellerData?.wallet_balance);
+  const totalEarnings = formatCurrency(sellerData?.total_earnings);
+
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: COLORS.backgroundAlt , paddingTop: 15 }}
-      contentContainerStyle={{ paddingBottom: 100 }}>
-
-      {/* Profile */}
-
-      <View style={styles.profileCard}>
-
-        <Image
-          source={{
-            uri: profile?.logoUri || "https://i.pravatar.cc/300?img=12",
-          }}
-          style={styles.profileImage}
+      style={[styles.container, { backgroundColor: colors.backgroundAlt }]}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={onRefresh}
+          colors={[colors.primary]}
+          tintColor={colors.primary}
         />
-
-        <Text style={styles.name}>
-          {profile?.storeName || "Hittok Store"}
-        </Text>
-
-        <Text style={styles.email}>
-          {profile?.email || "seller@deebazar.com"}
-        </Text>
-
-        <View style={styles.ratingRow}>
-
-          <Ionicons
-            name="star"
-            size={18}
-            color="#FFC107"
+      }
+    >
+      {/* Profile Card */}
+      <View style={[styles.profileCard, { backgroundColor: colors.cardBg }]}>
+        <View style={styles.avatarContainer}>
+          <Image
+            source={{ uri: displayLogo }}
+            style={[styles.profileImage, { borderColor: colors.primary }]}
           />
-
-          <Text style={styles.rating}>
-            4.9 Seller Rating
-          </Text>
-
+          <View
+            style={[
+              styles.statusBadgeDot,
+              { backgroundColor: isApproved ? "#22C55E" : "#F59E0B" },
+            ]}
+          />
         </View>
 
+        <Text style={[styles.name, { color: colors.textGrayDark }]}>
+          {displayName}
+        </Text>
+
+        {ownerName ? (
+          <Text style={[styles.ownerNameText, { color: colors.textSecondary }]}>
+            Owner: {ownerName}
+          </Text>
+        ) : null}
+
+        <Text style={[styles.email, { color: colors.textGrayLight }]}>
+          {displayEmail} {displayMobile ? ` • ${displayMobile}` : ""}
+        </Text>
+
+        {/* Rating and Status Row */}
+        <View style={styles.tagsRow}>
+          <View
+            style={[
+              styles.ratingRow,
+              { backgroundColor: colors.warningBgLight || "#FFFBEB" },
+            ]}
+          >
+            <Ionicons name="star" size={16} color={colors.warning || "#F59E0B"} />
+            <Text
+              style={[
+                styles.rating,
+                { color: colors.warningText || "#B45309" },
+              ]}
+            >
+              {displayRating} ({totalRatings} {totalRatings === 1 ? "rating" : "ratings"})
+            </Text>
+          </View>
+
+          <View
+            style={[
+              styles.statusTag,
+              {
+                backgroundColor: isApproved
+                  ? "rgba(34, 197, 94, 0.12)"
+                  : "rgba(245, 158, 11, 0.12)",
+              },
+            ]}
+          >
+            <Ionicons
+              name={isApproved ? "checkmark-circle" : "time-outline"}
+              size={14}
+              color={isApproved ? "#16A34A" : "#D97706"}
+              style={styles.statusTagIcon}
+            />
+            <Text
+              style={[
+                styles.statusTagText,
+                { color: isApproved ? "#16A34A" : "#D97706" },
+              ]}
+            >
+              {accountStatus}
+            </Text>
+          </View>
+        </View>
+
+        {/* Financial Highlights */}
+        <View
+          style={[
+            styles.statsContainer,
+            {
+              backgroundColor: colors.backgroundAlt,
+              borderColor: colors.borderLight || "#E2E8F0",
+            },
+          ]}
+        >
+          <View style={styles.statItem}>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+              Wallet Balance
+            </Text>
+            <Text style={[styles.statValue, { color: colors.primary }]}>
+              ₹{walletBalance}
+            </Text>
+          </View>
+
+          <View
+            style={[
+              styles.statDivider,
+              { backgroundColor: colors.borderLight || "#E2E8F0" },
+            ]}
+          />
+
+          <View style={styles.statItem}>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+              Total Earnings
+            </Text>
+            <Text style={[styles.statValue, { color: colors.textGrayDark }]}>
+              ₹{totalEarnings}
+            </Text>
+          </View>
+        </View>
       </View>
 
-      {/* Menu */}
+      {/* Dark / Light Mode Toggle Card */}
+      <View style={[styles.themeToggleCard, { backgroundColor: colors.cardBg }]}>
+        <View style={styles.themeToggleLeft}>
+          <View
+            style={[
+              styles.themeIconBox,
+              { backgroundColor: colors.menuSettings || "#6366F1" },
+            ]}
+          >
+            <Ionicons
+              name={isDarkMode ? "moon" : "sunny"}
+              size={22}
+              color={colors.textContrast || "#FFFFFF"}
+            />
+          </View>
+          <View style={styles.themeTextContainer}>
+            <Text style={[styles.themeTitle, { color: colors.textGrayDark }]}>
+              Dark Mode
+            </Text>
+            <Text style={[styles.themeSubtitle, { color: colors.textGrayLight }]}>
+              {isDarkMode ? "Dark Theme Active 🌙" : "Light Theme Active ☀️"}
+            </Text>
+          </View>
+        </View>
+        <Switch
+          value={isDarkMode}
+          onValueChange={toggleTheme}
+          trackColor={{ false: "#CBD5E1", true: colors.primary }}
+          thumbColor={isDarkMode ? "#ffffff" : "#f4f3f4"}
+        />
+      </View>
 
+      {/* Menu List */}
       {[
         {
           icon: "storefront-outline",
           title: "Store Information",
-          color: COLORS.menuStore,
+          color: colors.menuStore || "#3B82F6",
           screen: "StoreInfo",
+        },
+        {
+          icon: "boat-outline",
+          title: "Shipping Settings",
+          color: "#F97316",
+          screen: "ShippingSettings",
+        },
+        {
+          icon: "shield-checkmark-outline",
+          title: "Store Policies",
+          color: "#0EA5E9",
+          screen: "StorePolicies",
         },
         {
           icon: "person-outline",
           title: "Edit Profile",
-          color: COLORS.menuProfile,
+          color: colors.menuProfile || "#10B981",
           screen: "EditProfile",
         },
         {
           icon: "call-outline",
           title: "Contact Number",
-          color: COLORS.menuContact,
+          color: colors.menuContact || "#EC4899",
           screen: "ContactNumber",
         },
         {
           icon: "card-outline",
           title: "Bank Details",
-          color: COLORS.menuBank,
+          color: colors.menuBank || "#8B5CF6",
           screen: "BankDetails",
         },
         {
           icon: "lock-closed-outline",
           title: "Change Password",
-          color: COLORS.menuPassword,
+          color: colors.menuPassword || "#F59E0B",
           screen: "ChangePassword",
         },
         {
           icon: "settings-outline",
-          title: "Settings",
-          color: COLORS.menuSettings,
-          onPress: () => Alert.alert("Settings", "App settings configuration will be available in the next release."),
+          title: "App Theme & Display",
+          color: colors.menuSettings || "#6366F1",
+          onPress: () => {
+            Alert.alert(
+              "Theme Mode",
+              `Current Active Mode: ${themeMode.toUpperCase()}\nToggle the switch above to change themes anytime.`,
+              [{ text: "OK" }]
+            );
+          },
         },
         {
           icon: "help-circle-outline",
           title: "Help & Support",
-          color: COLORS.menuHelp,
-          onPress: () => Alert.alert("Help & Support", "Support ticket system will be active soon. Please contact us at support@deebazar.com."),
+          color: colors.menuHelp || "#06B6D4",
+          onPress: () =>
+            Alert.alert(
+              "Help & Support",
+              "Support ticket system will be active soon. Please contact us at support@deebazar.com."
+            ),
         },
       ].map((item, index) => (
-
         <TouchableOpacity
           key={index}
-          activeOpacity={0.9}
+          activeOpacity={0.88}
           onPress={() => handleMenuPress(item)}
-          style={styles.menuCard}>
-
+          style={[styles.menuCard, { backgroundColor: colors.cardBg }]}
+        >
           <View
             style={[
               styles.menuIcon,
               {
                 backgroundColor: item.color,
               },
-            ]}>
-
+            ]}
+          >
             <Ionicons
               name={item.icon}
-              color="#fff"
+              color={colors.textContrast || "#FFFFFF"}
               size={22}
             />
-
           </View>
 
-          <Text style={styles.menuTitle}>
+          <Text style={[styles.menuTitle, { color: colors.textGrayDark }]}>
             {item.title}
           </Text>
 
           <Ionicons
             name="chevron-forward"
             size={22}
-            color="#999"
+            color={colors.textGrayPlaceholder || "#94A3B8"}
           />
-
-        </TouchableOpacity> 
-
+        </TouchableOpacity>
       ))}
 
-      {/* Logout */}
-
+      {/* Logout Button */}
       <TouchableOpacity
-        style={styles.logoutBtn}
+        style={[styles.logoutBtn, { backgroundColor: colors.error || "#EF4444" }]}
         activeOpacity={0.9}
         onPress={handleLogout}
+        disabled={isLoading}
       >
-
-        <Ionicons
-          name="log-out-outline"
-          size={22}
-          color="#fff"
-        />
-
-        <Text style={styles.logoutText}>
-          Logout
-        </Text>
-
+        {isLoading ? (
+          <ActivityIndicator color={colors.textContrast || "#FFFFFF"} size="small" />
+        ) : (
+          <>
+            <Ionicons
+              name="log-out-outline"
+              size={22}
+              color={colors.textContrast || "#FFFFFF"}
+            />
+            <Text
+              style={[
+                styles.logoutText,
+                { color: colors.textContrast || "#FFFFFF" },
+              ]}
+            >
+              Logout
+            </Text>
+          </>
+        )}
       </TouchableOpacity>
-
     </ScrollView>
   );
 };
 
 export default Account;
+
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.backgroundAlt,
+    paddingTop:
+      (Platform.OS === "android" ? StatusBar.currentHeight || 24 : 0) + 15,
+  },
+  scrollContent: {
+    paddingBottom: 100,
+  },
   profileCard: {
-    margin: 16,
+    marginHorizontal: 16,
+    marginBottom: 14,
     backgroundColor: COLORS.cardBg,
     borderRadius: 22,
-    paddingVertical: 28,
+    paddingVertical: 24,
+    paddingHorizontal: 18,
     alignItems: "center",
-    elevation: 5,
+    elevation: 4,
     shadowColor: COLORS.textPrimary,
     shadowOpacity: 0.08,
     shadowRadius: 10,
   },
-
+  avatarContainer: {
+    position: "relative",
+  },
   profileImage: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
     borderWidth: 3,
     borderColor: COLORS.primary,
   },
-
+  statusBadgeDot: {
+    position: "absolute",
+    bottom: 4,
+    right: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
+  },
   name: {
-    marginTop: 15,
-    fontSize: 24,
+    marginTop: 12,
+    fontSize: 22,
     fontWeight: "700",
     color: COLORS.textGrayDark,
+    textAlign: "center",
   },
-
+  ownerNameText: {
+    marginTop: 3,
+    fontSize: 13,
+    fontWeight: "600",
+    color: COLORS.textSecondary,
+  },
   email: {
-    marginTop: 6,
-    fontSize: 14,
+    marginTop: 4,
+    fontSize: 13,
     color: COLORS.textGrayLight,
+    textAlign: "center",
   },
-
+  tagsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+    flexWrap: "wrap",
+    gap: 8,
+  },
   ratingRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 12,
-    backgroundColor: COLORS.warningBgLight,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 20,
   },
-
   rating: {
-    marginLeft: 6,
-    fontSize: 14,
+    marginLeft: 5,
+    fontSize: 13,
     fontWeight: "600",
-    color: COLORS.warningText,
   },
-
+  statusTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  statusTagIcon: {
+    marginRight: 4,
+  },
+  statusTagText: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  statsContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    marginTop: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  statItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  statLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  statValue: {
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  statDivider: {
+    width: 1,
+    height: 32,
+  },
+  themeToggleCard: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 18,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    elevation: 3,
+    shadowColor: COLORS.textPrimary,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+  },
+  themeToggleLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  themeIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  themeTextContainer: {
+    marginLeft: 14,
+    flex: 1,
+  },
+  themeTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: COLORS.textGrayDark,
+  },
+  themeSubtitle: {
+    marginTop: 3,
+    fontSize: 12,
+    color: COLORS.textGrayLight,
+  },
   menuCard: {
     marginHorizontal: 16,
     marginBottom: 14,
@@ -279,28 +752,25 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
   },
-
   menuIcon: {
-    width: 50,
-    height: 50,
+    width: 48,
+    height: 48,
     borderRadius: 14,
     justifyContent: "center",
     alignItems: "center",
   },
-
   menuTitle: {
     flex: 1,
-    marginLeft: 15,
-    fontSize: 16,
+    marginLeft: 14,
+    fontSize: 15,
     fontWeight: "600",
     color: COLORS.textGrayDark,
   },
-
   logoutBtn: {
     marginHorizontal: 16,
-    marginTop: 25,
+    marginTop: 20,
     marginBottom: 30,
-    height: 58,
+    height: 54,
     backgroundColor: COLORS.error,
     borderRadius: 16,
     justifyContent: "center",
@@ -311,10 +781,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
   },
-
   logoutText: {
     color: COLORS.textContrast,
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "700",
     marginLeft: 10,
   },
