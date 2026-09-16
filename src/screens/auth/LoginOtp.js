@@ -18,7 +18,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
 
 const LoginOtp = ({ route, navigation }) => {
-  const { identifier } = route.params || { identifier: "" };
+  const { identifier = "" } = route.params || {};
   
   const [isLoading, setIsLoading] = useState(false);
   const [otpCode, setOtpCode] = useState(["", "", "", ""]);

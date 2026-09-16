@@ -103,9 +103,8 @@ const AppTab = () => {
 const AuthScreens = () => {
   return (
     <Stack.Group>
-      <Stack.Screen name="Splash" component={Splash} />
-      <Stack.Screen name="Login" component={Login} />
       <Stack.Screen name="SellerRegistration" component={SellerRegistration} />
+      <Stack.Screen name="Login" component={Login} />
       <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
       <Stack.Screen name="ForgotPasswordOtp" component={ForgotPasswordOtp} />
       <Stack.Screen name="ResetPassword" component={ResetPassword} />
@@ -147,6 +146,7 @@ const AppScreens = () => {
 // --------------------------------------------------
 const SellerStack = () => {
   const [userToken, setUserToken] = useState(null);
+  const [splashFinished, setSplashFinished] = useState(false);
 
   useEffect(() => {
     // Listen for auth state changes
@@ -154,6 +154,7 @@ const SellerStack = () => {
       "authStateChanged",
       (token) => {
         setUserToken(token);
+        setSplashFinished(true);
       }
     );
 
@@ -164,12 +165,17 @@ const SellerStack = () => {
 
   return (
     <Stack.Navigator
-      initialRouteName="Splash"
       screenOptions={{
         headerShown: false,
       }}
     >
-      {userToken ? AppScreens() : AuthScreens()}
+      {!splashFinished ? (
+        <Stack.Screen name="Splash" component={Splash} />
+      ) : userToken ? (
+        AppScreens()
+      ) : (
+        AuthScreens()
+      )}
     </Stack.Navigator>
   );
 };

@@ -61,11 +61,11 @@ const Orders = ({ navigation }) => {
       customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       orderIdStr.toLowerCase().includes(searchQuery.toLowerCase()) ||
       itemsStr.toLowerCase().includes(searchQuery.toLowerCase());
-    
+
     const statusStr = (order.status || "").toString();
     const formattedStatus = statusStr ? statusStr.charAt(0).toUpperCase() + statusStr.slice(1) : "";
     const matchesStatus = statusFilter === "All" || formattedStatus === statusFilter;
-    
+
     return matchesSearch && matchesStatus;
   });
 
@@ -86,6 +86,7 @@ const Orders = ({ navigation }) => {
   };
 
   const handleOrderPress = (order) => {
+    // console.log(order)
     navigation.navigate("OrderDetails", { orderId: order.id });
   };
 
@@ -202,7 +203,20 @@ const Orders = ({ navigation }) => {
                 onPress={() => handleOrderPress(item)}
                 style={styles.orderCard}
               >
-                <Image source={{ uri: item.image || "https://i.pravatar.cc/150?u=" + (item.id || 0) }} style={styles.customerImage} />
+                {Array.isArray(item.items) && item.items.length > 1 ? (
+                  <View style={[styles.customerImage, styles.multiItemIconContainer]}>
+                    <Ionicons name="cube-outline" size={30} color={COLORS.primary} />
+                    <View style={styles.badgeContainer}>
+                      <Text style={styles.badgeText}>{item.items.length}</Text>
+                    </View>
+                  </View>
+                ) : item.image ? (
+                  <Image source={{ uri: item.image }} style={styles.customerImage} />
+                ) : (
+                  <View style={[styles.customerImage, styles.multiItemIconContainer]}>
+                    <Ionicons name="receipt-outline" size={28} color={COLORS.primary} />
+                  </View>
+                )}
 
                 <View style={styles.orderInfo}>
                   <Text style={styles.orderId}>{item.order_number || "#" + (item.id || item._id)}</Text>
@@ -218,8 +232,8 @@ const Orders = ({ navigation }) => {
                       formattedStatus === "Delivered"
                         ? styles.deliveredBadgeBg
                         : formattedStatus === "Pending"
-                        ? styles.pendingBadgeBg
-                        : styles.cancelledBadgeBg,
+                          ? styles.pendingBadgeBg
+                          : styles.cancelledBadgeBg,
                     ]}
                   >
                     <Text
@@ -228,8 +242,8 @@ const Orders = ({ navigation }) => {
                         formattedStatus === "Delivered"
                           ? styles.deliveredBadgeText
                           : formattedStatus === "Pending"
-                          ? styles.pendingBadgeText
-                          : styles.cancelledBadgeText,
+                            ? styles.pendingBadgeText
+                            : styles.cancelledBadgeText,
                       ]}
                     >
                       {formattedStatus}
@@ -389,6 +403,34 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
+  },
+  multiItemIconContainer: {
+    backgroundColor: COLORS.primary + '15',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: COLORS.primary + '30',
+  },
+  badgeContainer: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: COLORS.error,
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.cardBg,
+    paddingHorizontal: 4,
+    zIndex: 10,
+  },
+  badgeText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   orderInfo: {
     flex: 1,

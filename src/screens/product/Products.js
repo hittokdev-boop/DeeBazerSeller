@@ -13,7 +13,7 @@ import {
   StatusBar,
   FlatList,
   ActivityIndicator,
-  RefreshControl,
+  RefreshControl, Button
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useNavigation, useFocusEffect, useRoute } from "@react-navigation/native";
@@ -21,6 +21,7 @@ import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { getSellerProducts, deleteSellerProduct, updateProductStock } from "../../api/auth";
 import { CustomAlert } from "../../context/AlertContext";
+
 
 const STATUS_OPTIONS = [
   { label: "All", value: "all" },
@@ -298,7 +299,7 @@ const Products = () => {
     const isOutOfStock = stock <= 0;
     const isLowStock = item.is_low_stock || (stock > 0 && stock <= (item.min_stock_alert || 5));
     const categoryName = item.category?.name || item.category || "General";
-    const productId = item.id || item.product_id;
+    const productId = item.product_id;
 
 
     return (
@@ -310,6 +311,7 @@ const Products = () => {
       >
         {/* Product Thumbnail */}
         <View style={styles.imageContainer}>
+
           <Image
             source={{
               uri:

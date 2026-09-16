@@ -1,9 +1,10 @@
-import React from "react";
-import { StyleSheet } from "react-native";
+import React, { useState, useEffect } from "react";
+import { StyleSheet, View } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
+import { getOrders } from "../api/orders";
 
 import Dashboard from "../screens/app/Dashboard";
 import Products from "../screens/product/Products";
@@ -15,6 +16,26 @@ const Tab = createBottomTabNavigator();
 
 const SellerBottomNavigation = () => {
   const { colors } = useTheme();
+  const [hasNewOrders, setHasNewOrders] = useState(false);
+
+  useEffect(() => {
+    const fetchPendingOrders = async () => {
+      try {
+        const response = await getOrders();
+        const ordersList = response?.data?.orders || response?.orders || response?.data || response || [];
+        const safeOrders = Array.isArray(ordersList) ? ordersList : [];
+        const pendingCount = safeOrders.filter((o) => (o.status || "").toString().toLowerCase() === "pending").length;
+        setHasNewOrders(pendingCount > 0);
+      } catch (error) {
+        console.log("Error fetching orders for badge:", error);
+      }
+    };
+    
+    fetchPendingOrders();
+    // Optionally set up an interval to poll for new orders
+    const interval = setInterval(fetchPendingOrders, 30000); // Check every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <Tab.Navigator
@@ -63,11 +84,16 @@ const SellerBottomNavigation = () => {
           }
 
           return (
-            <Ionicons
-              name={iconName}
-              size={size || 24}
-              color={color}
-            />
+            <View>
+              <Ionicons
+                name={iconName}
+                size={size || 24}
+                color={color}
+              />
+              {route.name === "Orders" && hasNewOrders && (
+                <View style={styles.notificationDot} />
+              )}
+            </View>
           );
         },
       })}
@@ -96,4 +122,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
   },
+  notificationDot: {
+    position: "absolute",
+    top: -2,
+    right: -4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: COLORS.error,
+    borderWidth: 1.5,
+    borderColor: COLORS.cardBg,
+  }
 });

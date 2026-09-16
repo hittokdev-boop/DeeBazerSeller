@@ -21,6 +21,9 @@ export const getSellerMe = async (customToken = null) => {
         Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: 0,
       },
     });
 
@@ -64,11 +67,15 @@ export const getSellerProfile = async (customToken = null) => {
         Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: 0,
       },
     });
 
     const responseText = await response.text();
     let responseData;
+    console.log(responseText)
     try {
       responseData = JSON.parse(responseText);
     } catch (e) {
@@ -188,16 +195,12 @@ export const updateSellerProfile = async (formDataOrPayload, customToken = null)
       Authorization: `Bearer ${token}`,
     };
 
-    let method = "PUT";
+    let method = "POST";
     let body = formDataOrPayload;
 
     if (!isFormData) {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(formDataOrPayload);
-    } else {
-      // In PHP/Laravel backend, multipart/form-data with PUT works best via POST + _method: PUT
-      formDataOrPayload.append("_method", "PUT");
-      method = "POST";
     }
 
     let response = await fetch(`${BASE_URL}profile`, {
@@ -205,15 +208,6 @@ export const updateSellerProfile = async (formDataOrPayload, customToken = null)
       headers,
       body,
     });
-
-    // If 405 Method Not Allowed, fallback to pure PUT
-    if (response.status === 405 && isFormData) {
-      response = await fetch(`${BASE_URL}profile`, {
-        method: "PUT",
-        headers,
-        body: formDataOrPayload,
-      });
-    }
 
     const responseText = await response.text();
     let responseData;
@@ -479,8 +473,10 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
 
     const responseText = await response.text();
     let responseData;
+
     try {
       responseData = JSON.parse(responseText);
+
     } catch (e) {
       throw new Error(`Server returned invalid response: ${responseText}`);
     }
@@ -509,7 +505,7 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
 export const createSellerProduct = async (formDataOrPayload, customToken = null) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 35000);
-  console.log(formDataOrPayload, 'formDataOrPayload');
+
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
     if (!token) {
@@ -541,8 +537,7 @@ export const createSellerProduct = async (formDataOrPayload, customToken = null)
       body = formData;
     }
 
-    console.log("🚀 [createSellerProduct] Sending POST request to:", `${BASE_URL}products`);
-    console.log("🔑 [createSellerProduct] Headers:", JSON.stringify(headers));
+
 
     const response = await fetch(`${BASE_URL}products`, {
       method: "POST",
@@ -553,10 +548,10 @@ export const createSellerProduct = async (formDataOrPayload, customToken = null)
 
     clearTimeout(timeoutId);
 
-    console.log("📥 [createSellerProduct] HTTP Status Code:", response.status);
+
 
     const responseText = await response.text();
-    console.log("📄 [createSellerProduct] Raw Response Text:", responseText);
+
 
     let responseData;
     try {
@@ -566,7 +561,6 @@ export const createSellerProduct = async (formDataOrPayload, customToken = null)
       throw new Error(`Server returned invalid response: ${responseText}`);
     }
 
-    console.log("✅ [createSellerProduct] Parsed Response Data:", JSON.stringify(responseData, null, 2));
 
     if (!response.ok) {
       let errorMessage = responseData.message || "Failed to create product";
@@ -697,6 +691,7 @@ export const updateSellerProduct = async (productId, formDataOrPayload, customTo
     clearTimeout(timeoutId);
 
     const responseText = await response.text();
+
     let responseData;
     try {
       responseData = JSON.parse(responseText);

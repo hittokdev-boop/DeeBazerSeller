@@ -380,6 +380,7 @@ export const AlertProvider = ({ children }) => {
                     activeOpacity={0.8}
                     style={[
                       styles.btnBase,
+                      isSingle && styles.btnFull,
                       !isSingle && alertConfig.buttons.length === 2 && styles.btnHalf,
                       alertConfig.buttons.length > 2 && styles.btnFull,
                       {

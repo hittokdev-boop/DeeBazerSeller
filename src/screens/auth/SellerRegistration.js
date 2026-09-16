@@ -922,7 +922,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboardContainer}
       >
         {/* Top Header Section */}
@@ -953,6 +953,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
           style={styles.scrollContainer}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {renderStepContent()}
         </ScrollView>

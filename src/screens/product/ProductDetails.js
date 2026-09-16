@@ -107,10 +107,13 @@ const ProductDetails = () => {
           if (res.data.image_url) {
             setSelectedImage(res.data.image_url);
           }
+        } else {
+          setProduct(null);
         }
       } catch (err) {
         console.error("Failed to load product details:", err);
         setFetchError(err?.message || "Failed to load product details");
+        setProduct(null);
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
@@ -241,7 +244,7 @@ const ProductDetails = () => {
       </View>
 
       {/* Error state */}
-      {fetchError && (
+      {fetchError && product && (
         <View style={styles.errorBanner}>
           <Ionicons name="alert-circle-outline" size={18} color={COLORS.error} />
           <Text style={styles.errorBannerText}>{fetchError}</Text>
@@ -256,6 +259,13 @@ const ProductDetails = () => {
           <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
             Loading product details...
+          </Text>
+        </View>
+      ) : !product ? (
+        <View style={styles.loadingContainer}>
+          <Ionicons name="cube-outline" size={48} color={COLORS.textSecondary} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Product details not found.
           </Text>
         </View>
       ) : (

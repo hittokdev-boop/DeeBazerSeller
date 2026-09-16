@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -25,17 +25,43 @@ const EditProduct = ({ navigation, route }) => {
   const [loading, setLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [images, setImages] = useState(
-    productData?.gallery?.length ? productData.gallery : (productData?.image_url ? [productData.image_url] : [])
+    productData?.image_url ? [productData.image_url] : (productData?.image ? [productData.image] : [])
+  );
+  const [detailImages, setDetailImages] = useState(
+    productData?.gallery || productData?.images || []
   );
   const [productName, setProductName] = useState(productData?.name || '');
   const [brand, setBrand] = useState(productData?.brand?.name || '');
   const [category, setCategory] = useState(productData?.category?.name || '');
-  const [price, setPrice] = useState(productData?.sale_price?.toString() || '');
-  const [mrp, setMrp] = useState(productData?.price?.toString() || '');
+  const [price, setPrice] = useState((productData?.sale_price || productData?.price)?.toString() || '');
+  const [mrp, setMrp] = useState((productData?.price || productData?.sale_price)?.toString() || '');
   const [stock, setStock] = useState(productData?.stock_quantity?.toString() || '');
   const [description, setDescription] = useState(productData?.description || productData?.short_description || '');
   const [variants, setVariants] = useState(productData?.tags || []);
   const [newVariant, setNewVariant] = useState('');
+  const [fullProductData, setFullProductData] = useState(null);
+
+  useEffect(() => {
+    const fetchDetails = async () => {
+      const productId = productData?.product_id || productData?.id;
+      if (!productId) return;
+      try {
+        const res = await getSellerProductDetails(productId);
+        if (res?.data) {
+          const fullProduct = res.data;
+          setFullProductData(fullProduct);
+          if (fullProduct.gallery && fullProduct.gallery.length > 0) {
+            setDetailImages(fullProduct.gallery);
+          } else if (fullProduct.images && fullProduct.images.length > 0) {
+            setDetailImages(fullProduct.images);
+          }
+        }
+      } catch (e) {
+        console.log("Failed to fetch full product details in EditProduct:", e);
+      }
+    };
+    fetchDetails();
+  }, []);
 
   const requestCameraPermission = async () => {
     if (Platform.OS !== "android") return true;
@@ -73,8 +99,7 @@ const EditProduct = ({ navigation, route }) => {
               { mediaType: 'photo', quality: 0.8, saveToPhotos: false },
               response => {
                 if (!response.didCancel && response.assets) {
-                  const uris = response.assets.map(a => a.uri);
-                  setImages(prev => [...prev, ...uris]);
+                  setImages(prev => [...prev, ...response.assets]);
                 }
               }
             );
@@ -87,8 +112,7 @@ const EditProduct = ({ navigation, route }) => {
               { mediaType: 'photo', selectionLimit: 0, quality: 0.8 },
               response => {
                 if (!response.didCancel && response.assets) {
-                  const uris = response.assets.map(a => a.uri);
-                  setImages(prev => [...prev, ...uris]);
+                  setImages(prev => [...prev, ...response.assets]);
                 }
               }
             );
@@ -101,6 +125,51 @@ const EditProduct = ({ navigation, route }) => {
 
   const removeImage = (indexToRemove) => {
     setImages((prev) => prev.filter((_, index) => index !== indexToRemove));
+  };
+
+  const pickDetailImage = () => {
+    Alert.alert(
+      "Product Details Image",
+      "Choose an option to add/update product details image",
+      [
+        {
+          text: "Take Photo",
+          onPress: async () => {
+            const hasPerm = await requestCameraPermission();
+            if (!hasPerm) {
+              Alert.alert("Permission Required", "Camera permission is needed to take product photos.");
+              return;
+            }
+            launchCamera(
+              { mediaType: 'photo', quality: 0.8, saveToPhotos: false },
+              response => {
+                if (!response.didCancel && response.assets) {
+                  setDetailImages(prev => [...prev, ...response.assets]);
+                }
+              }
+            );
+          }
+        },
+        {
+          text: "Choose from Gallery",
+          onPress: () => {
+            launchImageLibrary(
+              { mediaType: 'photo', selectionLimit: 0, quality: 0.8 },
+              response => {
+                if (!response.didCancel && response.assets) {
+                  setDetailImages(prev => [...prev, ...response.assets]);
+                }
+              }
+            );
+          }
+        },
+        { text: "Cancel", style: "cancel" }
+      ]
+    );
+  };
+
+  const removeDetailImage = (indexToRemove) => {
+    setDetailImages((prev) => prev.filter((_, index) => index !== indexToRemove));
   };
 
   const addVariant = () => {
@@ -118,30 +187,92 @@ const EditProduct = ({ navigation, route }) => {
   };
 
   const handleUpdate = async () => {
-    if (!productName.trim() || !price.trim()) {
+    const safeName = productName ? String(productName).trim() : '';
+    const safePrice = price ? String(price).trim() : '';
+
+    if (!safeName || !safePrice) {
       Alert.alert("Missing Details", "Product name and sale price are required.");
       return;
     }
 
     setIsUpdating(true);
     try {
-      const payload = {
-        name: productName,
-        sale_price: price,
-        price: mrp || price,
-        stock_quantity: stock || "0",
-        description: description,
+      const formData = new FormData();
+      formData.append("name", safeName);
+      formData.append("sale_price", safePrice);
+      formData.append("price", mrp ? String(mrp).trim() : safePrice);
+      formData.append("stock_quantity", stock || "0");
+      formData.append("description", description);
+      formData.append("short_description", description);
+      const activeData = fullProductData || productData;
+
+      formData.append("weight", activeData?.weight !== undefined && activeData?.weight !== null ? String(activeData.weight) : "");
+      formData.append("min_stock_alert", activeData?.min_stock_alert !== undefined && activeData?.min_stock_alert !== null ? String(activeData.min_stock_alert) : "");
+
+      if (activeData?.category?.id) {
+        formData.append("category_id", String(activeData.category.id));
+      } else if (activeData?.category_id) {
+        formData.append("category_id", String(activeData.category_id));
+      } else {
+        // Only fallback if the backend strictly requires it and we have no data, but ideally we leave it empty or 1
+        formData.append("category_id", "1");
+      }
+
+      if (variants && variants.length > 0) {
+        variants.forEach(tag => {
+          formData.append("tags[]", tag);
+        });
+      }
+
+      const formatFileForUpload = (imgObj, defaultName = "product.jpg") => {
+        if (!imgObj || !imgObj.uri) return null;
+        const uri = imgObj.uri;
+        if (typeof uri !== "string" || uri.startsWith("http://") || uri.startsWith("https://")) {
+          return null;
+        }
+        return {
+          uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
+          type: imgObj.type || "image/jpeg",
+          name: imgObj.fileName || imgObj.name || defaultName,
+        };
       };
 
-      // In a real scenario, you'd also attach the new image URIs, brand, category etc. 
-      // if the API requires them.
+      const newImages = images.filter(img => typeof img !== 'string');
+      if (newImages.length > 0) {
+        const mainFile = formatFileForUpload(newImages[0], `product_image.jpg`);
+        if (mainFile) {
+          formData.append("image", mainFile);
+        }
+      }
+
+      const newDetailImages = detailImages.filter(img => typeof img !== 'string' && !img?.image_url && !img?.image && !img?.url);
+      if (newDetailImages.length > 0) {
+        newDetailImages.forEach((img, index) => {
+          // If it's a remote URL that got mixed in, skip it
+          if (img?.uri && (img.uri.startsWith("http://") || img.uri.startsWith("https://"))) {
+            return;
+          }
+          const galleryFile = formatFileForUpload(img, `gallery_image_${index}.jpg`);
+          if (galleryFile) {
+            formData.append("gallery[]", galleryFile);
+          }
+        });
+      }
+
+      const productId = productData?.product_id || productData?.id;
       
-      const productId = productData.id || productData.product_id;
-      const res = await updateSellerProduct(productId, payload);
-      
+      // Log the exact payload for debugging
+      if (formData.getParts) {
+        console.log("==== UPLOAD PAYLOAD BODY ====");
+        console.log(JSON.stringify(formData.getParts(), null, 2));
+        console.log("=============================");
+      }
+
+      const res = await updateSellerProduct(productId, formData);
+
       Alert.alert(
-        "Success", 
-        res?.message || "Product updated successfully!", 
+        "Success",
+        res?.message || "Product updated successfully!",
         [{ text: "OK", onPress: () => navigation.goBack() }]
       );
     } catch (error) {
@@ -212,16 +343,17 @@ const EditProduct = ({ navigation, route }) => {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={{ marginBottom: 15 }}
         >
-          {images.map((item, index) => (
+          {images.map((item, index) => {
+            const imgUri = typeof item === 'string' ? item : (item?.uri || item?.image_url || item?.image || item?.url);
+            return (
             <View
               key={index}
               style={styles.imageBox}
             >
               <Image
-                source={{
-                  uri: typeof item === 'string' ? item : item?.uri
-                }}
+                source={{ uri: imgUri }}
                 style={styles.image}
               />
               <TouchableOpacity
@@ -235,22 +367,55 @@ const EditProduct = ({ navigation, route }) => {
                 />
               </TouchableOpacity>
             </View>
-          ))}
-
-          <TouchableOpacity
-            style={styles.addImageBox}
-            onPress={pickImage}
-          >
-            <Ionicons
-              name="add"
-              size={35}
-              color={COLORS.primary}
-            />
-            <Text style={styles.addImageText}>
-              Add
-            </Text>
-          </TouchableOpacity>
+          )})}
         </ScrollView>
+
+        <TouchableOpacity style={styles.updateImageBtnBelow} onPress={pickImage}>
+          <Ionicons name="camera-outline" size={24} color={COLORS.primary} />
+          <Text style={styles.updateImageBtnText}>Update Image</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Product Details Images */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>
+          Product Details Images
+        </Text>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ marginBottom: 15 }}
+        >
+          {detailImages.map((item, index) => {
+            const imgUri = typeof item === 'string' ? item : (item?.uri || item?.image_url || item?.image || item?.url);
+            return (
+            <View
+              key={index}
+              style={styles.imageBox}
+            >
+              <Image
+                source={{ uri: imgUri }}
+                style={styles.image}
+              />
+              <TouchableOpacity
+                style={styles.editImageBtn}
+                onPress={() => removeDetailImage(index)}
+              >
+                <Ionicons
+                  name="close"
+                  size={18}
+                  color={COLORS.textContrast}
+                />
+              </TouchableOpacity>
+            </View>
+          )})}
+        </ScrollView>
+
+        <TouchableOpacity style={styles.updateImageBtnBelow} onPress={pickDetailImage}>
+          <Ionicons name="camera-outline" size={24} color={COLORS.primary} />
+          <Text style={styles.updateImageBtnText}>Add Detail Images</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Product Info */}
@@ -549,8 +714,8 @@ const EditProduct = ({ navigation, route }) => {
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.updateBtn, isUpdating && { opacity: 0.7 }]} 
+        <TouchableOpacity
+          style={[styles.updateBtn, isUpdating && { opacity: 0.7 }]}
           onPress={handleUpdate}
           disabled={isUpdating}
         >
@@ -657,6 +822,24 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: COLORS.primary,
     fontWeight: "700",
+  },
+  updateImageBtnBelow: {
+    marginTop: 15,
+    height: 55,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    borderStyle: "dashed",
+    borderRadius: 15,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: COLORS.primaryBgLight,
+  },
+  updateImageBtnText: {
+    color: COLORS.primary,
+    fontSize: 16,
+    fontWeight: "700",
+    marginLeft: 8,
   },
   inputGroup: {
     marginBottom: 14,

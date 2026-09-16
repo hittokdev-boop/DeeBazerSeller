@@ -14,6 +14,7 @@ import {
   Modal,
   Image,
   PermissionsAndroid,
+  RefreshControl,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -31,6 +32,7 @@ const EditProfile = ({ navigation }) => {
   const [selectedPhoto, setSelectedPhoto] = useState(null);
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showPhotoPickerModal, setShowPhotoPickerModal] = useState(false);
   const [errors, setErrors] = useState({});
@@ -119,58 +121,70 @@ const EditProfile = ({ navigation }) => {
     }
   };
 
-  useEffect(() => {
-    const loadProfileData = async () => {
-      setIsLoading(true);
+  const loadProfileData = async () => {
+    setIsLoading(true);
+    try {
+      const [storedProfile, storedUser, storedSeller] = await Promise.all([
+        AsyncStorage.getItem("sellerProfile"),
+        AsyncStorage.getItem("userData"),
+        AsyncStorage.getItem("sellerData"),
+      ]);
+
+      const parsedProfile = storedProfile ? JSON.parse(storedProfile) : {};
+      const parsedUser = storedUser ? JSON.parse(storedUser) : {};
+      const parsedSeller = storedSeller ? JSON.parse(storedSeller) : {};
+
+      setOwnerName(parsedUser.name || parsedProfile.ownerName || parsedProfile.name || "");
+      setEmail(parsedUser.email || parsedProfile.email || "");
+      setMobile(parsedUser.mobile || parsedProfile.phone || parsedProfile.mobile || "");
+
+      const initialLogo =
+        parsedUser.logo_url ||
+        parsedSeller.logo_url ||
+        parsedProfile.logoUri ||
+        parsedProfile.logo_url ||
+        "";
+      setAvatarUri(initialLogo);
+
+      // Try fresh fetch if online
       try {
-        const [storedProfile, storedUser, storedSeller] = await Promise.all([
-          AsyncStorage.getItem("sellerProfile"),
-          AsyncStorage.getItem("userData"),
-          AsyncStorage.getItem("sellerData"),
-        ]);
+        const freshData = await getSellerMe();
+        console.log("freshLogo", freshData);
+        if (freshData?.data) {
+          const data = freshData.data;
+          
+          // Check if the data has seller/user structure
+          const sellerObj = data.seller || data;
+          const userObj = data.user || data;
 
-        const parsedProfile = storedProfile ? JSON.parse(storedProfile) : {};
-        const parsedUser = storedUser ? JSON.parse(storedUser) : {};
-        const parsedSeller = storedSeller ? JSON.parse(storedSeller) : {};
+          setOwnerName(sellerObj.store_name || userObj.name || "");
+          setEmail(userObj.email || sellerObj.email || "");
+          setMobile(userObj.mobile || sellerObj.phone || userObj.phone || "");
+          const freshLogo = sellerObj.logo_url || userObj.logo_url;
 
-        setOwnerName(parsedUser.name || parsedProfile.ownerName || parsedProfile.name || "");
-        setEmail(parsedUser.email || parsedProfile.email || "");
-        setMobile(parsedUser.mobile || parsedProfile.phone || parsedProfile.mobile || "");
-
-        const initialLogo =
-          parsedUser.logo_url ||
-          parsedSeller.logo_url ||
-          parsedProfile.logoUri ||
-          parsedProfile.logo_url ||
-          "";
-        setAvatarUri(initialLogo);
-
-        // Try fresh fetch if online
-        try {
-          const freshData = await getSellerMe();
-          if (freshData?.data) {
-            const user = freshData.data.user || {};
-            const seller = freshData.data.seller || {};
-            setOwnerName(user.name || "");
-            setEmail(user.email || "");
-            setMobile(user.mobile || "");
-            const freshLogo = user.logo_url || seller.logo_url;
-            if (freshLogo) {
-              setAvatarUri(freshLogo);
-            }
+          if (freshLogo) {
+            setAvatarUri(freshLogo);
           }
-        } catch (e) {
-          // offline fallback
         }
-      } catch (err) {
-        console.log("Error loading profile", err);
-      } finally {
-        setIsLoading(false);
+      } catch (e) {
+        // offline fallback
       }
-    };
+    } catch (err) {
+      console.log("Error loading profile", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  useEffect(() => {
     loadProfileData();
   }, []);
+
+  const onRefresh = async () => {
+    setIsRefreshing(true);
+    await loadProfileData();
+    setIsRefreshing(false);
+  };
 
   const handleOpenGallery = async () => {
     setShowPhotoPickerModal(false);
@@ -290,7 +304,8 @@ const EditProfile = ({ navigation }) => {
             setAvatarUri(profileRes.data.logo_url);
           }
         } catch (photoErr) {
-          console.log("Photo upload warning:", photoErr);
+          console.log("Photo upload error:", photoErr);
+          throw new Error(photoErr.message || "Failed to upload profile photo");
         }
       }
 
@@ -385,6 +400,14 @@ const EditProfile = ({ navigation }) => {
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
         >
           {/* Avatar Section */}
           <View style={styles.profileHeaderDecoration}>
@@ -402,7 +425,11 @@ const EditProfile = ({ navigation }) => {
               >
                 {avatarUri ? (
                   <Image
-                    source={{ uri: avatarUri }}
+                    source={{
+                      uri: avatarUri.includes("pravatar.cc") || avatarUri.startsWith("file://")
+                        ? avatarUri
+                        : `${avatarUri}${avatarUri.includes("?") ? "&" : "?"}t=${new Date().getTime()}`
+                    }}
                     style={styles.avatarImage}
                     resizeMode="cover"
                   />
@@ -655,8 +682,8 @@ const EditProfile = ({ navigation }) => {
                     alertConfig.type === "success"
                       ? "checkmark"
                       : alertConfig.type === "error"
-                      ? "alert"
-                      : "information"
+                        ? "alert"
+                        : "information"
                   }
                   size={26}
                   color="#FFFFFF"

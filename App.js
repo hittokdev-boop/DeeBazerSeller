@@ -36,7 +36,7 @@ export default function App() {
     <ThemeProvider>
       <AlertProvider>
         <NavigationContainer>
-          <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+          <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
           <SellerStack />
         </NavigationContainer>
       </AlertProvider>

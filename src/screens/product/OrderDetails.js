@@ -10,11 +10,13 @@ import {
   Platform,
   StatusBar,
   Alert,
+  Modal,
+  TextInput,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getOrder, updateOrderStatusAPI } from "../../api/orders";
+import { getOrder, updateOrderStatusAPI, addOrderTrackingAPI, getOrderStatusList } from "../../api/orders";
 
 const OrderDetails = ({ route, navigation }) => {
   const { orderId } = route.params;
@@ -22,6 +24,16 @@ const OrderDetails = ({ route, navigation }) => {
   
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [availableStatuses, setAvailableStatuses] = useState([]);
+
+  // Modal states
+
+  const [cancelModalVisible, setCancelModalVisible] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+
+
+
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const fetchOrderDetails = async () => {
     try {
@@ -29,6 +41,13 @@ const OrderDetails = ({ route, navigation }) => {
       const response = await getOrder(orderId);
       // Backend returns either { data: { ... } } or just the object
       setOrder(response?.data || response);
+
+      try {
+        const statusRes = await getOrderStatusList(orderId);
+        setAvailableStatuses(statusRes?.data || []);
+      } catch (err) {
+        console.log("Failed to fetch status list", err);
+      }
     } catch (error) {
       Alert.alert("Error", error.message || "Failed to load order details");
       navigation.goBack();
@@ -43,13 +62,54 @@ const OrderDetails = ({ route, navigation }) => {
     }
   }, [orderId]);
 
-  const handleUpdateStatus = async (newStatus) => {
+
+
+  // For dynamic location
+  const getDynamicLocation = () => {
+    return new Promise((resolve) => {
+      // If you install @react-native-community/geolocation, you can use:
+      // Geolocation.getCurrentPosition(
+      //   position => resolve(`${position.coords.latitude}, ${position.coords.longitude}`),
+      //   error => resolve("23.8103, 90.4125"), // fallback
+      //   { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      // );
+      
+      // Temporary simulated dynamic location (replace with actual geolocation above)
+      const dummyLat = (23.8103 + Math.random() * 0.01).toFixed(4);
+      const dummyLng = (90.4125 + Math.random() * 0.01).toFixed(4);
+      resolve(`${dummyLat}, ${dummyLng}`);
+    });
+  };
+
+  const handleUpdateStatus = async (newStatus, extraPayload = {}) => {
     try {
-      await updateOrderStatusAPI(orderId, newStatus);
+      setIsUpdating(true);
+      const payload = { status: newStatus, ...extraPayload };
+      await updateOrderStatusAPI(orderId, payload);
       Alert.alert("Success", `Order status updated to ${newStatus}`);
+      
+      // Auto-add tracking milestone when shipped
+      if (newStatus === "shipped") {
+        try {
+          const location = await getDynamicLocation();
+          
+          await addOrderTrackingAPI(orderId, {
+            status: "Out for Delivery",
+            location: location,
+            description: "Package handed over to courier"
+          });
+        } catch (trackingError) {
+          console.log("Failed to auto-add tracking:", trackingError);
+        }
+      }
+
       fetchOrderDetails();
     } catch (error) {
       Alert.alert("Error", error.message || "Failed to update order status");
+    } finally {
+      setIsUpdating(false);
+      setCancelModalVisible(false);
+      setCancelReason("");
     }
   };
 
@@ -116,21 +176,52 @@ const OrderDetails = ({ route, navigation }) => {
 
         {/* Action Buttons based on flags */}
         <View style={styles.actionRow}>
-          {order.can_confirm && (
-            <TouchableOpacity style={styles.actionBtn} onPress={() => handleUpdateStatus("confirmed")}>
-              <Text style={styles.actionBtnText}>Confirm Order</Text>
-            </TouchableOpacity>
+          {availableStatuses && availableStatuses.length > 0 ? (
+            availableStatuses.map((statusStr, idx) => (
+              <TouchableOpacity 
+                key={idx}
+                style={[styles.actionBtn, statusStr.toLowerCase() === "cancelled" ? styles.actionBtnCancel : null]} 
+                onPress={() => {
+                  if (statusStr.toLowerCase() === "shipped") {
+                    handleUpdateStatus("shipped");
+                  } else if (statusStr.toLowerCase() === "cancelled") {
+                    setCancelModalVisible(true);
+                  } else {
+                    handleUpdateStatus(statusStr);
+                  }
+                }} 
+                disabled={isUpdating}
+              >
+                <Text style={statusStr.toLowerCase() === "cancelled" ? styles.actionBtnTextCancel : styles.actionBtnText}>
+                  {statusStr.charAt(0).toUpperCase() + statusStr.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <>
+              {order.can_confirm && (
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleUpdateStatus("confirmed")} disabled={isUpdating}>
+                  <Text style={styles.actionBtnText}>Confirm Order</Text>
+                </TouchableOpacity>
+              )}
+              {order.status === "confirmed" && (
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleUpdateStatus("processing")} disabled={isUpdating}>
+                  <Text style={styles.actionBtnText}>Process Order</Text>
+                </TouchableOpacity>
+              )}
+              {order.can_ship && order.status !== "confirmed" && (
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleUpdateStatus("shipped")} disabled={isUpdating}>
+                  <Text style={styles.actionBtnText}>Mark Shipped</Text>
+                </TouchableOpacity>
+              )}
+              {order.can_cancel && (
+                <TouchableOpacity style={[styles.actionBtn, styles.actionBtnCancel]} onPress={() => setCancelModalVisible(true)} disabled={isUpdating}>
+                  <Text style={styles.actionBtnTextCancel}>Cancel Order</Text>
+                </TouchableOpacity>
+              )}
+            </>
           )}
-          {order.can_ship && (
-            <TouchableOpacity style={styles.actionBtn} onPress={() => handleUpdateStatus("shipped")}>
-              <Text style={styles.actionBtnText}>Mark Shipped</Text>
-            </TouchableOpacity>
-          )}
-          {order.can_cancel && (
-            <TouchableOpacity style={[styles.actionBtn, styles.actionBtnCancel]} onPress={() => handleUpdateStatus("cancelled")}>
-              <Text style={styles.actionBtnTextCancel}>Cancel Order</Text>
-            </TouchableOpacity>
-          )}
+
         </View>
 
         {/* Customer & Shipping */}
@@ -139,7 +230,9 @@ const OrderDetails = ({ route, navigation }) => {
           {order.customer ? (
             <View style={styles.detailsBlock}>
               <Text style={styles.detailText}><Ionicons name="person-outline" size={16}/> {order.customer.name}</Text>
-              <Text style={styles.detailText}><Ionicons name="mail-outline" size={16}/> {order.customer.email}</Text>
+              {order.customer.email ? (
+                <Text style={styles.detailText}><Ionicons name="mail-outline" size={16}/> {order.customer.email}</Text>
+              ) : null}
               <Text style={styles.detailText}><Ionicons name="call-outline" size={16}/> {order.customer.mobile}</Text>
             </View>
           ) : (
@@ -225,6 +318,43 @@ const OrderDetails = ({ route, navigation }) => {
           </View>
         )}
       </ScrollView>
+
+
+      {/* Cancel Modal */}
+      <Modal visible={cancelModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBg }]}>
+            <Text style={[styles.modalTitle, { color: colors.textGrayDark }]}>Cancel Order</Text>
+            
+            <Text style={[styles.modalLabel, { color: colors.textGrayDark }]}>Cancellation Reason (Optional)</Text>
+            <TextInput
+              style={[styles.modalInput, { color: colors.textGrayDark, borderColor: colors.borderLight, height: 80 }]}
+              placeholder="Reason for cancellation..."
+              placeholderTextColor={colors.textGrayLight}
+              value={cancelReason}
+              onChangeText={setCancelReason}
+              multiline
+              textAlignVertical="top"
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setCancelModalVisible(false)} disabled={isUpdating}>
+                <Text style={styles.modalCancelBtnText}>Close</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.modalSubmitBtn} 
+                onPress={() => handleUpdateStatus("cancelled", { notes: cancelReason })}
+                disabled={isUpdating}
+              >
+                {isUpdating ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalSubmitBtnText}>Confirm Cancel</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+
+
     </View>
   );
 };
@@ -444,5 +574,68 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.textGrayLight,
     marginTop: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  modalContent: {
+    width: "100%",
+    borderRadius: 16,
+    padding: 20,
+    elevation: 5,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 16,
+  },
+  modalLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    marginBottom: 16,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 10,
+  },
+  modalCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginRight: 10,
+  },
+  modalCancelBtnText: {
+    color: COLORS.textGrayMedium,
+    fontWeight: "600",
+    fontSize: 15,
+  },
+  modalSubmitBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalSubmitBtnText: {
+    color: COLORS.textContrast,
+    fontWeight: "600",
+    fontSize: 15,
   },
 });

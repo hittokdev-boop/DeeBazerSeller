@@ -20,7 +20,7 @@ import { useIsFocused, CommonActions } from "@react-navigation/native";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { CustomAlert } from "../../context/AlertContext";
-import { getSellerMe, logoutSeller } from "../../api/auth";
+import { getSellerProfile, logoutSeller } from "../../api/auth";
 
 const Account = ({ navigation }) => {
   const [profile, setProfile] = useState(null);
@@ -69,7 +69,7 @@ const Account = ({ navigation }) => {
         AsyncStorage.getItem("token"),
       ]);
 
-      console.log("=== SELLER TOKEN ===", token);
+
 
       if (storedProfile) {
         setProfile(JSON.parse(storedProfile));
@@ -91,28 +91,31 @@ const Account = ({ navigation }) => {
       setIsLoading(true);
     }
     try {
-      const response = await getSellerMe();
+      const response = await getSellerProfile();
       if (response && response.data) {
-        const user = response.data.user || {};
-        const seller = response.data.seller || {};
+        const data = response.data;
 
-        setUserData(user);
-        setSellerData(seller);
+        // Extract nested objects if present
+        const sellerObj = data.seller || data;
+        const userObj = data.user || data;
+
+        setUserData(userObj);
+        setSellerData(sellerObj);
 
         // Combined profile object for compatibility across screens
         const mergedProfile = {
-          ...user,
-          ...seller,
-          storeName: seller.store_name || user.name || "",
-          ownerName: user.name || "",
-          email: user.email || "",
-          phone: user.mobile || "",
-          logoUri: user.logo_url || seller.logo_url || "",
-          rating: seller.rating || 0,
-          totalRatings: seller.total_ratings || 0,
-          walletBalance: seller.wallet_balance || 0,
-          totalEarnings: seller.total_earnings || 0,
-          status: seller.status || user.status || "active",
+          ...sellerObj,
+          ...userObj,
+          storeName: sellerObj.store_name || userObj.name || "",
+          ownerName: userObj.name || sellerObj.owner_name || "",
+          email: userObj.email || sellerObj.email || "",
+          phone: userObj.mobile || sellerObj.phone || userObj.phone || "",
+          logoUri: sellerObj.logo_url || userObj.logo_url || "",
+          rating: sellerObj.rating || 0,
+          totalRatings: sellerObj.total_ratings || 0,
+          walletBalance: sellerObj.wallet_balance || 0,
+          totalEarnings: sellerObj.total_earnings || 0,
+          status: sellerObj.status || userObj.status || "active",
         };
 
         setProfile(mergedProfile);
@@ -120,8 +123,8 @@ const Account = ({ navigation }) => {
         // Save to AsyncStorage for offline access and sync with other screens
         await Promise.all([
           AsyncStorage.setItem("sellerProfile", JSON.stringify(mergedProfile)),
-          AsyncStorage.setItem("userData", JSON.stringify(user)),
-          AsyncStorage.setItem("sellerData", JSON.stringify(seller)),
+          AsyncStorage.setItem("userData", JSON.stringify(data)),
+          AsyncStorage.setItem("sellerData", JSON.stringify(data)),
         ]);
       }
     } catch (error) {
@@ -249,19 +252,27 @@ const Account = ({ navigation }) => {
     sellerData?.rating !== undefined
       ? Number(sellerData.rating).toFixed(1)
       : profile?.rating !== undefined
-      ? Number(profile.rating).toFixed(1)
-      : "5.0";
+        ? Number(profile.rating).toFixed(1)
+        : "5.0";
 
   const totalRatings =
     sellerData?.total_ratings ||
     profile?.totalRatings ||
     0;
 
-  const displayLogo =
+  const baseLogo =
     userData?.logo_url ||
     sellerData?.logo_url ||
-    profile?.logoUri ||
-    "https://i.pravatar.cc/300?img=12";
+    profile?.logo_url ||
+    "";
+
+  // Cache-bust the profile image so it reloads dynamically when the backend image changes
+  const displayLogo =
+    baseLogo.includes("pravatar.cc") || baseLogo.startsWith("file://")
+      ? baseLogo
+      : baseLogo 
+        ? `${baseLogo}${baseLogo.includes("?") ? "&" : "?"}t=${new Date().getTime()}` 
+        : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName || "Store")}`;
 
   const accountStatus = (
     sellerData?.status ||

@@ -240,13 +240,12 @@ const Splash = ({ navigation }) => {
             DeviceEventEmitter.emit("authStateChanged", token);
           } else {
             DeviceEventEmitter.emit("authStateChanged", null);
-            navigation.replace("SellerRegistration");
           }
         }, 200);
       } catch (err) {
         console.log("Splash initializeApp error:", err);
         await animateProgressTo(1.0, 300);
-        if (isMounted) navigation.replace("SellerRegistration");
+        if (isMounted) DeviceEventEmitter.emit("authStateChanged", null);
       }
     };
 

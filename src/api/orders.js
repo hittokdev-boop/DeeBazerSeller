@@ -57,18 +57,18 @@ export const getOrder = async (id) => {
   return responseData;
 };
 
-export const updateOrderStatusAPI = async (id, status) => {
+export const updateOrderStatusAPI = async (id, payload) => {
   const token = await AsyncStorage.getItem("token");
   if (!token) throw new Error("No authentication token found");
 
-  const response = await fetch(`${BASE_URL}orders/${id}`, {
-    method: "POST",
+  const response = await fetch(`${BASE_URL}orders/${id}/status`, {
+    method: "PATCH",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(payload),
   });
 
   const responseText = await response.text();
@@ -81,6 +81,65 @@ export const updateOrderStatusAPI = async (id, status) => {
 
   if (!response.ok) {
     throw new Error(responseData.message || "Failed to update order");
+  }
+
+  return responseData;
+};
+
+export const addOrderTrackingAPI = async (id, payload) => {
+  const token = await AsyncStorage.getItem("token");
+  if (!token) throw new Error("No authentication token found");
+
+  const response = await fetch(`${BASE_URL}orders/${id}/tracking`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const responseText = await response.text();
+  let responseData;
+  try {
+    responseData = JSON.parse(responseText);
+  } catch (e) {
+    throw new Error("Invalid response format");
+  }
+
+  if (!response.ok) {
+    throw new Error(responseData.message || "Failed to add tracking update");
+  }
+
+  return responseData;
+};
+
+export const getOrderStatusList = async (id) => {
+  const token = await AsyncStorage.getItem("token");
+
+  if (!token) throw new Error("No authentication token found");
+
+  const response = await fetch(`${BASE_URL}orders/${id}/status-list`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const responseText = await response.text();
+  let responseData;
+  try {
+    responseData = JSON.parse(responseText);
+
+  } catch (e) {
+    throw new Error("Invalid response format");
+  }
+
+  if (!response.ok) {
+    throw new Error(responseData.message || "Failed to fetch status list");
   }
 
   return responseData;

@@ -15,6 +15,7 @@ import {
   DeviceEventEmitter,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { getSellerDashboard, getSellerProfile } from "../../api/auth";
@@ -114,6 +115,10 @@ const SellerDashboard = ({ navigation }) => {
         if (storedProfile) {
           setProfile(JSON.parse(storedProfile));
         }
+
+        const token = await AsyncStorage.getItem("token");
+
+
       } catch (e) {
         console.log("Error loading cached profile:", e);
       }
@@ -145,7 +150,7 @@ const SellerDashboard = ({ navigation }) => {
       }
     } catch (err) {
       console.error("Failed to load dashboard data:", err);
-      
+
       // Auto-logout if session expired / unauthenticated
       if (err?.status === 401 || (err?.message && err.message.toLowerCase().includes("unauthenticated"))) {
         AsyncStorage.multiRemove([
@@ -160,7 +165,7 @@ const SellerDashboard = ({ navigation }) => {
         });
         return;
       }
-      
+
       setFetchError(err?.message || "Failed to load dashboard data");
     } finally {
       setIsLoading(false);
@@ -171,6 +176,40 @@ const SellerDashboard = ({ navigation }) => {
   useEffect(() => {
     loadDashboardData();
   }, [loadDashboardData]);
+
+  // Profile image dynamic refresh — screen focus এ AsyncStorage থেকে latest logo load করে
+  useFocusEffect(
+    useCallback(() => {
+      const refreshProfileImage = async () => {
+        try {
+          const [storedProfile, storedUserData] = await Promise.all([
+            AsyncStorage.getItem("sellerProfile"),
+            AsyncStorage.getItem("userData"),
+          ]);
+          const parsedProfile = storedProfile ? JSON.parse(storedProfile) : {};
+          const parsedUser = storedUserData ? JSON.parse(storedUserData) : {};
+          // Merge latest logo from userData or sellerProfile
+          const freshLogo =
+            parsedUser.logo_url ||
+            parsedProfile.logo_url ||
+            parsedProfile.logoUri ||
+            parsedProfile.logo;
+          if (freshLogo) {
+            setProfile((prev) => ({
+              ...prev,
+              ...parsedProfile,
+              logo_url: freshLogo,
+              logoUri: freshLogo,
+              logo: freshLogo,
+            }));
+          }
+        } catch (e) {
+          // silent fail
+        }
+      };
+      refreshProfileImage();
+    }, [])
+  );
 
   const onRefresh = () => {
     loadDashboardData(true);
@@ -250,16 +289,21 @@ const SellerDashboard = ({ navigation }) => {
               style={styles.profileBtn}
               onPress={() => navigation.navigate("Account")}
             >
-              <Image
-                source={{
-                  uri:
-                    profile?.logo ||
-                    profile?.logoUri ||
-                    profile?.logo_url ||
-                    "https://i.pravatar.cc/150?img=12",
-                }}
-                style={styles.profileImage}
-              />
+              {(profile?.logo_url || profile?.logoUri || profile?.logo) ? (
+                <Image
+                  source={{
+                    uri:
+                      profile?.logo_url ||
+                      profile?.logoUri ||
+                      profile?.logo,
+                  }}
+                  style={styles.profileImage}
+                />
+              ) : (
+                <View style={[styles.profileImage, { backgroundColor: COLORS.primaryBgLight, justifyContent: "center", alignItems: "center" }]}>
+                  <Ionicons name="person" size={20} color={COLORS.primary} />
+                </View>
+              )}
             </TouchableOpacity>
           </View>
         </View>

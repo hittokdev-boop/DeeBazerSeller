@@ -591,40 +591,60 @@
 
 // ---
 
-// ## 15. Products — Update
+// // 15.Seller Product Update:
+// POST : {{base_url}}api/seller/products/107
+// authorization : bearer_token {seller_token}
 
-// ### `POST /api/seller/products/{id}`
+// body :
+// name:Updated Product Name
+// short_description:Updated short description text
+// description:Updated full description goes here
+// price:599
+// sale_price:499
+// stock_quantity:20
+// min_stock_alert:8
+// category_id:1
+// weight:0.6
+// tags[]:cotton
+// tags[]:mens
+// image: file
+// gallery[] : files
 
-// > **Use POST** (not PUT) because browsers and most HTTP clients handle `multipart/form-data` file uploads only with POST.
-
-// If core fields (`name`, `description`, `category_id`) are changed on a previously **approved** product, it is automatically sent back to `pending` review.
-
-// | Field | Type | Notes |
-// |---|---|---|
-// | `name` | string | Triggers re-review if changed |
-// | `description` | string | Triggers re-review if changed |
-// | `category_id` | integer | Triggers re-review if changed |
-// | `price` | numeric | Safe to update without re-review |
-// | `sale_price` | numeric | Safe to update without re-review |
-// | `stock_quantity` | integer | Safe to update without re-review |
-// | `short_description` | string | Safe update |
-// | `brand_id` | integer | Safe update |
-// | `weight` | numeric | Safe update |
-// | `tags` | array | Safe update |
-// | `min_stock_alert` | integer | Safe update |
-// | `image` | file | Replaces existing main image |
-
-// **Response** — `200`
-
-// ```json
+// response:
 // {
-//   "status": 200,
-//   "message": "Product updated and sent for re-review.",
-//   "data": { "id": 21, "status": "pending", "approval_status": "pending", "..." }
+//     "status": 200,
+//     "message": "Product updated and sent for re-review.",
+//     "data": {
+//         "id": 16,
+//         "product_id": 107,
+//         "name": "Updated Product Name",
+//         "slug": "updated-product-name",
+//         "sku": "SKU-B9OKNSHS",
+//         "image_url": "https://deebazar.com/admin/admin/storage/products/zJzKz1JRikZowcuIjRrtFm64npLVqzzcfn76Qrxf.png",
+//         "category": {
+//             "id": 1,
+//             "name": "Electronics"
+//         },
+//         "price": 599,
+//         "sale_price": 499,
+//         "effective_price": 499,
+//         "is_on_sale": true,
+//         "discount_pct": 16.69,
+//         "stock_quantity": 20,
+//         "min_stock_alert": 8,
+//         "is_low_stock": false,
+//         "status": "pending",
+//         "approval_status": "pending",
+//         "rejection_reason": null,
+//         "is_featured": false,
+//         "is_trending": false,
+//         "views_count": 0,
+//         "sales_count": 0,
+//         "rating_average": 0,
+//         "rating_count": 0,
+//         "created_at": "2026-09-15T09:34:46.000000Z"
+//     }
 // }
-// ```
-
-// ---
 
 // ## 16. Products — Delete
 
@@ -816,7 +836,19 @@
 // ```
 
 // ---
+// Status -list:
+// GET : {{base_url}}api/seller/orders/1/status-list
+// authorization : bearer_token {seller token}
 
+// response:
+// {
+//     "status": 200,
+//     "message": "Status list fetched successfully.",
+//     "data": [
+//         "processing",
+//         "cancelled"
+//     ]
+// }
 // ## 20. Orders — Update Status
 
 // ### `PATCH /api/seller/orders/{id}/status`
