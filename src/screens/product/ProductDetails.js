@@ -133,7 +133,7 @@ const ProductDetails = () => {
           product.image_url ||
           product.image ||
           (Array.isArray(product.gallery) && product.gallery[0]) ||
-          "https://picsum.photos/700?random=25"
+          null
         );
       }
     }
@@ -288,12 +288,12 @@ const ProductDetails = () => {
             )}
             <Image
               source={{
-                uri: selectedImage || "https://dummyimage.com/600x400/cccccc/000000&text=No+Image",
+                uri: selectedImage || null,
               }}
               style={styles.mainImage}
               onError={(e) => {
                 console.log('Image failed to load (Main):', e.nativeEvent?.error || 'Unknown error');
-                setSelectedImage("https://dummyimage.com/600x400/ffdddd/ff0000&text=Failed+To+Load");
+                setSelectedImage(null);
               }}
             />
             {hasDiscount && (

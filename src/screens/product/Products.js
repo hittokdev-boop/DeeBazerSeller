@@ -318,7 +318,7 @@ const Products = () => {
                 item.image_url ||
                 item.image ||
                 item.images?.[0] ||
-                "https://picsum.photos/300?random=10",
+                null,
             }}
             style={styles.productImage}
           />

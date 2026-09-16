@@ -80,9 +80,9 @@ const AIProductStudio = ({ navigation }) => {
   };
 
   const handleApplyTool = (toolName) => {
-    const sourceImg = selectedImage || "https://picsum.photos/600?random=31";
+    const sourceImg = selectedImage;
     if (!selectedImage) {
-      setSelectedImage(sourceImg);
+      return; // Do nothing if no image selected
     }
 
     setActiveTool(toolName);
@@ -105,7 +105,7 @@ const AIProductStudio = ({ navigation }) => {
       setProcessingStatus(`${toolName} completed successfully!`);
       setIsProcessing(false);
       
-      const bgRemovedVariant = "https://picsum.photos/600?random=88";
+      const bgRemovedVariant = selectedImage; // No fallback
       setProcessedImage(bgRemovedVariant);
       setCompareTab("after");
 
@@ -132,7 +132,11 @@ const AIProductStudio = ({ navigation }) => {
   };
 
   const handleUsePhoto = () => {
-    const finalPhoto = processedImage || selectedImage || "https://picsum.photos/600?random=31";
+    const finalPhoto = processedImage || selectedImage;
+    if (!finalPhoto) {
+      Alert.alert("Error", "No photo available.");
+      return;
+    }
     Alert.alert(
       "Photo Selected",
       "Use this studio photo for your product listing?",
@@ -149,8 +153,8 @@ const AIProductStudio = ({ navigation }) => {
   };
 
   const currentDisplayImage = compareTab === "before"
-    ? (selectedImage || "https://picsum.photos/600?random=31")
-    : (processedImage || selectedImage || "https://picsum.photos/600?random=31");
+    ? selectedImage
+    : (processedImage || selectedImage);
 
   return (
     <ScrollView

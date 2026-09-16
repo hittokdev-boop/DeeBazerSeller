@@ -47,14 +47,15 @@ const formatDate = (dateString) => {
 const getStatusBadgeStyle = (statusOrItem) => {
   let s = "";
   if (typeof statusOrItem === "object" && statusOrItem !== null) {
-    const approval = (statusOrItem.approval_status || "").toLowerCase();
-    const status = (statusOrItem.status || "").toLowerCase();
+    const approval = String(statusOrItem.approval_status || "").toLowerCase();
+    const status = String(statusOrItem.status || "").toLowerCase();
     if (approval === "rejected" || status === "rejected") s = "rejected";
     else if (approval === "approved" || status === "approved") s = "approved";
     else if (approval === "pending" || status === "pending") s = "pending";
-    else s = approval || status;
+    else if (statusOrItem.is_approved || statusOrItem.active) s = "approved";
+    else s = approval || status || "pending";
   } else {
-    s = (statusOrItem || "").toLowerCase();
+    s = String(statusOrItem || "").toLowerCase();
   }
 
   if (s === "delivered" || s === "approved" || s === "active") {
@@ -650,74 +651,6 @@ const SellerDashboard = ({ navigation }) => {
             )}
           </View>
 
-          {/* Recent Products Section */}
-          <View style={styles.productSection}>
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Recent Products</Text>
-              <TouchableOpacity onPress={() => navigation.navigate("Products")}>
-                <Text style={styles.seeAll}>See All</Text>
-              </TouchableOpacity>
-            </View>
-
-            {recentProducts.length === 0 ? (
-              <View style={[styles.emptyContainer, { backgroundColor: colors.cardBg }]}>
-                <Ionicons name="cube-outline" size={38} color={colors.textSecondary} style={styles.emptyIcon} />
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No recent products found</Text>
-              </View>
-            ) : (
-              recentProducts.map((prod) => {
-                const prodBadge = getStatusBadgeStyle(prod);
-                return (
-                  <TouchableOpacity
-                    key={prod.id || prod.product_id}
-                    activeOpacity={0.9}
-                    onPress={() => navigation.navigate("Products")}
-                    style={[styles.productCard, { backgroundColor: colors.cardBg }]}
-                  >
-                    <Image
-                      source={{
-                        uri: prod.image_url || "https://picsum.photos/200?random=50",
-                      }}
-                      style={styles.productImage}
-                    />
-                    <View style={styles.productInfo}>
-                      <View style={styles.productTopRow}>
-                        <Text style={[styles.productName, { color: colors.textPrimary }]} numberOfLines={1}>
-                          {prod.name}
-                        </Text>
-                        <View style={[styles.statusBadge, { backgroundColor: prodBadge.bg }]}>
-                          <Text style={[styles.statusBadgeText, { color: prodBadge.text }]}>
-                            {prodBadge.label.toUpperCase()}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.productMetaRow}>
-                        <Text style={[styles.productPrice, { color: COLORS.primary }]}>
-                          {formatCurrency(prod.price)}
-                        </Text>
-                        <View style={styles.stockBadge}>
-                          <Ionicons
-                            name="layers-outline"
-                            size={13}
-                            color={prod.stock_quantity > 5 ? COLORS.success : COLORS.warning}
-                          />
-                          <Text
-                            style={[
-                              styles.stockBadgeText,
-                              { color: prod.stock_quantity > 5 ? COLORS.success : COLORS.warning },
-                            ]}
-                          >
-                            Stock: {prod.stock_quantity ?? 0}
-                          </Text>
-                        </View>
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })
-            )}
-          </View>
 
           {/* Revenue & Wallet Detailed Card */}
           <View style={styles.revenueSection}>

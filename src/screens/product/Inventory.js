@@ -15,16 +15,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import COLORS from '../../constants/theme';
 import { useTheme } from '../../context/ThemeContext';
 
-const MOCK_INVENTORY = [
-  { id: 1, name: "Organic Honey Premium", sku: "DBZ-001", stock: 120, image: "https://picsum.photos/200?random=31" },
-  { id: 2, name: "Smart Bluetooth Speaker", sku: "DBZ-002", stock: 15, image: "https://picsum.photos/200?random=32" },
-  { id: 3, name: "Cotton Casual T-Shirt", sku: "DBZ-003", stock: 4, image: "https://picsum.photos/200?random=33" },
-  { id: 4, name: "Stainless Steel Water Bottle", sku: "DBZ-004", stock: 80, image: "https://picsum.photos/200?random=34" },
-  { id: 5, name: "Matte Lipstick Cherry Red", sku: "DBZ-005", stock: 0, image: "https://picsum.photos/200?random=35" },
-  { id: 6, name: "Yoga Mat Extra Thick", sku: "DBZ-006", stock: 8, image: "https://picsum.photos/200?random=36" },
-  { id: 7, name: "Wooden Building Blocks", sku: "DBZ-007", stock: 25, image: "https://picsum.photos/200?random=37" },
-  { id: 8, name: "Handmade Ceramic Mug", sku: "DBZ-008", stock: 0, image: "https://picsum.photos/200?random=38" },
-];
+const MOCK_INVENTORY = [];
 
 const STOCK_FILTERS = ["All", "In Stock", "Low Stock", "Out Of Stock"];
 

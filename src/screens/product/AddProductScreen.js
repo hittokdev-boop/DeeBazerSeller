@@ -661,7 +661,7 @@ const AddProduct = ({ navigation, route }) => {
                     uri:
                       submittedProduct.image_url ||
                       submittedProduct.image ||
-                      "https://picsum.photos/300?random=10",
+                      null,
                   }}
                   style={styles.submittedPreviewImg}
                 />

@@ -74,10 +74,8 @@ const OrderDetails = ({ route, navigation }) => {
       //   { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
       // );
       
-      // Temporary simulated dynamic location (replace with actual geolocation above)
-      const dummyLat = (23.8103 + Math.random() * 0.01).toFixed(4);
-      const dummyLng = (90.4125 + Math.random() * 0.01).toFixed(4);
-      resolve(`${dummyLat}, ${dummyLng}`);
+      // Temporary fallback until geolocation is integrated
+      resolve("");
     });
   };
 

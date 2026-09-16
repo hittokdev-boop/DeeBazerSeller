@@ -653,7 +653,7 @@ const EditProduct = ({ navigation, route }) => {
       <View style={styles.previewCard}>
         <Image
           source={{
-            uri: images[0]?.uri || (typeof images[0] === 'string' ? images[0] : "https://via.placeholder.com/400")
+            uri: images[0]?.uri || (typeof images[0] === 'string' ? images[0] : null)
           }}
           style={styles.previewImage}
         />
