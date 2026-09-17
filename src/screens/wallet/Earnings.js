@@ -25,11 +25,6 @@ const Earnings = () => {
 
   const fetchProfile = async () => {
     try {
-      const cached = await AsyncStorage.getItem("sellerProfile");
-      if (cached) {
-        setProfile(JSON.parse(cached));
-      }
-      
       const response = await getSellerMe();
       if (response && response.data) {
         const user = response.data.user || {};
@@ -43,10 +38,9 @@ const Earnings = () => {
         };
         
         setProfile(mergedProfile);
-        await AsyncStorage.setItem("sellerProfile", JSON.stringify(mergedProfile));
       }
     } catch (err) {
-      console.log("Error fetching profile for earnings:", err);
+      console.error("Error fetching profile for earnings:", err);
     } finally {
       setLoading(false);
       setRefreshing(false);

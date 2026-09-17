@@ -27,11 +27,10 @@ export const getDeviceId = async () => {
     if (!deviceId) {
       deviceId = generateUUID();
       await AsyncStorage.setItem(DEVICE_ID_KEY, deviceId);
-      // console.log('🆔 New Device ID created:', deviceId);
     }
     return deviceId;
   } catch (e) {
-    console.log('Device ID error:', e);
+    console.error('Device ID error:', e);
     return 'unknown-device';
   }
 };
@@ -45,7 +44,7 @@ export const setuserId = async (user_id) => {
   try {
     await AsyncStorage.setItem(USER_ID_KEY, String(user_id));
   } catch (e) {
-    console.log("userId save error", e);
+    console.error("userId save error", e);
   }
 };
 
@@ -54,7 +53,7 @@ export const getuserId = async () => {
   try {
     return await AsyncStorage.getItem(USER_ID_KEY);
   } catch (e) {
-    console.log("userId get error", e);
+    console.error("userId get error", e);
     return null;
   }
 };
@@ -64,7 +63,7 @@ export const removeuserId = async () => {
   try {
     await AsyncStorage.removeItem(USER_ID_KEY);
   } catch (e) {
-    console.log("userId remove error", e);
+    console.error("userId remove error", e);
   }
 };
 
@@ -76,7 +75,7 @@ export const setMobile = async (mobile) => {
   try {
     await AsyncStorage.setItem(MOBILE_KEY, String(mobile));
   } catch (e) {
-    console.log("mobile save error", e);
+    console.error("mobile save error", e);
   }
 };
 
@@ -85,7 +84,7 @@ export const getMobile = async () => {
   try {
     return await AsyncStorage.getItem(MOBILE_KEY);
   } catch (e) {
-    console.log("mobile get error", e);
+    console.error("mobile get error", e);
     return null;
   }
 };
@@ -95,7 +94,7 @@ export const removemobile = async () => {
   try {
     await AsyncStorage.removeItem(MOBILE_KEY);
   } catch (e) {
-    console.log("mobile remove error", e);
+    console.error("mobile remove error", e);
   }
 };
 
@@ -107,7 +106,7 @@ export const setToken = async (token) => {
   try {
     await AsyncStorage.setItem(TOKEN_KEY, token);
   } catch (e) {
-    console.log("token save error", e);
+    console.error("token save error", e);
   }
 };
 
@@ -116,7 +115,7 @@ export const getToken = async () => {
   try {
     return await AsyncStorage.getItem(TOKEN_KEY);
   } catch (e) {
-    console.log("token get error", e);
+    console.error("token get error", e);
     return null;
   }
 };
@@ -126,7 +125,7 @@ export const removeToken = async () => {
   try {
     await AsyncStorage.removeItem(TOKEN_KEY);
   } catch (e) {
-    console.log("token remove error", e);
+    console.error("token remove error", e);
   }
 };
 
@@ -137,7 +136,7 @@ export const setPassword = async (password) => {
   try {
     await AsyncStorage.setItem(PASSWORD_KEY, password);
   } catch (e) {
-    console.log("password save error", e);
+    console.error("password save error", e);
   }
 };
 
@@ -146,7 +145,7 @@ export const getPassword = async () => {
   try {
     return await AsyncStorage.getItem(PASSWORD_KEY);
   } catch (e) {
-    console.log("password get error", e);
+    console.error("password get error", e);
     return null;
   }
 };
@@ -156,6 +155,6 @@ export const removePassword = async () => {
   try {
     await AsyncStorage.removeItem(PASSWORD_KEY);
   } catch (e) {
-    console.log("password remove error", e);
+    console.error("password remove error", e);
   }
 };

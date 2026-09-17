@@ -101,7 +101,6 @@ const ProductDetails = () => {
 
       try {
         const res = await getSellerProductDetails(productId);
-        console.log(res.data)
         if (res && res.data) {
           setProduct(res.data);
           if (res.data.image_url) {
@@ -292,7 +291,7 @@ const ProductDetails = () => {
               }}
               style={styles.mainImage}
               onError={(e) => {
-                console.log('Image failed to load (Main):', e.nativeEvent?.error || 'Unknown error');
+                console.error('Image failed to load (Main):', e.nativeEvent?.error || 'Unknown error');
                 setSelectedImage(null);
               }}
             />

@@ -186,31 +186,13 @@ const StoreInfo = ({ navigation }) => {
     const loadStoreData = async () => {
       setIsLoading(true);
       try {
-        // 1. Try local cache first
-        const [storedSeller, storedProfile] = await Promise.all([
-          AsyncStorage.getItem("sellerData"),
-          AsyncStorage.getItem("sellerProfile"),
-        ]);
-
-        if (storedSeller) {
-          populateData(JSON.parse(storedSeller));
-        } else if (storedProfile) {
-          populateData(JSON.parse(storedProfile));
-        }
-
-        // 2. Fetch fresh profile from GET /api/seller/profile
-        try {
-          const res = await getSellerProfile();
-          if (res?.data) {
-            populateData(res.data);
-            await AsyncStorage.setItem("sellerProfile", JSON.stringify(res.data));
-            await AsyncStorage.setItem("sellerData", JSON.stringify(res.data));
-          }
-        } catch (apiErr) {
-          console.log("Could not load fresh seller profile (using cache):", apiErr);
+        // Fetch fresh profile from GET /api/seller/profile
+        const res = await getSellerProfile();
+        if (res?.data) {
+          populateData(res.data);
         }
       } catch (err) {
-        console.log("Error loading store info", err);
+        console.error("Error loading store info", err);
       } finally {
         setIsLoading(false);
       }
@@ -392,35 +374,9 @@ const StoreInfo = ({ navigation }) => {
       }
 
       const response = await updateSellerProfile(payload);
-      const updatedData = response?.data || {};
-
-      // Sync local storage
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
-      const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-
-      const newProfile = {
-        ...currentProfile,
-        ...updatedData,
-        storeName: updatedData.store_name || storeName.trim(),
-        store_name: updatedData.store_name || storeName.trim(),
-        description: updatedData.description || description.trim(),
-        phone: updatedData.phone || phone.trim(),
-        email: updatedData.email || email.trim(),
-        address: updatedData.address || address.trim(),
-        city: updatedData.city || city.trim(),
-        state: updatedData.state || stateName.trim(),
-        postal_code: updatedData.postal_code || postalCode.trim(),
-        country: updatedData.country || country.trim(),
-        logo_url: updatedData.logo_url || logoUri,
-        logoUri: updatedData.logo_url || logoUri,
-        banner_url: updatedData.banner_url || bannerUri,
-        bannerUri: updatedData.banner_url || bannerUri,
-      };
-
-      await Promise.all([
-        AsyncStorage.setItem("sellerProfile", JSON.stringify(newProfile)),
-        AsyncStorage.setItem("sellerData", JSON.stringify(newProfile)),
-      ]);
+      if (response?.data) {
+        populateData(response.data);
+      }
 
       setSelectedLogo(null);
       setSelectedBanner(null);
@@ -433,7 +389,7 @@ const StoreInfo = ({ navigation }) => {
         onConfirm: () => navigation.goBack(),
       });
     } catch (err) {
-      console.log("Error saving store info", err);
+      console.error("Error saving store info", err);
       if (err?.data?.errors) {
         const fieldErrors = {};
         if (err.data.errors.store_name) fieldErrors.storeName = err.data.errors.store_name[0];

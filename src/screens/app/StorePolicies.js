@@ -89,31 +89,16 @@ const StorePolicies = ({ navigation }) => {
     const loadPolicies = async () => {
       setIsLoading(true);
       try {
-        // Try local storage cache
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        if (storedProfile) {
-          const parsed = JSON.parse(storedProfile);
-          if (parsed.store_policies) {
-            setReturnPolicy(parsed.store_policies.return_policy || "");
-            setShippingPolicy(parsed.store_policies.shipping_policy || "");
-            setPrivacyPolicy(parsed.store_policies.privacy_policy || "");
-          }
-        }
-
         // Fetch fresh profile from GET /api/seller/profile
-        try {
-          const res = await getSellerProfile();
-          if (res?.data?.store_policies) {
-            const sp = res.data.store_policies;
-            setReturnPolicy(sp.return_policy || "");
-            setShippingPolicy(sp.shipping_policy || "");
-            setPrivacyPolicy(sp.privacy_policy || "");
-          }
-        } catch (apiErr) {
-          console.log("Could not load fresh policies from server:", apiErr);
+        const res = await getSellerProfile();
+        if (res?.data?.store_policies) {
+          const sp = res.data.store_policies;
+          setReturnPolicy(sp.return_policy || "");
+          setShippingPolicy(sp.shipping_policy || "");
+          setPrivacyPolicy(sp.privacy_policy || "");
         }
       } catch (err) {
-        console.log("Error loading store policies", err);
+        console.error("Error loading store policies", err);
       } finally {
         setIsLoading(false);
       }
@@ -150,19 +135,6 @@ const StorePolicies = ({ navigation }) => {
 
       const response = await updateStorePolicies(payload);
 
-      // Update local storage
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
-      const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-      const updatedProfile = {
-        ...currentProfile,
-        store_policies: {
-          return_policy: returnPolicy.trim(),
-          shipping_policy: shippingPolicy.trim(),
-          privacy_policy: privacyPolicy.trim(),
-        },
-      };
-      await AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile));
-
       showAlert({
         type: "success",
         title: "Policies Saved!",
@@ -171,25 +143,14 @@ const StorePolicies = ({ navigation }) => {
         onConfirm: () => navigation.goBack(),
       });
     } catch (err) {
-      console.log("Error updating policies", err);
+      console.error("Error updating policies", err);
 
       let userFriendlyMsg = err.message || "Failed to update store policies. Please try again.";
       if (typeof userFriendlyMsg === "string" && userFriendlyMsg.includes("Unknown column 'store_policies'")) {
         userFriendlyMsg =
           "Backend Database Notice:\nThe 'store_policies' column is not created in the database on the server yet. We've saved your policies locally for now. Please ask backend admin to add the column.";
         
-        // Save locally as fallback
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-        const updatedProfile = {
-          ...currentProfile,
-          store_policies: {
-            return_policy: returnPolicy.trim(),
-            shipping_policy: shippingPolicy.trim(),
-            privacy_policy: privacyPolicy.trim(),
-          },
-        };
-        await AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile));
+        // Database notice
       }
 
       showAlert({

@@ -41,24 +41,13 @@ const ContactNumber = ({ navigation }) => {
     const loadPhoneData = async () => {
       setIsLoading(true);
       try {
-        const [storedProfile, storedUser] = await Promise.all([
-          AsyncStorage.getItem("sellerProfile"),
-          AsyncStorage.getItem("userData"),
-        ]);
-        const parsedProfile = storedProfile ? JSON.parse(storedProfile) : {};
-        const parsedUser = storedUser ? JSON.parse(storedUser) : {};
-        setCurrentPhone(parsedUser.mobile || parsedProfile.phone || parsedProfile.mobile || "");
-
-        try {
-          const fresh = await getSellerMe();
-          if (fresh?.data?.user?.mobile) {
-            setCurrentPhone(fresh.data.user.mobile);
-          }
-        } catch (e) {
-          // offline fallback
+        const fresh = await getSellerMe();
+        const userObj = fresh?.data?.user || fresh?.data?.seller || fresh?.data;
+        if (userObj?.mobile || userObj?.phone) {
+          setCurrentPhone(userObj.mobile || userObj.phone || "");
         }
       } catch (err) {
-        console.log("Error loading contact number", err);
+        console.error("Error loading contact number", err);
       } finally {
         setIsLoading(false);
       }
@@ -141,27 +130,7 @@ const ContactNumber = ({ navigation }) => {
     try {
       if (otpString === "1234") {
         await updateSellerAccount({ mobile: newPhone.trim() });
-
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-
-        const updatedProfile = {
-          ...currentProfile,
-          phone: newPhone.trim(),
-          mobile: newPhone.trim(),
-        };
-
-        const storedUser = await AsyncStorage.getItem("userData");
-        const currentUser = storedUser ? JSON.parse(storedUser) : {};
-        const updatedUser = {
-          ...currentUser,
-          mobile: newPhone.trim(),
-        };
-
-        await Promise.all([
-          AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile)),
-          AsyncStorage.setItem("userData", JSON.stringify(updatedUser)),
-        ]);
+        setCurrentPhone(newPhone.trim());
 
         Alert.alert("Success", "Contact number updated successfully!", [
           { text: "OK", onPress: () => navigation.goBack() }
@@ -170,7 +139,7 @@ const ContactNumber = ({ navigation }) => {
         setOtpError("Invalid verification code. Please try again.");
       }
     } catch (err) {
-      console.log("Verification / update mobile failed:", err);
+      console.error("Verification / update mobile failed:", err);
       setOtpError(err.message || "Verification failed. Please try again.");
       Alert.alert("Error", err.message || "Failed to update contact number.");
     } finally {

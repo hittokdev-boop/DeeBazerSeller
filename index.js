@@ -15,7 +15,7 @@ registerBackgroundMessageHandler();
 notifee.onBackgroundEvent(async ({ type, detail }) => {
   const { notification } = detail;
   if (type === EventType.PRESS) {
-    console.log('[NotificationService] Background notification pressed:', notification);
+    // Handle background notification tap if needed
   }
 });
 

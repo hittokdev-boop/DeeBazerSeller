@@ -267,7 +267,6 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
       };
 
       await AsyncStorage.setItem("isRegistered", "true");
-      await AsyncStorage.setItem("sellerProfile", JSON.stringify(profileData));
 
       showAlert(
         "Registration Successful",

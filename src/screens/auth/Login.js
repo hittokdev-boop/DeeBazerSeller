@@ -95,7 +95,6 @@ const Login = ({ navigation }) => {
       let responseData;
       try {
         responseData = JSON.parse(responseText);
-        console.log("responseData", responseData);
       } catch (e) {
         throw new Error(`Server returned invalid response: ${responseText}`);
       }
@@ -117,19 +116,17 @@ const Login = ({ navigation }) => {
         return;
       }
 
-      // Save token and profile
+      // Save auth session
       await AsyncStorage.setItem("isLoggedIn", "true");
       if (responseData.token) {
         await AsyncStorage.setItem("token", responseData.token);
-        console.log("Logged In Token:", responseData.token);
       }
-      const profile = responseData.data || responseData.user || {};
-      await AsyncStorage.setItem("sellerProfile", JSON.stringify(profile));
 
       showAlert("Success", responseData.message || "Login successful!", "success", () => {
         DeviceEventEmitter.emit("authStateChanged", responseData.token);
       });
     } catch (e) {
+      console.error("Login error:", e);
       if (e.errors) {
         const errorList = Object.values(e.errors).flat().join("\n");
         showAlert("Validation Error", errorList || e.message, "error");

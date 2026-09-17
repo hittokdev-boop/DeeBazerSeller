@@ -12,18 +12,20 @@ import {
   StatusBar,
   PermissionsAndroid,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import COLORS from '../../constants/theme';
 import { useTheme } from '../../context/ThemeContext';
-import { getSellerProductDetails, updateSellerProduct } from '../../api/auth';
+import { getSellerProductDetails, updateSellerProduct, deleteSellerProduct } from '../../api/auth';
 
 const EditProduct = ({ navigation, route }) => {
   const productData = route?.params?.product || {};
   const { colors } = useTheme();
   const [loading, setLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+
   const [images, setImages] = useState(
     productData?.image_url ? [productData.image_url] : (productData?.image ? [productData.image] : [])
   );
@@ -31,33 +33,64 @@ const EditProduct = ({ navigation, route }) => {
     productData?.gallery || productData?.images || []
   );
   const [productName, setProductName] = useState(productData?.name || '');
-  const [brand, setBrand] = useState(productData?.brand?.name || '');
-  const [category, setCategory] = useState(productData?.category?.name || '');
+  const [brand, setBrand] = useState(productData?.brand?.name || productData?.brand || '');
+  const [category, setCategory] = useState(productData?.category?.name || productData?.category || '');
   const [price, setPrice] = useState((productData?.sale_price || productData?.price)?.toString() || '');
   const [mrp, setMrp] = useState((productData?.price || productData?.sale_price)?.toString() || '');
   const [stock, setStock] = useState(productData?.stock_quantity?.toString() || '');
   const [description, setDescription] = useState(productData?.description || productData?.short_description || '');
   const [variants, setVariants] = useState(productData?.tags || []);
   const [newVariant, setNewVariant] = useState('');
+  const [showVariantModal, setShowVariantModal] = useState(false);
   const [fullProductData, setFullProductData] = useState(null);
+
+  // Status toggles
+  const [isFeatured, setIsFeatured] = useState(false);
+  const [isBestSeller, setIsBestSeller] = useState(false);
 
   useEffect(() => {
     const fetchDetails = async () => {
       const productId = productData?.product_id || productData?.id;
       if (!productId) return;
       try {
+        setLoading(true);
         const res = await getSellerProductDetails(productId);
         if (res?.data) {
           const fullProduct = res.data;
           setFullProductData(fullProduct);
+
+          // Populate gallery
           if (fullProduct.gallery && fullProduct.gallery.length > 0) {
             setDetailImages(fullProduct.gallery);
           } else if (fullProduct.images && fullProduct.images.length > 0) {
             setDetailImages(fullProduct.images);
           }
+
+          // Hydrate other details if not present initially
+          if (!productName && fullProduct.name) setProductName(fullProduct.name);
+          if (!description && (fullProduct.description || fullProduct.short_description)) {
+            setDescription(fullProduct.description || fullProduct.short_description);
+          }
+          if (!price && (fullProduct.sale_price || fullProduct.price)) {
+            setPrice((fullProduct.sale_price || fullProduct.price).toString());
+          }
+          if (!mrp && (fullProduct.price || fullProduct.sale_price)) {
+            setMrp((fullProduct.price || fullProduct.sale_price).toString());
+          }
+          if (!stock && fullProduct.stock_quantity !== undefined) {
+            setStock(fullProduct.stock_quantity.toString());
+          }
+          if (images.length === 0 && (fullProduct.image_url || fullProduct.image)) {
+            setImages([fullProduct.image_url || fullProduct.image]);
+          }
+          if (Array.isArray(fullProduct.tags) && variants.length === 0) {
+            setVariants(fullProduct.tags);
+          }
         }
       } catch (e) {
-        console.log("Failed to fetch full product details in EditProduct:", e);
+        console.error("Failed to fetch full product details in EditProduct:", e);
+      } finally {
+        setLoading(false);
       }
     };
     fetchDetails();
@@ -174,12 +207,14 @@ const EditProduct = ({ navigation, route }) => {
 
   const addVariant = () => {
     if (!newVariant.trim()) return;
-    if (variants.includes(newVariant.trim())) {
+    const clean = newVariant.trim().replace(/^#/, "");
+    if (variants.includes(clean)) {
       Alert.alert('Duplicate', 'This variant already exists.');
       return;
     }
-    setVariants((prev) => [...prev, newVariant.trim()]);
+    setVariants((prev) => [...prev, clean]);
     setNewVariant('');
+    setShowVariantModal(false);
   };
 
   const removeVariant = (variant) => {
@@ -214,7 +249,6 @@ const EditProduct = ({ navigation, route }) => {
       } else if (activeData?.category_id) {
         formData.append("category_id", String(activeData.category_id));
       } else {
-        // Only fallback if the backend strictly requires it and we have no data, but ideally we leave it empty or 1
         formData.append("category_id", "1");
       }
 
@@ -225,33 +259,54 @@ const EditProduct = ({ navigation, route }) => {
       }
 
       const formatFileForUpload = (imgObj, defaultName = "product.jpg") => {
-        if (!imgObj || !imgObj.uri) return null;
-        const uri = imgObj.uri;
-        if (typeof uri !== "string" || uri.startsWith("http://") || uri.startsWith("https://")) {
-          return null;
+        if (!imgObj) return null;
+
+        let uri = "";
+        let name = "";
+        let type = "";
+
+        if (typeof imgObj === "string") {
+          uri = imgObj;
+        } else if (typeof imgObj === "object") {
+          uri = imgObj.uri || imgObj.image_url || imgObj.image || imgObj.url || "";
+          name = imgObj.fileName || imgObj.name || "";
+          type = imgObj.type || "";
         }
+
+        if (!uri || typeof uri !== "string") return null;
+
+        const cleanUri = uri.split("?")[0];
+        const extractedName = cleanUri.split("/").pop() || defaultName;
+        const finalName = name || extractedName;
+
+        const ext = finalName.split(".").pop()?.toLowerCase();
+        let mimeType = type;
+        if (!mimeType) {
+          if (ext === "png") mimeType = "image/png";
+          else if (ext === "webp") mimeType = "image/webp";
+          else if (ext === "gif") mimeType = "image/gif";
+          else mimeType = "image/jpeg";
+        }
+
         return {
           uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
-          type: imgObj.type || "image/jpeg",
-          name: imgObj.fileName || imgObj.name || defaultName,
+          type: mimeType,
+          name: finalName,
         };
       };
 
+      // 1. Main image: if user picked a new file, append it
       const newImages = images.filter(img => typeof img !== 'string');
       if (newImages.length > 0) {
-        const mainFile = formatFileForUpload(newImages[0], `product_image.jpg`);
+        const mainFile = formatFileForUpload(newImages[newImages.length - 1], `product_image.jpg`);
         if (mainFile) {
           formData.append("image", mainFile);
         }
       }
 
-      const newDetailImages = detailImages.filter(img => typeof img !== 'string' && !img?.image_url && !img?.image && !img?.url);
-      if (newDetailImages.length > 0) {
-        newDetailImages.forEach((img, index) => {
-          // If it's a remote URL that got mixed in, skip it
-          if (img?.uri && (img.uri.startsWith("http://") || img.uri.startsWith("https://"))) {
-            return;
-          }
+      // 2. Detail images (gallery): Both old data + new data are added
+      if (detailImages && detailImages.length > 0) {
+        detailImages.forEach((img, index) => {
           const galleryFile = formatFileForUpload(img, `gallery_image_${index}.jpg`);
           if (galleryFile) {
             formData.append("gallery[]", galleryFile);
@@ -259,14 +314,8 @@ const EditProduct = ({ navigation, route }) => {
         });
       }
 
-      const productId = productData?.product_id || productData?.id;
-      
-      // Log the exact payload for debugging
-      if (formData.getParts) {
-        console.log("==== UPLOAD PAYLOAD BODY ====");
-        console.log(JSON.stringify(formData.getParts(), null, 2));
-        console.log("=============================");
-      }
+      const productId = productData?.product_id;
+      console.log(formData, "/././form")
 
       const res = await updateSellerProduct(productId, formData);
 
@@ -276,10 +325,38 @@ const EditProduct = ({ navigation, route }) => {
         [{ text: "OK", onPress: () => navigation.goBack() }]
       );
     } catch (error) {
+      console.error("Update product error:", error);
       Alert.alert("Update Failed", error?.message || "Could not update the product.");
     } finally {
       setIsUpdating(false);
     }
+  };
+
+  const handleDelete = () => {
+    const productId = productData?.product_id || productData?.id;
+    if (!productId) return;
+
+    Alert.alert(
+      "Confirm Delete",
+      `Are you sure you want to delete "${productName || 'this product'}"? This action cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const res = await deleteSellerProduct(productId);
+              Alert.alert("Deleted", res?.message || "Product deleted successfully.", [
+                { text: "OK", onPress: () => navigation.goBack() },
+              ]);
+            } catch (err) {
+              Alert.alert("Error", err?.message || "Failed to delete product");
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleSelectCategory = () => {
@@ -301,6 +378,13 @@ const EditProduct = ({ navigation, route }) => {
       { text: "Cancel", style: "cancel" },
     ]);
   };
+
+  // Preview image helper
+  const latestMainImg = images.length > 0 ? images[images.length - 1] : null;
+  const previewImgUri =
+    typeof latestMainImg === 'string'
+      ? latestMainImg
+      : latestMainImg?.uri || latestMainImg?.image_url || latestMainImg?.image || null;
 
   return (
     <ScrollView
@@ -325,16 +409,22 @@ const EditProduct = ({ navigation, route }) => {
           Edit Product
         </Text>
 
-        <TouchableOpacity>
-          <Ionicons
-            name="create-outline"
-            size={24}
-            color={COLORS.primary}
-          />
-        </TouchableOpacity>
+        <View style={{ width: 42, alignItems: 'flex-end' }}>
+          {loading ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : (
+            <TouchableOpacity>
+              <Ionicons
+                name="create-outline"
+                size={24}
+                color={COLORS.primary}
+              />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
-      {/* Images */}
+      {/* Product Images */}
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>
           Product Images
@@ -348,26 +438,24 @@ const EditProduct = ({ navigation, route }) => {
           {images.map((item, index) => {
             const imgUri = typeof item === 'string' ? item : (item?.uri || item?.image_url || item?.image || item?.url);
             return (
-            <View
-              key={index}
-              style={styles.imageBox}
-            >
-              <Image
-                source={{ uri: imgUri }}
-                style={styles.image}
-              />
-              <TouchableOpacity
-                style={styles.editImageBtn}
-                onPress={() => removeImage(index)}
-              >
-                <Ionicons
-                  name="close"
-                  size={18}
-                  color={COLORS.textContrast}
+              <View key={index} style={styles.imageBox}>
+                <Image
+                  source={{ uri: imgUri }}
+                  style={styles.image}
                 />
-              </TouchableOpacity>
-            </View>
-          )})}
+                <TouchableOpacity
+                  style={styles.editImageBtn}
+                  onPress={() => removeImage(index)}
+                >
+                  <Ionicons
+                    name="close"
+                    size={18}
+                    color={COLORS.textContrast}
+                  />
+                </TouchableOpacity>
+              </View>
+            );
+          })}
         </ScrollView>
 
         <TouchableOpacity style={styles.updateImageBtnBelow} onPress={pickImage}>
@@ -376,7 +464,7 @@ const EditProduct = ({ navigation, route }) => {
         </TouchableOpacity>
       </View>
 
-      {/* Product Details Images */}
+      {/* Product Details Images (Gallery) */}
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>
           Product Details Images
@@ -390,26 +478,24 @@ const EditProduct = ({ navigation, route }) => {
           {detailImages.map((item, index) => {
             const imgUri = typeof item === 'string' ? item : (item?.uri || item?.image_url || item?.image || item?.url);
             return (
-            <View
-              key={index}
-              style={styles.imageBox}
-            >
-              <Image
-                source={{ uri: imgUri }}
-                style={styles.image}
-              />
-              <TouchableOpacity
-                style={styles.editImageBtn}
-                onPress={() => removeDetailImage(index)}
-              >
-                <Ionicons
-                  name="close"
-                  size={18}
-                  color={COLORS.textContrast}
+              <View key={index} style={styles.imageBox}>
+                <Image
+                  source={{ uri: imgUri }}
+                  style={styles.image}
                 />
-              </TouchableOpacity>
-            </View>
-          )})}
+                <TouchableOpacity
+                  style={styles.editImageBtn}
+                  onPress={() => removeDetailImage(index)}
+                >
+                  <Ionicons
+                    name="close"
+                    size={18}
+                    color={COLORS.textContrast}
+                  />
+                </TouchableOpacity>
+              </View>
+            );
+          })}
         </ScrollView>
 
         <TouchableOpacity style={styles.updateImageBtnBelow} onPress={pickDetailImage}>
@@ -539,14 +625,24 @@ const EditProduct = ({ navigation, route }) => {
             <TouchableOpacity
               key={index}
               style={styles.variantChip}
+              onPress={() => removeVariant(item)}
             >
               <Text style={styles.variantText}>
                 {item}
               </Text>
+              <Ionicons
+                name="close-circle"
+                size={16}
+                color={COLORS.primary}
+                style={{ marginLeft: 5 }}
+              />
             </TouchableOpacity>
           ))}
 
-          <TouchableOpacity style={styles.addVariantBtn}>
+          <TouchableOpacity
+            style={styles.addVariantBtn}
+            onPress={() => setShowVariantModal(true)}
+          >
             <Ionicons
               name="add"
               size={18}
@@ -583,7 +679,10 @@ const EditProduct = ({ navigation, route }) => {
           Product Status
         </Text>
 
-        <TouchableOpacity style={styles.statusRow}>
+        <TouchableOpacity
+          style={styles.statusRow}
+          onPress={() => setIsFeatured(!isFeatured)}
+        >
           <View style={styles.statusLeft}>
             <Ionicons
               name="star-outline"
@@ -595,13 +694,16 @@ const EditProduct = ({ navigation, route }) => {
             </Text>
           </View>
           <Ionicons
-            name="toggle"
+            name={isFeatured ? "toggle" : "toggle-outline"}
             size={42}
-            color={COLORS.success}
+            color={isFeatured ? COLORS.success : COLORS.textGrayPlaceholder}
           />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.statusRow}>
+        <TouchableOpacity
+          style={styles.statusRow}
+          onPress={() => setIsBestSeller(!isBestSeller)}
+        >
           <View style={styles.statusLeft}>
             <Ionicons
               name="flame-outline"
@@ -613,9 +715,9 @@ const EditProduct = ({ navigation, route }) => {
             </Text>
           </View>
           <Ionicons
-            name="toggle-outline"
+            name={isBestSeller ? "toggle" : "toggle-outline"}
             size={42}
-            color={COLORS.textGrayPlaceholder}
+            color={isBestSeller ? COLORS.success : COLORS.textGrayPlaceholder}
           />
         </TouchableOpacity>
       </View>
@@ -644,19 +746,23 @@ const EditProduct = ({ navigation, route }) => {
             color={COLORS.success}
           />
           <Text style={styles.historyText}>
-            Current Stock : 120 Units
+            Current Stock : {stock || '0'} Units
           </Text>
         </View>
       </View>
 
       {/* Product Preview */}
       <View style={styles.previewCard}>
-        <Image
-          source={{
-            uri: images[0]?.uri || (typeof images[0] === 'string' ? images[0] : null)
-          }}
-          style={styles.previewImage}
-        />
+        {previewImgUri ? (
+          <Image
+            source={{ uri: previewImgUri }}
+            style={styles.previewImage}
+          />
+        ) : (
+          <View style={[styles.previewImage, { backgroundColor: COLORS.borderLight, justifyContent: 'center', alignItems: 'center' }]}>
+            <Ionicons name="image-outline" size={48} color={COLORS.textGrayPlaceholder} />
+          </View>
+        )}
         <View style={styles.previewContent}>
           <Text style={styles.previewName}>
             {productName || "Product Name"}
@@ -678,7 +784,10 @@ const EditProduct = ({ navigation, route }) => {
       </View>
 
       {/* AI Studio */}
-      <TouchableOpacity style={styles.aiCard}>
+      <TouchableOpacity
+        style={styles.aiCard}
+        onPress={() => navigation.navigate("AIProductStudio")}
+      >
         <View style={styles.aiLeft}>
           <Ionicons
             name="sparkles"
@@ -703,7 +812,7 @@ const EditProduct = ({ navigation, route }) => {
 
       {/* Buttons */}
       <View style={styles.buttonRow}>
-        <TouchableOpacity style={styles.deleteBtn}>
+        <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
           <Ionicons
             name="trash-outline"
             size={22}
@@ -733,6 +842,42 @@ const EditProduct = ({ navigation, route }) => {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Add Variant Modal */}
+      <Modal
+        visible={showVariantModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowVariantModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.variantModalContent}>
+            <Text style={styles.modalTitle}>Add Product Variant / Tag</Text>
+            <TextInput
+              value={newVariant}
+              onChangeText={setNewVariant}
+              placeholder="e.g. Red, XL, Cotton"
+              placeholderTextColor={COLORS.textGrayPlaceholder}
+              style={styles.variantInput}
+              autoFocus
+            />
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => {
+                  setNewVariant('');
+                  setShowVariantModal(false);
+                }}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalAddBtn} onPress={addVariant}>
+                <Text style={styles.modalAddText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 };
@@ -959,6 +1104,8 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   variantChip: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: COLORS.primaryBgLight,
     paddingHorizontal: 15,
     paddingVertical: 10,
@@ -1053,5 +1200,61 @@ const styles = StyleSheet.create({
     color: COLORS.success,
     fontWeight: "700",
     marginLeft: 6,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  variantModalContent: {
+    width: '100%',
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 18,
+    padding: 20,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.textGrayDark,
+    marginBottom: 14,
+  },
+  variantInput: {
+    height: 50,
+    backgroundColor: COLORS.backgroundAlt,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: COLORS.borderMedium,
+    color: COLORS.textGrayDark,
+    marginBottom: 18,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  modalCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginRight: 10,
+  },
+  modalCancelText: {
+    fontSize: 15,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  modalAddBtn: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+  },
+  modalAddText: {
+    fontSize: 15,
+    color: COLORS.textContrast,
+    fontWeight: '700',
   },
 });

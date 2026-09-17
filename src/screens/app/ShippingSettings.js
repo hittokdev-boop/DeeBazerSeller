@@ -74,43 +74,23 @@ const ShippingSettings = ({ navigation }) => {
     const loadShippingData = async () => {
       setIsLoading(true);
       try {
-        // Try local storage cache
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        if (storedProfile) {
-          const parsed = JSON.parse(storedProfile);
-          if (parsed.shipping_settings) {
-            const ss = parsed.shipping_settings;
+        // Fetch fresh profile from GET /api/seller/profile
+        const res = await getSellerProfile();
+        if (res?.data) {
+          if (res.data.shipping_settings) {
+            const ss = res.data.shipping_settings;
             if (ss.free_shipping_above !== undefined) setFreeShippingAbove(String(ss.free_shipping_above));
             if (ss.standard_rate !== undefined) setStandardRate(String(ss.standard_rate));
             if (ss.express_rate !== undefined) setExpressRate(String(ss.express_rate));
             if (ss.processing_days !== undefined) setProcessingDays(String(ss.processing_days));
             if (ss.ships_from) setShipsFrom(ss.ships_from);
-          } else if (parsed.city) {
-            setShipsFrom(parsed.city);
           }
-        }
-
-        // Fetch fresh profile from GET /api/seller/profile
-        try {
-          const res = await getSellerProfile();
-          if (res?.data) {
-            if (res.data.shipping_settings) {
-              const ss = res.data.shipping_settings;
-              if (ss.free_shipping_above !== undefined) setFreeShippingAbove(String(ss.free_shipping_above));
-              if (ss.standard_rate !== undefined) setStandardRate(String(ss.standard_rate));
-              if (ss.express_rate !== undefined) setExpressRate(String(ss.express_rate));
-              if (ss.processing_days !== undefined) setProcessingDays(String(ss.processing_days));
-              if (ss.ships_from) setShipsFrom(ss.ships_from);
-            }
-            if (!shipsFrom && res.data.city) {
-              setShipsFrom(res.data.city);
-            }
+          if (res.data.city) {
+            setShipsFrom((prev) => prev || res.data.city);
           }
-        } catch (apiErr) {
-          console.log("Could not load fresh shipping settings from server:", apiErr);
         }
       } catch (err) {
-        console.log("Error loading shipping settings", err);
+        console.error("Error loading shipping settings", err);
       } finally {
         setIsLoading(false);
       }
@@ -157,15 +137,6 @@ const ShippingSettings = ({ navigation }) => {
 
       const response = await updateShippingSettings(payload);
 
-      // Update local storage
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
-      const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-      const updatedProfile = {
-        ...currentProfile,
-        shipping_settings: payload,
-      };
-      await AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile));
-
       showAlert({
         type: "success",
         title: "Shipping Settings Saved!",
@@ -174,27 +145,14 @@ const ShippingSettings = ({ navigation }) => {
         onConfirm: () => navigation.goBack(),
       });
     } catch (err) {
-      console.log("Error updating shipping settings", err);
+      console.error("Error updating shipping settings", err);
 
       let userFriendlyMsg = err.message || "Failed to update shipping settings. Please try again.";
       if (typeof userFriendlyMsg === "string" && userFriendlyMsg.includes("Unknown column 'shipping_settings'")) {
         userFriendlyMsg =
           "Backend Database Notice:\nThe 'shipping_settings' column is not added to the database yet. Saved locally for now.";
 
-        // Save locally as fallback
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-        const updatedProfile = {
-          ...currentProfile,
-          shipping_settings: {
-            free_shipping_above: Number(freeShippingAbove) || 0,
-            standard_rate: Number(standardRate) || 0,
-            express_rate: Number(expressRate) || 0,
-            processing_days: parseInt(processingDays || "1", 10),
-            ships_from: shipsFrom.trim(),
-          },
-        };
-        await AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile));
+        // Database notice
       }
 
       showAlert({

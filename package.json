@@ -12,8 +12,8 @@
   "dependencies": {
     "@notifee/react-native": "^9.1.8",
     "@react-native-async-storage/async-storage": "^3.1.1",
-    "@react-native-firebase/app": "^26.1.0",
-    "@react-native-firebase/messaging": "^26.1.0",
+    "@react-native-firebase/app": "^26.4.0",
+    "@react-native-firebase/messaging": "^26.4.0",
     "@react-native/new-app-screen": "0.85.3",
     "@react-navigation/bottom-tabs": "^7.18.8",
     "@react-navigation/native": "^7.3.8",

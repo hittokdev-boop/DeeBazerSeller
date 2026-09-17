@@ -38,15 +38,6 @@ const ForgotPassword = ({ navigation }) => {
     try {
       await new Promise((resolve) => setTimeout(resolve, 1200));
 
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
-      const profile = storedProfile ? JSON.parse(storedProfile) : null;
-
-      if (profile && profile.email.toLowerCase() !== email.trim().toLowerCase()) {
-        setErrors({ email: "This email is not registered as a seller" });
-        setIsLoading(false);
-        return;
-      }
-
       setErrors({});
       const targetEmail = email.trim().toLowerCase();
       

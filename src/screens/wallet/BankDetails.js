@@ -14,9 +14,9 @@ import {
   StatusBar,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import { getSellerProfile, updateSellerProfile } from "../../api/auth";
 
 const BankDetails = ({ navigation }) => {
   const { colors } = useTheme();
@@ -34,17 +34,16 @@ const BankDetails = ({ navigation }) => {
     const loadBankData = async () => {
       setIsLoading(true);
       try {
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        if (storedProfile) {
-          const parsed = JSON.parse(storedProfile);
-          setGstin(parsed.gstin || "");
-          setBankName(parsed.bankName || "");
-          setAccountNo(parsed.accountNo || "");
-          setIfscCode(parsed.ifscCode || "");
+        const res = await getSellerProfile();
+        if (res?.data) {
+          const d = res.data;
+          setGstin(d.gstin || d.gst_number || "");
+          setBankName(d.bank_name || d.bankName || "");
+          setAccountNo(d.bank_account_number || d.accountNo || d.account_number || "");
+          setIfscCode(d.bank_ifsc_code || d.ifscCode || d.ifsc_code || "");
         }
       } catch (err) {
-        console.log("Error loading bank details", err);
-        Alert.alert("Error", "Could not load bank details.");
+        console.error("Error loading bank details", err);
       } finally {
         setIsLoading(false);
       }
@@ -80,25 +79,20 @@ const BankDetails = ({ navigation }) => {
 
     setIsSaving(true);
     try {
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
-      const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-
-      const updatedProfile = {
-        ...currentProfile,
+      await updateSellerProfile({
         gstin: gstin.trim().toUpperCase(),
-        bankName: bankName.trim(),
-        accountNo: accountNo.trim(),
-        ifscCode: ifscCode.trim().toUpperCase(),
-      };
-
-      await AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile));
+        gst_number: gstin.trim().toUpperCase(),
+        bank_name: bankName.trim(),
+        bank_account_number: accountNo.trim(),
+        bank_ifsc_code: ifscCode.trim().toUpperCase(),
+      });
 
       Alert.alert("Success", "Bank details updated successfully!", [
         { text: "OK", onPress: () => navigation.goBack() }
       ]);
     } catch (err) {
-      console.log("Error saving bank details", err);
-      Alert.alert("Error", "Failed to update bank details.");
+      console.error("Error saving bank details", err);
+      Alert.alert("Notice", err.message || "Failed to update bank details.");
     } finally {
       setIsSaving(false);
     }

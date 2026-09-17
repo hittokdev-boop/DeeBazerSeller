@@ -50,32 +50,7 @@ const ResetPassword = ({ route, navigation }) => {
 
     setIsLoading(true);
     try {
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
-      let currentProfile = storedProfile ? JSON.parse(storedProfile) : null;
-
-      if (!currentProfile) {
-        currentProfile = {
-          ownerName: "Hittok Owner",
-          email: email,
-          phone: "9876543210",
-          storeName: "Hittok Store",
-          category: "Electronics & Gadgets",
-          address: "123 DeeBazar Hub, Sector 5, Kolkata",
-          description: "Premium electronics and smart devices store.",
-          bankName: "State Bank of India",
-          accountNo: "123456789012",
-          ifscCode: "SBIN0000123",
-          logoUri: "",
-          registeredAt: new Date().toISOString(),
-        };
-      }
-
-      const updatedProfile = {
-        ...currentProfile,
-        password: newPassword,
-      };
-
-      await AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile));
+      await new Promise((resolve) => setTimeout(resolve, 800));
 
       Alert.alert(
         "Success",

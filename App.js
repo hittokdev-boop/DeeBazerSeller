@@ -24,7 +24,7 @@ export default function App() {
     initNotifications();
 
     const unsubscribe = setupNotificationListeners((notification) => {
-      console.log("[App] User interacted with notification:", notification);
+      // Notification interaction handled
     });
 
     return () => {

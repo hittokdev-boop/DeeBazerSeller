@@ -86,7 +86,6 @@ const Orders = ({ navigation }) => {
   };
 
   const handleOrderPress = (order) => {
-    // console.log(order)
     navigation.navigate("OrderDetails", { orderId: order.id });
   };
 

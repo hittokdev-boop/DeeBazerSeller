@@ -75,7 +75,6 @@ export const getSellerProfile = async (customToken = null) => {
 
     const responseText = await response.text();
     let responseData;
-    console.log(responseText)
     try {
       responseData = JSON.parse(responseText);
     } catch (e) {

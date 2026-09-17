@@ -243,7 +243,7 @@ const Splash = ({ navigation }) => {
           }
         }, 200);
       } catch (err) {
-        console.log("Splash initializeApp error:", err);
+        console.error("Splash initializeApp error:", err);
         await animateProgressTo(1.0, 300);
         if (isMounted) DeviceEventEmitter.emit("authStateChanged", null);
       }

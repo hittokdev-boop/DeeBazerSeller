@@ -110,21 +110,7 @@ const SellerDashboard = ({ navigation }) => {
     setFetchError(null);
 
     try {
-      // 1. Load stored profile if available
-      try {
-        const storedProfile = await AsyncStorage.getItem("sellerProfile");
-        if (storedProfile) {
-          setProfile(JSON.parse(storedProfile));
-        }
-
-        const token = await AsyncStorage.getItem("token");
-
-
-      } catch (e) {
-        console.log("Error loading cached profile:", e);
-      }
-
-      // 2. Fetch live dashboard data from API
+      // 1. Fetch live dashboard data from API
       const res = await getSellerDashboard();
       if (res && res.data) {
         if (res.data.stats) {
@@ -138,13 +124,12 @@ const SellerDashboard = ({ navigation }) => {
         }
       }
 
-      // 3. Try to refresh profile in background if needed
+      // 2. Refresh seller profile dynamically from API
       try {
         const profileRes = await getSellerProfile();
         if (profileRes && profileRes.data) {
           const profileData = profileRes.data.seller || profileRes.data;
           setProfile(profileData);
-          await AsyncStorage.setItem("sellerProfile", JSON.stringify(profileData));
         }
       } catch (pErr) {
         // Non-blocking profile refresh
@@ -178,37 +163,25 @@ const SellerDashboard = ({ navigation }) => {
     loadDashboardData();
   }, [loadDashboardData]);
 
-  // Profile image dynamic refresh — screen focus এ AsyncStorage থেকে latest logo load করে
+  // Dynamic profile refresh on screen focus from API
   useFocusEffect(
     useCallback(() => {
-      const refreshProfileImage = async () => {
+      let isMounted = true;
+      const refreshProfileLive = async () => {
         try {
-          const [storedProfile, storedUserData] = await Promise.all([
-            AsyncStorage.getItem("sellerProfile"),
-            AsyncStorage.getItem("userData"),
-          ]);
-          const parsedProfile = storedProfile ? JSON.parse(storedProfile) : {};
-          const parsedUser = storedUserData ? JSON.parse(storedUserData) : {};
-          // Merge latest logo from userData or sellerProfile
-          const freshLogo =
-            parsedUser.logo_url ||
-            parsedProfile.logo_url ||
-            parsedProfile.logoUri ||
-            parsedProfile.logo;
-          if (freshLogo) {
-            setProfile((prev) => ({
-              ...prev,
-              ...parsedProfile,
-              logo_url: freshLogo,
-              logoUri: freshLogo,
-              logo: freshLogo,
-            }));
+          const profileRes = await getSellerProfile();
+          if (isMounted && profileRes && profileRes.data) {
+            const profileData = profileRes.data.seller || profileRes.data;
+            setProfile(profileData);
           }
         } catch (e) {
           // silent fail
         }
       };
-      refreshProfileImage();
+      refreshProfileLive();
+      return () => {
+        isMounted = false;
+      };
     }, [])
   );
 

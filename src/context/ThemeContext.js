@@ -21,7 +21,7 @@ export const ThemeProvider = ({ children }) => {
           setThemeMode(savedTheme);
         }
       } catch (error) {
-        console.log("Error loading theme mode preference:", error);
+        console.error("Error loading theme mode preference:", error);
       }
     };
 
@@ -34,7 +34,7 @@ export const ThemeProvider = ({ children }) => {
     try {
       await AsyncStorage.setItem("@theme_mode", newTheme);
     } catch (error) {
-      console.log("Error saving theme preference:", error);
+      console.error("Error saving theme preference:", error);
     }
   };
 
@@ -44,7 +44,7 @@ export const ThemeProvider = ({ children }) => {
     try {
       await AsyncStorage.setItem("@theme_mode", mode);
     } catch (error) {
-      console.log("Error saving theme mode:", error);
+      console.error("Error saving theme mode:", error);
     }
   };
 

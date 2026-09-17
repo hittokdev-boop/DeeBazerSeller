@@ -351,7 +351,6 @@ const AddProduct = ({ navigation, route }) => {
 
 
       const res = await createSellerProduct(formData);
-      // console.log("🎉 [AddProduct] API Success Response:", res);
 
       const createdProductData = res.data || {
         name: name.trim(),

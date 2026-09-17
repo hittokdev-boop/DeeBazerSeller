@@ -27,7 +27,7 @@ const SellerBottomNavigation = () => {
         const pendingCount = safeOrders.filter((o) => (o.status || "").toString().toLowerCase() === "pending").length;
         setHasNewOrders(pendingCount > 0);
       } catch (error) {
-        console.log("Error fetching orders for badge:", error);
+        console.error("Error fetching orders for badge:", error);
       }
     };
     

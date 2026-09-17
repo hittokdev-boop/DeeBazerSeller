@@ -46,7 +46,7 @@ const OrderDetails = ({ route, navigation }) => {
         const statusRes = await getOrderStatusList(orderId);
         setAvailableStatuses(statusRes?.data || []);
       } catch (err) {
-        console.log("Failed to fetch status list", err);
+        console.error("Failed to fetch status list", err);
       }
     } catch (error) {
       Alert.alert("Error", error.message || "Failed to load order details");
@@ -97,7 +97,7 @@ const OrderDetails = ({ route, navigation }) => {
             description: "Package handed over to courier"
           });
         } catch (trackingError) {
-          console.log("Failed to auto-add tracking:", trackingError);
+          console.error("Failed to auto-add tracking:", trackingError);
         }
       }
 

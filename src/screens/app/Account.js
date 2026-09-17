@@ -46,7 +46,7 @@ const Account = ({ navigation }) => {
       }
       navigation.navigate("Login");
     } catch (navErr) {
-      console.log("Navigation error:", navErr);
+      console.error("Navigation error:", navErr);
       navigation.navigate("Login");
     }
   }, [navigation]);
@@ -55,37 +55,11 @@ const Account = ({ navigation }) => {
     try {
       DeviceEventEmitter.emit("authStateChanged", null);
     } catch (navErr) {
-      console.log("Navigation error to register:", navErr);
+      console.error("Navigation error to register:", navErr);
     }
   }, []);
 
-  // Load cached profile data first for instant UI response
-  const loadCachedProfile = async () => {
-    try {
-      const [storedProfile, storedUser, storedSeller, token] = await Promise.all([
-        AsyncStorage.getItem("sellerProfile"),
-        AsyncStorage.getItem("userData"),
-        AsyncStorage.getItem("sellerData"),
-        AsyncStorage.getItem("token"),
-      ]);
-
-
-
-      if (storedProfile) {
-        setProfile(JSON.parse(storedProfile));
-      }
-      if (storedUser) {
-        setUserData(JSON.parse(storedUser));
-      }
-      if (storedSeller) {
-        setSellerData(JSON.parse(storedSeller));
-      }
-    } catch (e) {
-      console.log("Error loading cached profile:", e);
-    }
-  };
-
-  // Fetch live seller details from GET /api/seller/me
+  // Fetch live seller details from GET /api/seller/profile
   const fetchSellerDetails = useCallback(async (showFullLoader = false) => {
     if (showFullLoader) {
       setIsLoading(true);
@@ -119,16 +93,9 @@ const Account = ({ navigation }) => {
         };
 
         setProfile(mergedProfile);
-
-        // Save to AsyncStorage for offline access and sync with other screens
-        await Promise.all([
-          AsyncStorage.setItem("sellerProfile", JSON.stringify(mergedProfile)),
-          AsyncStorage.setItem("userData", JSON.stringify(data)),
-          AsyncStorage.setItem("sellerData", JSON.stringify(data)),
-        ]);
       }
     } catch (error) {
-      console.log("Error fetching seller details:", error);
+      console.error("Error fetching seller details:", error);
       if (error.status === 401) {
         CustomAlert.alert(
           "Session Expired",
@@ -155,11 +122,10 @@ const Account = ({ navigation }) => {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [navigateToLogin]);
+  }, [navigateToRegister]);
 
   useEffect(() => {
     if (isFocused) {
-      loadCachedProfile();
       fetchSellerDetails(false);
     }
   }, [isFocused, fetchSellerDetails]);
@@ -182,10 +148,9 @@ const Account = ({ navigation }) => {
             try {
               setIsLoading(true);
               try {
-                const response = await logoutSeller();
-                console.log("Logout API response:", response);
+                await logoutSeller();
               } catch (apiErr) {
-                console.log("Logout API call failed:", apiErr);
+                console.error("Logout API call failed:", apiErr);
               }
               await AsyncStorage.multiRemove([
                 "token",

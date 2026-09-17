@@ -71,59 +71,8 @@ const LoginOtp = ({ route, navigation }) => {
       await new Promise((resolve) => setTimeout(resolve, 1200));
 
       if (otpString === "9999") {
-        const storedProfileStr = await AsyncStorage.getItem("sellerProfile");
-        let profile = null;
-
-        if (storedProfileStr) {
-          profile = JSON.parse(storedProfileStr);
-        }
-
-        const isEmail = identifier.includes("@");
-        const cleanIdentifier = identifier.trim().toLowerCase();
-
-        if (profile) {
-          const profileEmail = (profile.email || "").trim().toLowerCase();
-          const profilePhone = (profile.phone || "").trim();
-
-          const isMatch = isEmail 
-            ? profileEmail === cleanIdentifier 
-            : profilePhone === cleanIdentifier;
-
-          if (isMatch) {
-            await AsyncStorage.setItem("isLoggedIn", "true");
-            navigation.replace("SellerTabs");
-          } else {
-            Alert.alert(
-              "Account Mismatch",
-              "The entered credentials do not match the registered seller profile. Would you like to register a new account?",
-              [
-                { text: "Try Again", style: "cancel" },
-                { text: "Register", onPress: () => navigation.navigate("SellerRegistration") }
-              ]
-            );
-          }
-        } else {
-          // Create a mock profile if none exists
-          const mockProfile = {
-            ownerName: "Hittok Owner",
-            email: isEmail ? cleanIdentifier : "owner@example.com",
-            phone: isEmail ? "9876543210" : cleanIdentifier,
-            storeName: "Hittok Store",
-            category: "Electronics & Gadgets",
-            address: "123 DeeBazar Hub, Sector 5, Kolkata",
-            description: "Premium electronics and smart devices store on DeeBazar.",
-            bankName: "State Bank of India",
-            accountNo: "123456789012",
-            ifscCode: "SBIN0000123",
-            logoUri: "",
-            registeredAt: new Date().toISOString(),
-          };
-
-          await AsyncStorage.setItem("isRegistered", "true");
-          await AsyncStorage.setItem("isLoggedIn", "true");
-          await AsyncStorage.setItem("sellerProfile", JSON.stringify(mockProfile));
-          navigation.replace("SellerTabs");
-        }
+        await AsyncStorage.setItem("isLoggedIn", "true");
+        navigation.replace("SellerTabs");
       } else {
         setOtpError("Invalid verification code. Please try again.");
       }

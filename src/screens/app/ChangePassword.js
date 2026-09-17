@@ -112,7 +112,7 @@ const ChangePassword = ({ navigation }) => {
         onConfirm: () => navigation.goBack(),
       });
     } catch (err) {
-      console.log("Error saving password", err);
+      console.error("Error saving password", err);
       if (err?.data?.errors) {
         const fieldErrors = {};
         if (err.data.errors.current_password) fieldErrors.currentPassword = err.data.errors.current_password[0];

@@ -124,53 +124,26 @@ const EditProfile = ({ navigation }) => {
   const loadProfileData = async () => {
     setIsLoading(true);
     try {
-      const [storedProfile, storedUser, storedSeller] = await Promise.all([
-        AsyncStorage.getItem("sellerProfile"),
-        AsyncStorage.getItem("userData"),
-        AsyncStorage.getItem("sellerData"),
-      ]);
+      // Fetch fresh profile dynamically from GET /api/seller/me
+      const freshData = await getSellerMe();
+      if (freshData?.data) {
+        const data = freshData.data;
+        
+        // Extract seller / user objects
+        const sellerObj = data.seller || data;
+        const userObj = data.user || data;
 
-      const parsedProfile = storedProfile ? JSON.parse(storedProfile) : {};
-      const parsedUser = storedUser ? JSON.parse(storedUser) : {};
-      const parsedSeller = storedSeller ? JSON.parse(storedSeller) : {};
+        setOwnerName(userObj.name || sellerObj.owner_name || sellerObj.store_name || "");
+        setEmail(userObj.email || sellerObj.email || "");
+        setMobile(userObj.mobile || sellerObj.phone || userObj.phone || "");
+        const freshLogo = sellerObj.logo_url || userObj.logo_url;
 
-      setOwnerName(parsedUser.name || parsedProfile.ownerName || parsedProfile.name || "");
-      setEmail(parsedUser.email || parsedProfile.email || "");
-      setMobile(parsedUser.mobile || parsedProfile.phone || parsedProfile.mobile || "");
-
-      const initialLogo =
-        parsedUser.logo_url ||
-        parsedSeller.logo_url ||
-        parsedProfile.logoUri ||
-        parsedProfile.logo_url ||
-        "";
-      setAvatarUri(initialLogo);
-
-      // Try fresh fetch if online
-      try {
-        const freshData = await getSellerMe();
-        console.log("freshLogo", freshData);
-        if (freshData?.data) {
-          const data = freshData.data;
-          
-          // Check if the data has seller/user structure
-          const sellerObj = data.seller || data;
-          const userObj = data.user || data;
-
-          setOwnerName(sellerObj.store_name || userObj.name || "");
-          setEmail(userObj.email || sellerObj.email || "");
-          setMobile(userObj.mobile || sellerObj.phone || userObj.phone || "");
-          const freshLogo = sellerObj.logo_url || userObj.logo_url;
-
-          if (freshLogo) {
-            setAvatarUri(freshLogo);
-          }
+        if (freshLogo) {
+          setAvatarUri(freshLogo);
         }
-      } catch (e) {
-        // offline fallback
       }
     } catch (err) {
-      console.log("Error loading profile", err);
+      console.error("Error loading profile", err);
     } finally {
       setIsLoading(false);
     }
@@ -304,41 +277,16 @@ const EditProfile = ({ navigation }) => {
             setAvatarUri(profileRes.data.logo_url);
           }
         } catch (photoErr) {
-          console.log("Photo upload error:", photoErr);
+          console.error("Photo upload error:", photoErr);
           throw new Error(photoErr.message || "Failed to upload profile photo");
         }
       }
 
       const finalLogo = updatedUser.logo_url || avatarUri;
 
-      // Sync with local AsyncStorage
-      const storedProfile = await AsyncStorage.getItem("sellerProfile");
-      const currentProfile = storedProfile ? JSON.parse(storedProfile) : {};
-
-      const updatedProfile = {
-        ...currentProfile,
-        ...updatedUser,
-        ownerName: updatedUser.name || ownerName.trim(),
-        name: updatedUser.name || ownerName.trim(),
-        email: updatedUser.email || email.trim(),
-        mobile: updatedUser.mobile || mobile.trim(),
-        phone: updatedUser.mobile || mobile.trim(),
-        logoUri: finalLogo,
-        logo_url: finalLogo,
-      };
-
-      const storedUserData = await AsyncStorage.getItem("userData");
-      const currentUserData = storedUserData ? JSON.parse(storedUserData) : {};
-      const updatedUserData = {
-        ...currentUserData,
-        ...updatedUser,
-        logo_url: finalLogo,
-      };
-
-      await Promise.all([
-        AsyncStorage.setItem("sellerProfile", JSON.stringify(updatedProfile)),
-        AsyncStorage.setItem("userData", JSON.stringify(updatedUserData)),
-      ]);
+      if (finalLogo) {
+        setAvatarUri(finalLogo);
+      }
 
       setSelectedPhoto(null);
 
@@ -351,7 +299,7 @@ const EditProfile = ({ navigation }) => {
         onConfirm: () => navigation.goBack(),
       });
     } catch (err) {
-      console.log("Error saving profile", err);
+      console.error("Error saving profile", err);
       if (err?.data?.errors) {
         const fieldErrors = {};
         if (err.data.errors.name) fieldErrors.ownerName = err.data.errors.name[0];

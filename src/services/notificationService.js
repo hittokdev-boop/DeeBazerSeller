@@ -38,7 +38,6 @@ export async function requestNotificationPermission() {
           PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
         );
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          console.log('[NotificationService] Android POST_NOTIFICATIONS permission denied');
           return false;
         }
       }
@@ -50,12 +49,11 @@ export async function requestNotificationPermission() {
       const enabled =
         authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
         authStatus === messaging.AuthorizationStatus.PROVISIONAL;
-      console.log('[NotificationService] iOS Authorization status:', authStatus);
       return enabled;
     }
     return true;
   } catch (error) {
-    console.log('[NotificationService] Permission error:', error?.message || error);
+    console.error('[NotificationService] Permission error:', error?.message || error);
     return false;
   }
 }
@@ -80,7 +78,7 @@ export async function createNotificationChannel() {
     }
     return 'default';
   } catch (error) {
-    console.log('[NotificationService] Create Channel error:', error?.message || error);
+    console.error('[NotificationService] Create Channel error:', error?.message || error);
     return 'default';
   }
 }
@@ -94,7 +92,6 @@ export async function getFCMToken() {
     if (!token) {
       const msg = getMessagingSafe();
       if (!msg) {
-        console.log('[NotificationService] FCM Messaging module unavailable');
         return null;
       }
       if (Platform.OS === 'ios') {
@@ -104,16 +101,13 @@ export async function getFCMToken() {
       }
       token = await msg.getToken();
       if (token) {
-        console.log('[NotificationService] New FCM Token:', token);
         await AsyncStorage.setItem(FCM_TOKEN_KEY, token);
       }
-    } else {
-      console.log('[NotificationService] Stored FCM Token:', token);
     }
     return token;
   } catch (error) {
-    console.log(
-      '[NotificationService] FCM Token retrieval skipped:',
+    console.error(
+      '[NotificationService] FCM Token retrieval error:',
       error?.message || error
     );
     return null;
@@ -147,7 +141,7 @@ export async function displayLocalNotification(remoteMessage) {
       },
     });
   } catch (error) {
-    console.log('[NotificationService] Display error:', error?.message || error);
+    console.error('[NotificationService] Display error:', error?.message || error);
   }
 }
 
@@ -166,37 +160,34 @@ export function setupNotificationListeners(onNotificationClick) {
     // Listen to token refresh
     try {
       unsubscribeTokenRefresh = msg.onTokenRefresh(async (token) => {
-        console.log('[NotificationService] FCM Token refreshed:', token);
         try {
           await AsyncStorage.setItem(FCM_TOKEN_KEY, token);
         } catch (err) {
-          console.log('[NotificationService] Error saving refreshed FCM token:', err?.message || err);
+          console.error('[NotificationService] Error saving refreshed FCM token:', err?.message || err);
         }
       });
     } catch (err) {
-      console.log('[NotificationService] Could not set up onTokenRefresh listener:', err?.message || err);
+      console.error('[NotificationService] Could not set up onTokenRefresh listener:', err?.message || err);
     }
 
     // Listen to Foreground Messages
     try {
       unsubscribeForeground = msg.onMessage(async (remoteMessage) => {
-        console.log('[NotificationService] Foreground Message received:', remoteMessage);
         await displayLocalNotification(remoteMessage);
       });
     } catch (err) {
-      console.log('[NotificationService] Could not set up onMessage listener:', err?.message || err);
+      console.error('[NotificationService] Could not set up onMessage listener:', err?.message || err);
     }
 
     // App opened from Background State by tapping notification
     try {
       unsubscribeNotificationOpened = msg.onNotificationOpenedApp((remoteMessage) => {
-        console.log('[NotificationService] Notification opened app from background:', remoteMessage);
         if (onNotificationClick && remoteMessage) {
           onNotificationClick(remoteMessage);
         }
       });
     } catch (err) {
-      console.log('[NotificationService] Could not set up onNotificationOpenedApp listener:', err?.message || err);
+      console.error('[NotificationService] Could not set up onNotificationOpenedApp listener:', err?.message || err);
     }
 
     // App launched from Quit State by tapping notification
@@ -205,15 +196,14 @@ export function setupNotificationListeners(onNotificationClick) {
         .getInitialNotification()
         .then((remoteMessage) => {
           if (remoteMessage) {
-            console.log('[NotificationService] Notification opened app from quit state:', remoteMessage);
             if (onNotificationClick) {
               onNotificationClick(remoteMessage);
             }
           }
         })
-        .catch((err) => console.log('[NotificationService] getInitialNotification error:', err));
+        .catch((err) => console.error('[NotificationService] getInitialNotification error:', err));
     } catch (err) {
-      console.log('[NotificationService] Could not check getInitialNotification:', err?.message || err);
+      console.error('[NotificationService] Could not check getInitialNotification:', err?.message || err);
     }
   }
 
@@ -223,14 +213,13 @@ export function setupNotificationListeners(onNotificationClick) {
     try {
       unsubscribeNotifeeEvents = nft.onForegroundEvent(({ type, detail }) => {
         if (type === EventType.PRESS) {
-          console.log('[Notifee] Notification pressed:', detail.notification);
           if (onNotificationClick && detail.notification) {
             onNotificationClick(detail.notification);
           }
         }
       });
     } catch (err) {
-      console.log('[NotificationService] Could not set up Notifee foreground listener:', err?.message || err);
+      console.error('[NotificationService] Could not set up Notifee foreground listener:', err?.message || err);
     }
   }
 
@@ -250,11 +239,10 @@ export async function registerBackgroundMessageHandler() {
     const msg = getMessagingSafe();
     if (msg) {
       msg.setBackgroundMessageHandler(async (remoteMessage) => {
-        console.log('[NotificationService] Background message handled:', remoteMessage);
         await displayLocalNotification(remoteMessage);
       });
     }
   } catch (error) {
-    console.log('[NotificationService] Background handler registration skipped:', error?.message || error);
+    console.error('[NotificationService] Background handler registration skipped:', error?.message || error);
   }
 }
