@@ -5,6 +5,7 @@ import { LIGHT_COLORS, DARK_COLORS } from "../constants/theme";
 export const ThemeContext = createContext({
   themeMode: "light",
   isDarkMode: false,
+  isDark: false,
   colors: LIGHT_COLORS,
   toggleTheme: () => {},
   setTheme: (mode) => {},
@@ -56,6 +57,7 @@ export const ThemeProvider = ({ children }) => {
       value={{
         themeMode,
         isDarkMode,
+        isDark: isDarkMode,
         colors,
         toggleTheme,
         setTheme,

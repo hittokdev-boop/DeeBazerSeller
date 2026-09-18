@@ -1,1260 +1,600 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
   ScrollView,
+  TextInput,
   TouchableOpacity,
   Image,
-  TextInput,
   StyleSheet,
   Alert,
   Platform,
   StatusBar,
-  PermissionsAndroid,
   ActivityIndicator,
-  Modal,
-} from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
-import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
-import COLORS from '../../constants/theme';
-import { useTheme } from '../../context/ThemeContext';
-import { getSellerProductDetails, updateSellerProduct, deleteSellerProduct } from '../../api/auth';
+} from "react-native";
+import Ionicons from "react-native-vector-icons/Ionicons";
+import { launchImageLibrary } from "react-native-image-picker";
+import COLORS from "../../constants/theme";
+import { useTheme } from "../../context/ThemeContext";
+import { updateSellerProduct, getSellerProductDetails, getSellerCategories } from "../../api/auth";
 
-const EditProduct = ({ navigation, route }) => {
-  const productData = route?.params?.product || {};
+const PRESET_CATEGORIES = [
+  { id: 1, name: "Electronics & Gadgets" },
+  { id: 2, name: "Fashion & Apparel" },
+  { id: 3, name: "Grocery & Gourmet" },
+  { id: 4, name: "Health & Beauty" },
+  { id: 5, name: "Home & Kitchen" },
+  { id: 6, name: "Sports & Outdoors" },
+  { id: 7, name: "Toys & Games" },
+  { id: 8, name: "Handmade Crafts" },
+  { id: 9, name: "Automotive" },
+  { id: 10, name: "Books & Stationery" },
+];
+
+const EditProduct = ({ route, navigation }) => {
+  const { productId, product: routeProduct } = route.params || {};
   const { colors } = useTheme();
-  const [loading, setLoading] = useState(false);
-  const [isUpdating, setIsUpdating] = useState(false);
 
-  const [images, setImages] = useState(
-    productData?.image_url ? [productData.image_url] : (productData?.image ? [productData.image] : [])
-  );
-  const [detailImages, setDetailImages] = useState(
-    productData?.gallery || productData?.images || []
-  );
-  const [productName, setProductName] = useState(productData?.name || '');
-  const [brand, setBrand] = useState(productData?.brand?.name || productData?.brand || '');
-  const [category, setCategory] = useState(productData?.category?.name || productData?.category || '');
-  const [price, setPrice] = useState((productData?.sale_price || productData?.price)?.toString() || '');
-  const [mrp, setMrp] = useState((productData?.price || productData?.sale_price)?.toString() || '');
-  const [stock, setStock] = useState(productData?.stock_quantity?.toString() || '');
-  const [description, setDescription] = useState(productData?.description || productData?.short_description || '');
-  const [variants, setVariants] = useState(productData?.tags || []);
-  const [newVariant, setNewVariant] = useState('');
-  const [showVariantModal, setShowVariantModal] = useState(false);
-  const [fullProductData, setFullProductData] = useState(null);
+  const [loading, setLoading] = useState(!routeProduct);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [categoriesList, setCategoriesList] = useState(PRESET_CATEGORIES);
 
-  // Status toggles
-  const [isFeatured, setIsFeatured] = useState(false);
-  const [isBestSeller, setIsBestSeller] = useState(false);
+  // Form fields
+  const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState(null);
+  const [categoryName, setCategoryName] = useState("");
+  const [price, setPrice] = useState("");
+  const [salePrice, setSalePrice] = useState("");
+  const [stockQuantity, setStockQuantity] = useState("");
+  const [minStockAlert, setMinStockAlert] = useState("5");
+  const [sku, setSku] = useState("");
+  const [weight, setWeight] = useState("");
+  const [shortDescription, setShortDescription] = useState("");
+  const [description, setDescription] = useState("");
+  const [tags, setTags] = useState([]);
+  const [currentTag, setCurrentTag] = useState("");
+  const [mainImage, setMainImage] = useState(null);
+  const [existingImageUri, setExistingImageUri] = useState(null);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
 
   useEffect(() => {
-    const fetchDetails = async () => {
-      const productId = productData?.product_id || productData?.id;
-      if (!productId) return;
-      try {
-        setLoading(true);
-        const res = await getSellerProductDetails(productId);
-        if (res?.data) {
-          const fullProduct = res.data;
-          setFullProductData(fullProduct);
-
-          // Populate gallery
-          if (fullProduct.gallery && fullProduct.gallery.length > 0) {
-            setDetailImages(fullProduct.gallery);
-          } else if (fullProduct.images && fullProduct.images.length > 0) {
-            setDetailImages(fullProduct.images);
-          }
-
-          // Hydrate other details if not present initially
-          if (!productName && fullProduct.name) setProductName(fullProduct.name);
-          if (!description && (fullProduct.description || fullProduct.short_description)) {
-            setDescription(fullProduct.description || fullProduct.short_description);
-          }
-          if (!price && (fullProduct.sale_price || fullProduct.price)) {
-            setPrice((fullProduct.sale_price || fullProduct.price).toString());
-          }
-          if (!mrp && (fullProduct.price || fullProduct.sale_price)) {
-            setMrp((fullProduct.price || fullProduct.sale_price).toString());
-          }
-          if (!stock && fullProduct.stock_quantity !== undefined) {
-            setStock(fullProduct.stock_quantity.toString());
-          }
-          if (images.length === 0 && (fullProduct.image_url || fullProduct.image)) {
-            setImages([fullProduct.image_url || fullProduct.image]);
-          }
-          if (Array.isArray(fullProduct.tags) && variants.length === 0) {
-            setVariants(fullProduct.tags);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch full product details in EditProduct:", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchDetails();
+    fetchCategories();
+    if (routeProduct) {
+      populateForm(routeProduct);
+    } else if (productId) {
+      loadProduct();
+    }
   }, []);
 
-  const requestCameraPermission = async () => {
-    if (Platform.OS !== "android") return true;
+  const fetchCategories = async () => {
     try {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.CAMERA,
-        {
-          title: "Camera Permission",
-          message: "DeeBazar Seller needs camera access to capture product photos.",
-          buttonNeutral: "Ask Me Later",
-          buttonNegative: "Cancel",
-          buttonPositive: "OK",
-        }
-      );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
+      const res = await getSellerCategories();
+      const cats = res?.data || res?.categories || res;
+      if (Array.isArray(cats) && cats.length > 0) setCategoriesList(cats);
+    } catch {}
+  };
+
+  const loadProduct = async () => {
+    try {
+      setLoading(true);
+      const res = await getSellerProductDetails(productId);
+      const p = res?.data || res?.product || res;
+      populateForm(p);
     } catch (err) {
-      return false;
-    }
-  };
-
-  const pickImage = () => {
-    Alert.alert(
-      "Product Image",
-      "Choose an option to add/update product image",
-      [
-        {
-          text: "Take Photo",
-          onPress: async () => {
-            const hasPerm = await requestCameraPermission();
-            if (!hasPerm) {
-              Alert.alert("Permission Required", "Camera permission is needed to take product photos.");
-              return;
-            }
-            launchCamera(
-              { mediaType: 'photo', quality: 0.8, saveToPhotos: false },
-              response => {
-                if (!response.didCancel && response.assets) {
-                  setImages(prev => [...prev, ...response.assets]);
-                }
-              }
-            );
-          }
-        },
-        {
-          text: "Choose from Gallery",
-          onPress: () => {
-            launchImageLibrary(
-              { mediaType: 'photo', selectionLimit: 0, quality: 0.8 },
-              response => {
-                if (!response.didCancel && response.assets) {
-                  setImages(prev => [...prev, ...response.assets]);
-                }
-              }
-            );
-          }
-        },
-        { text: "Cancel", style: "cancel" }
-      ]
-    );
-  };
-
-  const removeImage = (indexToRemove) => {
-    setImages((prev) => prev.filter((_, index) => index !== indexToRemove));
-  };
-
-  const pickDetailImage = () => {
-    Alert.alert(
-      "Product Details Image",
-      "Choose an option to add/update product details image",
-      [
-        {
-          text: "Take Photo",
-          onPress: async () => {
-            const hasPerm = await requestCameraPermission();
-            if (!hasPerm) {
-              Alert.alert("Permission Required", "Camera permission is needed to take product photos.");
-              return;
-            }
-            launchCamera(
-              { mediaType: 'photo', quality: 0.8, saveToPhotos: false },
-              response => {
-                if (!response.didCancel && response.assets) {
-                  setDetailImages(prev => [...prev, ...response.assets]);
-                }
-              }
-            );
-          }
-        },
-        {
-          text: "Choose from Gallery",
-          onPress: () => {
-            launchImageLibrary(
-              { mediaType: 'photo', selectionLimit: 0, quality: 0.8 },
-              response => {
-                if (!response.didCancel && response.assets) {
-                  setDetailImages(prev => [...prev, ...response.assets]);
-                }
-              }
-            );
-          }
-        },
-        { text: "Cancel", style: "cancel" }
-      ]
-    );
-  };
-
-  const removeDetailImage = (indexToRemove) => {
-    setDetailImages((prev) => prev.filter((_, index) => index !== indexToRemove));
-  };
-
-  const addVariant = () => {
-    if (!newVariant.trim()) return;
-    const clean = newVariant.trim().replace(/^#/, "");
-    if (variants.includes(clean)) {
-      Alert.alert('Duplicate', 'This variant already exists.');
-      return;
-    }
-    setVariants((prev) => [...prev, clean]);
-    setNewVariant('');
-    setShowVariantModal(false);
-  };
-
-  const removeVariant = (variant) => {
-    setVariants((prev) => prev.filter((v) => v !== variant));
-  };
-
-  const handleUpdate = async () => {
-    const safeName = productName ? String(productName).trim() : '';
-    const safePrice = price ? String(price).trim() : '';
-
-    if (!safeName || !safePrice) {
-      Alert.alert("Missing Details", "Product name and sale price are required.");
-      return;
-    }
-
-    setIsUpdating(true);
-    try {
-      const formData = new FormData();
-      formData.append("name", safeName);
-      formData.append("sale_price", safePrice);
-      formData.append("price", mrp ? String(mrp).trim() : safePrice);
-      formData.append("stock_quantity", stock || "0");
-      formData.append("description", description);
-      formData.append("short_description", description);
-      const activeData = fullProductData || productData;
-
-      formData.append("weight", activeData?.weight !== undefined && activeData?.weight !== null ? String(activeData.weight) : "");
-      formData.append("min_stock_alert", activeData?.min_stock_alert !== undefined && activeData?.min_stock_alert !== null ? String(activeData.min_stock_alert) : "");
-
-      if (activeData?.category?.id) {
-        formData.append("category_id", String(activeData.category.id));
-      } else if (activeData?.category_id) {
-        formData.append("category_id", String(activeData.category_id));
-      } else {
-        formData.append("category_id", "1");
-      }
-
-      if (variants && variants.length > 0) {
-        variants.forEach(tag => {
-          formData.append("tags[]", tag);
-        });
-      }
-
-      const formatFileForUpload = (imgObj, defaultName = "product.jpg") => {
-        if (!imgObj) return null;
-
-        let uri = "";
-        let name = "";
-        let type = "";
-
-        if (typeof imgObj === "string") {
-          uri = imgObj;
-        } else if (typeof imgObj === "object") {
-          uri = imgObj.uri || imgObj.image_url || imgObj.image || imgObj.url || "";
-          name = imgObj.fileName || imgObj.name || "";
-          type = imgObj.type || "";
-        }
-
-        if (!uri || typeof uri !== "string") return null;
-
-        const cleanUri = uri.split("?")[0];
-        const extractedName = cleanUri.split("/").pop() || defaultName;
-        const finalName = name || extractedName;
-
-        const ext = finalName.split(".").pop()?.toLowerCase();
-        let mimeType = type;
-        if (!mimeType) {
-          if (ext === "png") mimeType = "image/png";
-          else if (ext === "webp") mimeType = "image/webp";
-          else if (ext === "gif") mimeType = "image/gif";
-          else mimeType = "image/jpeg";
-        }
-
-        return {
-          uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
-          type: mimeType,
-          name: finalName,
-        };
-      };
-
-      // 1. Main image: if user picked a new file, append it
-      const newImages = images.filter(img => typeof img !== 'string');
-      if (newImages.length > 0) {
-        const mainFile = formatFileForUpload(newImages[newImages.length - 1], `product_image.jpg`);
-        if (mainFile) {
-          formData.append("image", mainFile);
-        }
-      }
-
-      // 2. Detail images (gallery): Both old data + new data are added
-      if (detailImages && detailImages.length > 0) {
-        detailImages.forEach((img, index) => {
-          const galleryFile = formatFileForUpload(img, `gallery_image_${index}.jpg`);
-          if (galleryFile) {
-            formData.append("gallery[]", galleryFile);
-          }
-        });
-      }
-
-      const productId = productData?.product_id;
-      console.log(formData, "/././form")
-
-      const res = await updateSellerProduct(productId, formData);
-
-      Alert.alert(
-        "Success",
-        res?.message || "Product updated successfully!",
-        [{ text: "OK", onPress: () => navigation.goBack() }]
-      );
-    } catch (error) {
-      console.error("Update product error:", error);
-      Alert.alert("Update Failed", error?.message || "Could not update the product.");
+      Alert.alert("Error", err.message || "Failed to load product");
+      navigation.goBack();
     } finally {
-      setIsUpdating(false);
+      setLoading(false);
     }
   };
 
-  const handleDelete = () => {
-    const productId = productData?.product_id || productData?.id;
-    if (!productId) return;
+  const populateForm = (p) => {
+    setName(p.name || "");
+    setCategoryId(p.category_id || p.category?.id || null);
+    setCategoryName(p.category?.name || "");
+    setPrice(String(p.price || ""));
+    setSalePrice(String(p.sale_price || ""));
+    setStockQuantity(String(p.stock_quantity ?? p.quantity ?? ""));
+    setMinStockAlert(String(p.min_stock_alert || "5"));
+    setSku(p.sku || "");
+    setWeight(String(p.weight || ""));
+    setShortDescription(p.short_description || "");
+    setDescription(p.description || "");
+    const rawTags = p.tags || [];
+    setTags(rawTags.map((t) => (typeof t === "string" ? t : t?.name || "")));
+    setExistingImageUri(p.image || null);
+  };
 
-    Alert.alert(
-      "Confirm Delete",
-      `Are you sure you want to delete "${productName || 'this product'}"? This action cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const res = await deleteSellerProduct(productId);
-              Alert.alert("Deleted", res?.message || "Product deleted successfully.", [
-                { text: "OK", onPress: () => navigation.goBack() },
-              ]);
-            } catch (err) {
-              Alert.alert("Error", err?.message || "Failed to delete product");
-            }
-          },
-        },
-      ]
+  const handlePickImage = async () => {
+    const result = await launchImageLibrary({ mediaType: "photo", quality: 0.8 });
+    if (!result.didCancel && result.assets?.length > 0) {
+      setMainImage(result.assets[0]);
+    }
+  };
+
+  const handleAddTag = () => {
+    const t = currentTag.trim();
+    if (t && !tags.includes(t)) {
+      setTags((prev) => [...prev, t]);
+      setCurrentTag("");
+    }
+  };
+
+  const handleRemoveTag = (index) => {
+    setTags((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSubmit = async () => {
+    if (!name.trim()) return Alert.alert("Validation", "Product name is required.");
+    if (!price.trim()) return Alert.alert("Validation", "Price is required.");
+    if (!stockQuantity.trim()) return Alert.alert("Validation", "Stock quantity is required.");
+
+    try {
+      setIsSubmitting(true);
+
+      const formData = new FormData();
+      formData.append("_method", "PUT");
+      formData.append("name", name.trim());
+      formData.append("price", price);
+      if (salePrice) formData.append("sale_price", salePrice);
+      formData.append("stock_quantity", stockQuantity);
+      formData.append("min_stock_alert", minStockAlert);
+      if (categoryId) formData.append("category_id", categoryId);
+      if (sku) formData.append("sku", sku);
+      if (weight) formData.append("weight", weight);
+      if (shortDescription) formData.append("short_description", shortDescription);
+      if (description) formData.append("description", description);
+      tags.forEach((tag) => formData.append("tags[]", tag));
+
+      if (mainImage) {
+        formData.append("image", {
+          uri: mainImage.uri,
+          type: mainImage.type || "image/jpeg",
+          name: mainImage.fileName || "product.jpg",
+        });
+      }
+
+      await updateSellerProduct(productId, formData);
+      Alert.alert("Success", "Product updated successfully!", [
+        { text: "OK", onPress: () => navigation.goBack() },
+      ]);
+    } catch (err) {
+      Alert.alert("Error", err.message || "Failed to update product.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
     );
-  };
+  }
 
-  const handleSelectCategory = () => {
-    Alert.alert("Select Category", "Choose a category", [
-      { text: "Electronics", onPress: () => setCategory("Electronics") },
-      { text: "Clothing", onPress: () => setCategory("Clothing") },
-      { text: "Home & Kitchen", onPress: () => setCategory("Home & Kitchen") },
-      { text: "Sports & Outdoors", onPress: () => setCategory("Sports & Outdoors") },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
-
-  const handleSelectBrand = () => {
-    Alert.alert("Select Brand", "Choose a brand", [
-      { text: "Apple", onPress: () => setBrand("Apple") },
-      { text: "Samsung", onPress: () => setBrand("Samsung") },
-      { text: "Nike", onPress: () => setBrand("Nike") },
-      { text: "Generic", onPress: () => setBrand("Generic") },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
-
-  // Preview image helper
-  const latestMainImg = images.length > 0 ? images[images.length - 1] : null;
-  const previewImgUri =
-    typeof latestMainImg === 'string'
-      ? latestMainImg
-      : latestMainImg?.uri || latestMainImg?.image_url || latestMainImg?.image || null;
+  const displayImageUri = mainImage?.uri || existingImageUri;
 
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: colors.backgroundAlt }]}
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.scrollContent}
-    >
+    <View style={[styles.root, { backgroundColor: colors.background }]}>
+      <StatusBar
+        barStyle={colors.background === "#090D16" ? "light-content" : "dark-content"}
+        backgroundColor={colors.cardBg}
+        translucent
+      />
+
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.cardBg }]}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons
-            name="arrow-back"
-            size={22}
-            color={colors.textGrayDark}
-          />
-        </TouchableOpacity>
-
-        <Text style={[styles.headerTitle, { color: colors.textGrayDark }]}>
-          Edit Product
-        </Text>
-
-        <View style={{ width: 42, alignItems: 'flex-end' }}>
-          {loading ? (
-            <ActivityIndicator size="small" color={COLORS.primary} />
-          ) : (
-            <TouchableOpacity>
-              <Ionicons
-                name="create-outline"
-                size={24}
-                color={COLORS.primary}
-              />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* Product Images */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Product Images
-        </Text>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ marginBottom: 15 }}
-        >
-          {images.map((item, index) => {
-            const imgUri = typeof item === 'string' ? item : (item?.uri || item?.image_url || item?.image || item?.url);
-            return (
-              <View key={index} style={styles.imageBox}>
-                <Image
-                  source={{ uri: imgUri }}
-                  style={styles.image}
-                />
-                <TouchableOpacity
-                  style={styles.editImageBtn}
-                  onPress={() => removeImage(index)}
-                >
-                  <Ionicons
-                    name="close"
-                    size={18}
-                    color={COLORS.textContrast}
-                  />
-                </TouchableOpacity>
-              </View>
-            );
-          })}
-        </ScrollView>
-
-        <TouchableOpacity style={styles.updateImageBtnBelow} onPress={pickImage}>
-          <Ionicons name="camera-outline" size={24} color={COLORS.primary} />
-          <Text style={styles.updateImageBtnText}>Update Image</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Product Details Images (Gallery) */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Product Details Images
-        </Text>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ marginBottom: 15 }}
-        >
-          {detailImages.map((item, index) => {
-            const imgUri = typeof item === 'string' ? item : (item?.uri || item?.image_url || item?.image || item?.url);
-            return (
-              <View key={index} style={styles.imageBox}>
-                <Image
-                  source={{ uri: imgUri }}
-                  style={styles.image}
-                />
-                <TouchableOpacity
-                  style={styles.editImageBtn}
-                  onPress={() => removeDetailImage(index)}
-                >
-                  <Ionicons
-                    name="close"
-                    size={18}
-                    color={COLORS.textContrast}
-                  />
-                </TouchableOpacity>
-              </View>
-            );
-          })}
-        </ScrollView>
-
-        <TouchableOpacity style={styles.updateImageBtnBelow} onPress={pickDetailImage}>
-          <Ionicons name="camera-outline" size={24} color={COLORS.primary} />
-          <Text style={styles.updateImageBtnText}>Add Detail Images</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Product Info */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Basic Information
-        </Text>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Product Name</Text>
-          <TextInput
-            value={productName}
-            onChangeText={setProductName}
-            placeholderTextColor={COLORS.textGrayPlaceholder}
-            style={styles.input}
-            placeholder="Enter product name"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Sale Price (₹)</Text>
-          <TextInput
-            value={price}
-            onChangeText={setPrice}
-            keyboardType="numeric"
-            placeholderTextColor={COLORS.textGrayPlaceholder}
-            style={styles.input}
-            placeholder="Enter sale price"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>MRP / Original Price (₹)</Text>
-          <TextInput
-            value={mrp}
-            onChangeText={setMrp}
-            keyboardType="numeric"
-            placeholderTextColor={COLORS.textGrayPlaceholder}
-            style={styles.input}
-            placeholder="Enter original price"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Stock Quantity</Text>
-          <TextInput
-            value={stock}
-            onChangeText={setStock}
-            keyboardType="numeric"
-            placeholderTextColor={COLORS.textGrayPlaceholder}
-            style={styles.input}
-            placeholder="Enter stock quantity"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Description</Text>
-          <TextInput
-            value={description}
-            onChangeText={setDescription}
-            multiline
-            textAlignVertical="top"
-            placeholderTextColor={COLORS.textGrayPlaceholder}
-            style={styles.descriptionInput}
-            placeholder="Enter product description..."
-          />
-        </View>
-      </View>
-
-      {/* Category & Brand */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Category & Brand
-        </Text>
-
-        <TouchableOpacity style={styles.selectBox} onPress={handleSelectCategory}>
-          <View style={styles.selectLeft}>
-            <Ionicons
-              name="grid-outline"
-              size={22}
-              color={COLORS.primary}
-            />
-            <Text style={styles.selectText}>
-              {category || "Select Category"}
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-down"
-            size={22}
-            color={COLORS.textSecondary}
-          />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.selectBox, styles.selectBoxMarginTop15]} onPress={handleSelectBrand}>
-          <View style={styles.selectLeft}>
-            <Ionicons
-              name="pricetag-outline"
-              size={22}
-              color={COLORS.menuContact}
-            />
-            <Text style={styles.selectText}>
-              {brand || "Select Brand"}
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-down"
-            size={22}
-            color={COLORS.textSecondary}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {/* Product Variants */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Product Variants
-        </Text>
-
-        <View style={styles.variantRow}>
-          {variants.map((item, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.variantChip}
-              onPress={() => removeVariant(item)}
-            >
-              <Text style={styles.variantText}>
-                {item}
-              </Text>
-              <Ionicons
-                name="close-circle"
-                size={16}
-                color={COLORS.primary}
-                style={{ marginLeft: 5 }}
-              />
-            </TouchableOpacity>
-          ))}
-
-          <TouchableOpacity
-            style={styles.addVariantBtn}
-            onPress={() => setShowVariantModal(true)}
-          >
-            <Ionicons
-              name="add"
-              size={18}
-              color={COLORS.primary}
-            />
-            <Text style={styles.addVariantText}>
-              Add Variant
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Pricing & Discount */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Pricing & Discount
-        </Text>
-        <TextInput
-          placeholder="Discount %"
-          placeholderTextColor={COLORS.textGrayPlaceholder}
-          keyboardType="numeric"
-          style={styles.input}
-        />
-        <TextInput
-          placeholder="Coupon Code"
-          placeholderTextColor={COLORS.textGrayPlaceholder}
-          style={styles.input}
-        />
-      </View>
-
-      {/* Product Status */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Product Status
-        </Text>
-
-        <TouchableOpacity
-          style={styles.statusRow}
-          onPress={() => setIsFeatured(!isFeatured)}
-        >
-          <View style={styles.statusLeft}>
-            <Ionicons
-              name="star-outline"
-              size={22}
-              color={COLORS.warning}
-            />
-            <Text style={styles.statusText}>
-              Featured Product
-            </Text>
-          </View>
-          <Ionicons
-            name={isFeatured ? "toggle" : "toggle-outline"}
-            size={42}
-            color={isFeatured ? COLORS.success : COLORS.textGrayPlaceholder}
-          />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.statusRow}
-          onPress={() => setIsBestSeller(!isBestSeller)}
-        >
-          <View style={styles.statusLeft}>
-            <Ionicons
-              name="flame-outline"
-              size={22}
-              color={COLORS.error}
-            />
-            <Text style={styles.statusText}>
-              Best Seller
-            </Text>
-          </View>
-          <Ionicons
-            name={isBestSeller ? "toggle" : "toggle-outline"}
-            size={42}
-            color={isBestSeller ? COLORS.success : COLORS.textGrayPlaceholder}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {/* Stock History */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>
-          Stock History
-        </Text>
-
-        <View style={styles.historyRow}>
-          <Ionicons
-            name="time-outline"
-            size={18}
-            color={COLORS.primary}
-          />
-          <Text style={styles.historyText}>
-            Stock Updated • Today 11:45 AM
-          </Text>
-        </View>
-
-        <View style={styles.historyRow}>
-          <Ionicons
-            name="cube-outline"
-            size={18}
-            color={COLORS.success}
-          />
-          <Text style={styles.historyText}>
-            Current Stock : {stock || '0'} Units
-          </Text>
-        </View>
-      </View>
-
-      {/* Product Preview */}
-      <View style={styles.previewCard}>
-        {previewImgUri ? (
-          <Image
-            source={{ uri: previewImgUri }}
-            style={styles.previewImage}
-          />
-        ) : (
-          <View style={[styles.previewImage, { backgroundColor: COLORS.borderLight, justifyContent: 'center', alignItems: 'center' }]}>
-            <Ionicons name="image-outline" size={48} color={COLORS.textGrayPlaceholder} />
-          </View>
-        )}
-        <View style={styles.previewContent}>
-          <Text style={styles.previewName}>
-            {productName || "Product Name"}
-          </Text>
-          <Text style={styles.previewPrice}>
-            ₹{price || "0"}
-          </Text>
-          <View style={styles.liveBadge}>
-            <Ionicons
-              name="checkmark-circle"
-              size={16}
-              color={COLORS.success}
-            />
-            <Text style={styles.liveText}>
-              Live Product
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* AI Studio */}
-      <TouchableOpacity
-        style={styles.aiCard}
-        onPress={() => navigation.navigate("AIProductStudio")}
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: colors.cardBg,
+            borderBottomColor: colors.borderLight,
+            paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 24) + 8 : 52,
+          },
+        ]}
       >
-        <View style={styles.aiLeft}>
-          <Ionicons
-            name="sparkles"
-            size={28}
-            color={COLORS.textContrast}
-          />
-          <View style={styles.aiTextContainer}>
-            <Text style={styles.aiTitle}>
-              AI Product Studio
-            </Text>
-            <Text style={styles.aiSub}>
-              Enhance • Remove BG • HD
-            </Text>
-          </View>
-        </View>
-        <Ionicons
-          name="chevron-forward"
-          size={22}
-          color={COLORS.textContrast}
-        />
-      </TouchableOpacity>
-
-      {/* Buttons */}
-      <View style={styles.buttonRow}>
-        <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
-          <Ionicons
-            name="trash-outline"
-            size={22}
-            color={COLORS.textContrast}
-          />
-          <Text style={styles.btnText}>
-            Delete
-          </Text>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.updateBtn, isUpdating && { opacity: 0.7 }]}
-          onPress={handleUpdate}
-          disabled={isUpdating}
-        >
-          {isUpdating ? (
-            <ActivityIndicator size="small" color={COLORS.textContrast} />
-          ) : (
-            <Ionicons
-              name="checkmark-circle-outline"
-              size={22}
-              color={COLORS.textContrast}
-            />
-          )}
-          <Text style={styles.btnText}>
-            {isUpdating ? "Updating..." : "Update Product"}
-          </Text>
-        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Edit Product</Text>
+        <View style={{ width: 38 }} />
       </View>
 
-      {/* Add Variant Modal */}
-      <Modal
-        visible={showVariantModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowVariantModal(false)}
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.variantModalContent}>
-            <Text style={styles.modalTitle}>Add Product Variant / Tag</Text>
+        {/* Image Picker */}
+        <TouchableOpacity
+          style={[styles.imagePicker, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderMedium }]}
+          onPress={handlePickImage}
+          activeOpacity={0.8}
+        >
+          {displayImageUri ? (
+            <Image source={{ uri: displayImageUri }} style={styles.imagePreview} resizeMode="cover" />
+          ) : (
+            <View style={styles.imagePlaceholder}>
+              <Ionicons name="camera-outline" size={32} color={colors.textMuted} />
+              <Text style={[styles.imagePlaceholderText, { color: colors.textMuted }]}>Tap to change image</Text>
+            </View>
+          )}
+          {displayImageUri && (
+            <View style={[styles.changeImageOverlay, { backgroundColor: "rgba(0,0,0,0.45)" }]}>
+              <Ionicons name="camera-outline" size={22} color="#fff" />
+              <Text style={styles.changeImageText}>Change</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        {/* Basic Info */}
+        <View style={[styles.section, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Basic Information</Text>
+
+          <FormField label="Product Name *" colors={colors}>
             <TextInput
-              value={newVariant}
-              onChangeText={setNewVariant}
-              placeholder="e.g. Red, XL, Cotton"
-              placeholderTextColor={COLORS.textGrayPlaceholder}
-              style={styles.variantInput}
-              autoFocus
+              style={[styles.input, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+              value={name}
+              onChangeText={setName}
+              placeholder="Enter product name"
+              placeholderTextColor={colors.textMuted}
             />
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                style={styles.modalCancelBtn}
-                onPress={() => {
-                  setNewVariant('');
-                  setShowVariantModal(false);
-                }}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalAddBtn} onPress={addVariant}>
-                <Text style={styles.modalAddText}>Add</Text>
-              </TouchableOpacity>
+          </FormField>
+
+          <FormField label="Category" colors={colors}>
+            <TouchableOpacity
+              style={[styles.input, styles.selector, { borderColor: colors.borderMedium }]}
+              onPress={() => setShowCategoryModal(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.selectorText, { color: categoryName ? colors.textPrimary : colors.textMuted }]}>
+                {categoryName || "Select category"}
+              </Text>
+              <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+          </FormField>
+
+          <FormField label="SKU" colors={colors}>
+            <TextInput
+              style={[styles.input, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+              value={sku}
+              onChangeText={setSku}
+              placeholder="e.g. PROD-001"
+              placeholderTextColor={colors.textMuted}
+            />
+          </FormField>
+        </View>
+
+        {/* Pricing */}
+        <View style={[styles.section, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Pricing</Text>
+          <View style={styles.row}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <FormField label="Price (₹) *" colors={colors}>
+                <TextInput
+                  style={[styles.input, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+                  value={price}
+                  onChangeText={setPrice}
+                  placeholder="0.00"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="decimal-pad"
+                />
+              </FormField>
+            </View>
+            <View style={{ flex: 1 }}>
+              <FormField label="Sale Price (₹)" colors={colors}>
+                <TextInput
+                  style={[styles.input, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+                  value={salePrice}
+                  onChangeText={setSalePrice}
+                  placeholder="0.00"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="decimal-pad"
+                />
+              </FormField>
             </View>
           </View>
         </View>
-      </Modal>
-    </ScrollView>
+
+        {/* Inventory */}
+        <View style={[styles.section, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Inventory</Text>
+          <View style={styles.row}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <FormField label="Stock Qty *" colors={colors}>
+                <TextInput
+                  style={[styles.input, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+                  value={stockQuantity}
+                  onChangeText={setStockQuantity}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                />
+              </FormField>
+            </View>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <FormField label="Min Alert" colors={colors}>
+                <TextInput
+                  style={[styles.input, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+                  value={minStockAlert}
+                  onChangeText={setMinStockAlert}
+                  placeholder="5"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                />
+              </FormField>
+            </View>
+            <View style={{ flex: 1 }}>
+              <FormField label="Weight (kg)" colors={colors}>
+                <TextInput
+                  style={[styles.input, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+                  value={weight}
+                  onChangeText={setWeight}
+                  placeholder="0.0"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="decimal-pad"
+                />
+              </FormField>
+            </View>
+          </View>
+        </View>
+
+        {/* Tags */}
+        <View style={[styles.section, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Tags</Text>
+          <View style={styles.tagInputRow}>
+            <TextInput
+              style={[styles.input, { flex: 1, color: colors.textPrimary, borderColor: colors.borderMedium }]}
+              value={currentTag}
+              onChangeText={setCurrentTag}
+              placeholder="Add tag"
+              placeholderTextColor={colors.textMuted}
+              onSubmitEditing={handleAddTag}
+              returnKeyType="done"
+            />
+            <TouchableOpacity
+              style={[styles.addTagBtn, { backgroundColor: colors.primaryBgLight }]}
+              onPress={handleAddTag}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add" size={20} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
+          {tags.length > 0 && (
+            <View style={styles.tagsRow}>
+              {tags.map((tag, i) => (
+                <View key={i} style={[styles.tag, { backgroundColor: colors.primaryBgLight }]}>
+                  <Text style={[styles.tagText, { color: colors.primary }]}>#{tag}</Text>
+                  <TouchableOpacity onPress={() => handleRemoveTag(i)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                    <Ionicons name="close" size={13} color={colors.primary} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* Description */}
+        <View style={[styles.section, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Description</Text>
+          <FormField label="Short Description" colors={colors}>
+            <TextInput
+              style={[styles.input, styles.textArea, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+              value={shortDescription}
+              onChangeText={setShortDescription}
+              placeholder="Brief summary..."
+              placeholderTextColor={colors.textMuted}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+            />
+          </FormField>
+          <FormField label="Full Description" colors={colors}>
+            <TextInput
+              style={[styles.input, styles.textAreaLarge, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Detailed description..."
+              placeholderTextColor={colors.textMuted}
+              multiline
+              numberOfLines={6}
+              textAlignVertical="top"
+            />
+          </FormField>
+        </View>
+
+        {/* Submit Button */}
+        <TouchableOpacity
+          style={[styles.submitBtn, { backgroundColor: isSubmitting ? colors.primaryDark : colors.primary }]}
+          onPress={handleSubmit}
+          activeOpacity={0.85}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="checkmark-circle-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
+              <Text style={styles.submitBtnText}>Save Changes</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+
+      {/* Category Modal */}
+      {showCategoryModal && (
+        <View style={[styles.modalOverlay, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBg }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Select Category</Text>
+              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 360 }}>
+              {categoriesList.map((cat) => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[
+                    styles.categoryRow,
+                    { borderBottomColor: colors.borderLight },
+                    categoryId === cat.id && { backgroundColor: colors.primaryBgLight },
+                  ]}
+                  onPress={() => {
+                    setCategoryId(cat.id);
+                    setCategoryName(cat.name);
+                    setShowCategoryModal(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.categoryRowText, { color: categoryId === cat.id ? colors.primary : colors.textPrimary }]}>
+                    {cat.name}
+                  </Text>
+                  {categoryId === cat.id && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      )}
+    </View>
   );
 };
 
-export default EditProduct;
+const FormField = ({ label, children, colors }) => (
+  <View style={styles.formField}>
+    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{label}</Text>
+    {children}
+  </View>
+);
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.backgroundAlt,
-    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 10,
-  },
-  scrollContent: {
-    paddingBottom: 100,
-  },
+  root: { flex: 1 },
+  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: {
-    height: 70,
-    backgroundColor: COLORS.cardBg,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 18,
-    elevation: 3,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
   },
   backBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: COLORS.borderLight,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
   },
-  headerTitle: {
-    fontSize: 21,
-    fontWeight: "700",
-    color: COLORS.textGrayDark,
-  },
-  card: {
-    marginHorizontal: 16,
-    marginTop: 18,
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 20,
-    padding: 18,
-    elevation: 3,
-    shadowColor: COLORS.textPrimary,
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: COLORS.textGrayDark,
-    marginBottom: 15,
-  },
-  imageBox: {
-    marginRight: 14,
-    position: "relative",
-  },
-  image: {
-    width: 110,
-    height: 110,
-    borderRadius: 18,
-  },
-  editImageBtn: {
-    position: "absolute",
-    right: 8,
-    bottom: 8,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  addImageBox: {
-    width: 110,
-    height: 110,
-    borderRadius: 18,
-    borderWidth: 2,
-    borderStyle: "dashed",
-    borderColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: COLORS.primaryBgLight,
-  },
-  addImageText: {
-    marginTop: 8,
-    color: COLORS.primary,
-    fontWeight: "700",
-  },
-  updateImageBtnBelow: {
-    marginTop: 15,
-    height: 55,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    borderStyle: "dashed",
-    borderRadius: 15,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: COLORS.primaryBgLight,
-  },
-  updateImageBtnText: {
-    color: COLORS.primary,
-    fontSize: 16,
-    fontWeight: "700",
-    marginLeft: 8,
-  },
-  inputGroup: {
-    marginBottom: 14,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.textGrayDark,
-    marginBottom: 6,
-    marginLeft: 4,
-  },
-  input: {
-    height: 55,
-    backgroundColor: COLORS.backgroundAlt,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    fontSize: 15,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: COLORS.borderMedium,
-    color: COLORS.textGrayDark,
-  },
-  descriptionInput: {
-    height: 130,
-    backgroundColor: COLORS.backgroundAlt,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.borderMedium,
-    fontSize: 15,
-    color: COLORS.textGrayDark,
-  },
-  aiCard: {
-    marginHorizontal: 16,
-    marginTop: 18,
-    backgroundColor: COLORS.menuBank,
-    borderRadius: 20,
-    padding: 18,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    elevation: 4,
-  },
-  aiLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  aiTextContainer: {
-    marginLeft: 12,
-  },
-  aiTitle: {
-    fontSize: 18,
-    color: COLORS.textContrast,
-    fontWeight: "700",
-  },
-  aiSub: {
-    marginTop: 4,
-    color: COLORS.primaryLight,
-    fontSize: 13,
-  },
-  buttonRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginHorizontal: 16,
-    marginTop: 25,
-    marginBottom: 40,
-  },
-  deleteBtn: {
-    width: "32%",
-    height: 55,
-    backgroundColor: COLORS.error,
-    borderRadius: 15,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-    elevation: 3,
-  },
-  updateBtn: {
-    width: "64%",
-    height: 55,
-    backgroundColor: COLORS.primary,
-    borderRadius: 15,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "row",
-    elevation: 3,
-  },
-  btnText: {
-    color: COLORS.textContrast,
-    fontSize: 16,
-    fontWeight: "700",
-    marginLeft: 8,
-  },
-  selectBox: {
-    height: 55,
-    backgroundColor: COLORS.backgroundAlt,
-    borderRadius: 14,
-    paddingHorizontal: 15,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  selectBoxMarginTop15: {
-    marginTop: 15,
-  },
-  selectLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  selectText: {
-    marginLeft: 10,
-    fontSize: 15,
-    color: COLORS.textGrayMedium,
-  },
-  variantRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-  },
-  variantChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.primaryBgLight,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    borderRadius: 22,
-    marginRight: 10,
-    marginBottom: 10,
-  },
-  variantText: {
-    color: COLORS.primary,
-    fontWeight: "700",
-  },
-  addVariantBtn: {
-    flexDirection: "row",
-    alignItems: "center",
+  headerTitle: { flex: 1, fontSize: 17, fontWeight: "700", marginHorizontal: 8 },
+  imagePicker: {
+    height: 200,
+    borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: COLORS.primary,
-    borderRadius: 22,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-  },
-  addVariantText: {
-    color: COLORS.primary,
-    fontWeight: "700",
-    marginLeft: 5,
-  },
-  statusRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 18,
-  },
-  statusLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  statusText: {
-    marginLeft: 10,
-    fontSize: 16,
-    fontWeight: "600",
-    color: COLORS.textGrayDark,
-  },
-  historyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  historyText: {
-    marginLeft: 10,
-    color: COLORS.textSecondary,
-  },
-  previewCard: {
-    marginHorizontal: 16,
-    marginTop: 18,
-    marginBottom: 20,
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 20,
+    borderStyle: "dashed",
     overflow: "hidden",
-    elevation: 3,
-    shadowColor: COLORS.textPrimary,
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    marginBottom: 14,
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  previewImage: {
-    width: "100%",
-    height: 220,
-  },
-  previewContent: {
-    padding: 18,
-  },
-  previewName: {
-    fontSize: 19,
-    fontWeight: "700",
-    color: COLORS.textGrayDark,
-  },
-  previewPrice: {
-    marginTop: 8,
-    fontSize: 24,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  liveBadge: {
-    marginTop: 15,
+  imagePreview: { width: "100%", height: "100%" },
+  imagePlaceholder: { alignItems: "center", gap: 8 },
+  imagePlaceholderText: { fontSize: 13 },
+  changeImageOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
     flexDirection: "row",
     alignItems: "center",
-    alignSelf: "flex-start",
-    backgroundColor: COLORS.successBgLight,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
+    justifyContent: "center",
+    paddingVertical: 10,
+    gap: 6,
   },
-  liveText: {
-    color: COLORS.success,
-    fontWeight: "700",
-    marginLeft: 6,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  variantModalContent: {
-    width: '100%',
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 18,
-    padding: 20,
-    elevation: 5,
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: COLORS.textGrayDark,
+  changeImageText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  section: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
     marginBottom: 14,
   },
-  variantInput: {
-    height: 50,
-    backgroundColor: COLORS.backgroundAlt,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    fontSize: 15,
+  sectionTitle: { fontSize: 15, fontWeight: "700", marginBottom: 14 },
+  row: { flexDirection: "row" },
+  formField: { marginBottom: 12 },
+  fieldLabel: { fontSize: 12, fontWeight: "600", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 },
+  input: {
     borderWidth: 1,
-    borderColor: COLORS.borderMedium,
-    color: COLORS.textGrayDark,
-    marginBottom: 18,
-  },
-  modalBtnRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  modalCancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    marginRight: 10,
-  },
-  modalCancelText: {
-    fontSize: 15,
-    color: COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  modalAddBtn: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
     borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
   },
-  modalAddText: {
-    fontSize: 15,
-    color: COLORS.textContrast,
-    fontWeight: '700',
+  selector: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
+  selectorText: { fontSize: 14 },
+  textArea: { height: 80 },
+  textAreaLarge: { height: 130 },
+  tagInputRow: { flexDirection: "row", gap: 8, marginBottom: 10 },
+  addTagBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tagsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  tag: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    gap: 4,
+  },
+  tagText: { fontSize: 12, fontWeight: "600" },
+  submitBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 15,
+    borderRadius: 14,
+    marginTop: 6,
+  },
+  submitBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+  modalOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: "80%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  modalTitle: { fontSize: 17, fontWeight: "700" },
+  categoryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+  },
+  categoryRowText: { fontSize: 15 },
 });
+
+export default EditProduct;

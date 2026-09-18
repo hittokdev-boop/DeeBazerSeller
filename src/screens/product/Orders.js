@@ -31,7 +31,18 @@ const Orders = ({ navigation }) => {
   const fetchOrders = async () => {
     try {
       const response = await getOrders();
-      const ordersList = response?.data?.orders || response?.orders || response?.data || response || [];
+      let ordersList = [];
+      if (Array.isArray(response)) {
+        ordersList = response;
+      } else if (Array.isArray(response?.data?.orders)) {
+        ordersList = response.data.orders;
+      } else if (Array.isArray(response?.data?.data)) {
+        ordersList = response.data.data;
+      } else if (Array.isArray(response?.data)) {
+        ordersList = response.data;
+      } else if (Array.isArray(response?.orders)) {
+        ordersList = response.orders;
+      }
       setOrders(ordersList);
     } catch (error) {
       Alert.alert("Error", error.message || "Failed to load orders");
@@ -97,7 +108,11 @@ const Orders = ({ navigation }) => {
           <Text style={[styles.title, { color: colors.textGrayDark }]}>Orders</Text>
           <Text style={[styles.subTitle, { color: colors.textGrayLight }]}>Manage all customer orders</Text>
         </View>
-        <TouchableOpacity style={[styles.notification, { backgroundColor: colors.cardBg }]}>
+        <TouchableOpacity
+          style={[styles.notification, { backgroundColor: colors.cardBg }]}
+          onPress={() => navigation.navigate("Notifications")}
+          activeOpacity={0.7}
+        >
           <Ionicons name="notifications-outline" size={24} color={colors.textGrayDark} />
         </TouchableOpacity>
       </View>

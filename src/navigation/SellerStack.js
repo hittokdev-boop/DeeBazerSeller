@@ -35,6 +35,7 @@ import EditProfile from "../screens/app/EditProfile";
 import ContactNumber from "../screens/app/ContactNumber";
 import BankDetails from "../screens/wallet/BankDetails";
 import ChangePassword from "../screens/app/ChangePassword";
+import Notifications from "../screens/app/Notifications";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -137,6 +138,7 @@ const AppScreens = () => {
       <Stack.Screen name="ContactNumber" component={ContactNumber} />
       <Stack.Screen name="BankDetails" component={BankDetails} />
       <Stack.Screen name="ChangePassword" component={ChangePassword} />
+      <Stack.Screen name="Notifications" component={Notifications} />
     </Stack.Group>
   );
 };

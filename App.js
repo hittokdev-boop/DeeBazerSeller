@@ -1,6 +1,6 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useCallback } from "react";
 import { StatusBar } from "react-native";
-import { NavigationContainer } from "@react-navigation/native";
+import { NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
 import SellerStack from "./src/navigation/SellerStack";
 import { ThemeProvider } from "./src/context/ThemeContext";
 import { AlertProvider } from "./src/context/AlertContext";
@@ -11,31 +11,49 @@ import {
   setupNotificationListeners,
 } from "./src/services/notificationService";
 
+export const navigationRef = createNavigationContainerRef();
+
 export default function App() {
-  useEffect(() => {
-    async function initNotifications() {
-      const hasPermission = await requestNotificationPermission();
-      if (hasPermission) {
-        await createNotificationChannel();
-        await getFCMToken();
+  const handleNotificationPress = useCallback((notification) => {
+    if (navigationRef.isReady()) {
+      try {
+        navigationRef.navigate("Notifications");
+      } catch (e) {
+        console.warn("[App] Could not navigate to Notifications on click:", e);
       }
+    }
+  }, []);
+
+  useEffect(() => {
+    let unsubscribe = null;
+
+    async function initNotifications() {
+      try {
+        const hasPermission = await requestNotificationPermission();
+        await createNotificationChannel();
+        if (hasPermission) {
+          await getFCMToken();
+        }
+      } catch (err) {
+        console.error("[App] Notification initialization error:", err);
+      }
+
+      unsubscribe = setupNotificationListeners((notification) => {
+        handleNotificationPress(notification);
+      });
     }
 
     initNotifications();
 
-    const unsubscribe = setupNotificationListeners((notification) => {
-      // Notification interaction handled
-    });
-
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (typeof unsubscribe === "function") unsubscribe();
     };
-  }, []);
+  }, [handleNotificationPress]);
 
   return (
     <ThemeProvider>
       <AlertProvider>
-        <NavigationContainer>
+        <NavigationContainer ref={navigationRef}>
           <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
           <SellerStack />
         </NavigationContainer>

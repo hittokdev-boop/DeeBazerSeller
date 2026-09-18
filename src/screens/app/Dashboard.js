@@ -16,9 +16,10 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import COLORS from "../../constants/theme";
 import { getSellerDashboard, getSellerProfile } from "../../api/auth";
+import { getUnreadNotificationCount } from "../../api/notifications";
 
 const formatCurrency = (amount) => {
   if (amount === undefined || amount === null || isNaN(Number(amount))) return "₹0.00";
@@ -93,6 +94,7 @@ const SellerDashboard = ({ navigation }) => {
   });
   const [recentOrders, setRecentOrders] = useState([]);
   const [recentProducts, setRecentProducts] = useState([]);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
 
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -124,7 +126,16 @@ const SellerDashboard = ({ navigation }) => {
         }
       }
 
-      // 2. Refresh seller profile dynamically from API
+      // 2. Fetch unread notification count
+      try {
+        const notifRes = await getUnreadNotificationCount();
+        const unread = notifRes?.unread_count ?? notifRes?.data?.unread_count ?? 0;
+        setUnreadNotifCount(Number(unread) || 0);
+      } catch (nErr) {
+        // Non-blocking notification count fetch
+      }
+
+      // 3. Refresh seller profile dynamically from API
       try {
         const profileRes = await getSellerProfile();
         if (profileRes && profileRes.data) {
@@ -163,11 +174,11 @@ const SellerDashboard = ({ navigation }) => {
     loadDashboardData();
   }, [loadDashboardData]);
 
-  // Dynamic profile refresh on screen focus from API
+  // Dynamic profile & notification refresh on screen focus from API
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
-      const refreshProfileLive = async () => {
+      const refreshLive = async () => {
         try {
           const profileRes = await getSellerProfile();
           if (isMounted && profileRes && profileRes.data) {
@@ -177,10 +188,30 @@ const SellerDashboard = ({ navigation }) => {
         } catch (e) {
           // silent fail
         }
+
+        try {
+          const notifRes = await getUnreadNotificationCount();
+          if (isMounted && notifRes) {
+            const unread = notifRes?.unread_count ?? notifRes?.data?.unread_count ?? 0;
+            setUnreadNotifCount(Number(unread) || 0);
+          }
+        } catch (e) {
+          // silent fail
+        }
       };
-      refreshProfileLive();
+      refreshLive();
+
+      const notifSub = DeviceEventEmitter.addListener("notificationsRead", () => {
+        if (isMounted) setUnreadNotifCount(0);
+      });
+      const countSub = DeviceEventEmitter.addListener("unreadCountChanged", (count) => {
+        if (isMounted) setUnreadNotifCount(Number(count) || 0);
+      });
+
       return () => {
         isMounted = false;
+        notifSub.remove();
+        countSub.remove();
       };
     }, [])
   );
@@ -243,17 +274,18 @@ const SellerDashboard = ({ navigation }) => {
           <View style={styles.rightSection}>
             <TouchableOpacity
               style={[styles.iconBtn, { backgroundColor: colors.backgroundAlt }]}
-              onPress={() => navigation.navigate("Orders")}
+              onPress={() => navigation.navigate("Notifications")}
+              activeOpacity={0.7}
             >
               <Ionicons
                 name="notifications-outline"
                 size={22}
                 color={colors.textPrimary}
               />
-              {stats.pending_orders > 0 && (
+              {unreadNotifCount > 0 && (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>
-                    {stats.pending_orders > 9 ? "9+" : stats.pending_orders}
+                    {unreadNotifCount > 9 ? "9+" : unreadNotifCount}
                   </Text>
                 </View>
               )}
