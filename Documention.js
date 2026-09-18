@@ -593,58 +593,45 @@
 
 // ---
 
-// // 15.Seller Product Update:
-// POST : {{base_url}}api/seller/products/107
+// User Profile Update :
+//15 POST : {{base_url}}api/user/profile
 // authorization : bearer_token {seller_token}
 
 // body :
-// name:Updated Product Name
-// short_description:Updated short description text
-// description:Updated full description goes here
-// price:599
-// sale_price:499
-// stock_quantity:20
-// min_stock_alert:8
-// category_id:1
-// weight:0.6
-// tags[]:cotton
-// tags[]:mens
-// image: file
-// gallery[] : files
+// name: User_A59bgo
+// //email: rajesh.kumar@example.com
+// mobile: 8240804149
+// //state: Odisha
+// //city: Cuttack
+// //zipCode: 753001
+// //address: 123 Main Road, Buxi Bazar
+// //landmark: Near City Hospital
+// //alternativePhone: 9861234567ma
+// logo : file
 
 // response:
 // {
 //     "status": 200,
-//     "message": "Product updated and sent for re-review.",
-//     "data": {
-//         "id": 16,
-//         "product_id": 107,
-//         "name": "Updated Product Name",
-//         "slug": "updated-product-name",
-//         "sku": "SKU-B9OKNSHS",
-//         "image_url": "https://deebazar.com/admin/admin/storage/products/zJzKz1JRikZowcuIjRrtFm64npLVqzzcfn76Qrxf.png",
-//         "category": {
-//             "id": 1,
-//             "name": "Electronics"
-//         },
-//         "price": 599,
-//         "sale_price": 499,
-//         "effective_price": 499,
-//         "is_on_sale": true,
-//         "discount_pct": 16.69,
-//         "stock_quantity": 20,
-//         "min_stock_alert": 8,
-//         "is_low_stock": false,
-//         "status": "pending",
-//         "approval_status": "pending",
-//         "rejection_reason": null,
-//         "is_featured": false,
-//         "is_trending": false,
-//         "views_count": 0,
-//         "sales_count": 0,
-//         "rating_average": 0,
-//         "rating_count": 0,
-//         "created_at": "2026-09-15T09:34:46.000000Z"
+//     "message": "Profile updated successfully",
+//     "user": {
+//         "id": "82",
+//         "name": "User_A59bgo",
+//         "email": null,
+//         "mobile": "8240804149",
+//         "role": "user",
+//         "status": "active",
+//         "approval_status": "approved",
+//         "avatar": "https://deebazar.com/admin/images/uploads/logo/1789544914_6aaa49d299eb4.png",
+//         "store_name": null,
+//         "store_description": null,
+//         "state": null,
+//         "city": null,
+//         "zipCode": null,
+//         "address": null,
+//         "landmark": null,
+//         "alternativePhone": null,
+//         "joinedDate": "2026-08-21T13:23:00+05:30",
+//         "lastLoginAt": "2026-09-14T21:15:15+05:30"
 //     }
 // }
 

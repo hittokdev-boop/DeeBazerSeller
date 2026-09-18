@@ -73,9 +73,7 @@ const ProductDetails = () => {
 
   const initialProduct = route.params?.product || null;
   const productId =
-    route.params?.productId ||
-    route.params?.id ||
-    initialProduct?.id ||
+
     initialProduct?.product_id;
 
   const [product, setProduct] = useState(initialProduct);
@@ -139,11 +137,14 @@ const ProductDetails = () => {
   }, [product]);
 
   const gotoProductEdit = () => {
-    navigation.navigate("EditProduct", { product });
+    navigation.navigate("EditProduct", {
+      product,
+      productId: product?.product_id || product?.id,
+    });
   };
 
   const handleDeleteProduct = () => {
-    const id = product?.id || product?.product_id || productId;
+    const id = product?.product_id
     const prodName = product?.name || "this product";
 
     CustomAlert.showConfirm(
@@ -174,7 +175,7 @@ const ProductDetails = () => {
   };
 
   const handleStockUpdate = async () => {
-    const pId = product?.id || product?.product_id || productId;
+    const pId = product?.product_id
     const newQty = parseInt(stockInputValue, 10);
     if (isNaN(newQty) || newQty < 0) {
       CustomAlert.showWarning("Invalid Quantity", "Please enter a valid stock number (0 or more).");
@@ -470,7 +471,7 @@ const ProductDetails = () => {
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Product Details</Text>
 
             {[
-              { title: "Product ID", value: `#${product?.id || product?.product_id || "-"}` },
+              { title: "Product ID", value: `#${product?.product_id || "-"}` },
               { title: "Category", value: categoryName },
               { title: "SKU", value: product?.sku || "N/A" },
               { title: "Slug", value: product?.slug || "N/A" },

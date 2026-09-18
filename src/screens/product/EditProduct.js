@@ -7,15 +7,16 @@ import {
   TouchableOpacity,
   Image,
   StyleSheet,
-  Alert,
   Platform,
   StatusBar,
   ActivityIndicator,
+  PermissionsAndroid,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import { launchImageLibrary } from "react-native-image-picker";
+import { launchImageLibrary, launchCamera } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
+import { CustomAlert } from "../../context/AlertContext";
 import { updateSellerProduct, getSellerProductDetails, getSellerCategories } from "../../api/auth";
 
 const PRESET_CATEGORIES = [
@@ -32,10 +33,16 @@ const PRESET_CATEGORIES = [
 ];
 
 const EditProduct = ({ route, navigation }) => {
-  const { productId, product: routeProduct } = route.params || {};
+  const routeProduct = route.params?.product || null;
+  // Note: API returns product_id rather than id
+  const productId =
+    routeProduct?.product_id ||
+    route.params?.productId ||
+    routeProduct?.id;
+
   const { colors } = useTheme();
 
-  const [loading, setLoading] = useState(!routeProduct);
+  const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [categoriesList, setCategoriesList] = useState(PRESET_CATEGORIES);
 
@@ -53,18 +60,29 @@ const EditProduct = ({ route, navigation }) => {
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState([]);
   const [currentTag, setCurrentTag] = useState("");
-  const [mainImage, setMainImage] = useState(null);
-  const [existingImageUri, setExistingImageUri] = useState(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+
+  // Image Field 1: Primary Main Image
+  const [existingMainImageUri, setExistingMainImageUri] = useState(null);
+  const [newMainImage, setNewMainImage] = useState(null);
+
+  // Image Field 2: Product Image Details (Gallery Photos from API & New)
+  const [existingGalleryImages, setExistingGalleryImages] = useState([]);
+  const [newGalleryImages, setNewGalleryImages] = useState([]);
 
   useEffect(() => {
     fetchCategories();
+    // 1. If product data is passed in route params, pre-fill immediately
     if (routeProduct) {
       populateForm(routeProduct);
-    } else if (productId) {
-      loadProduct();
     }
-  }, []);
+    // 2. Fetch full fresh product details from API to get all gallery images and latest fields
+    if (productId) {
+      loadProduct(productId);
+    } else {
+      setLoading(false);
+    }
+  }, [productId]);
 
   const fetchCategories = async () => {
     try {
@@ -74,42 +92,166 @@ const EditProduct = ({ route, navigation }) => {
     } catch {}
   };
 
-  const loadProduct = async () => {
+  const populateForm = (p) => {
+    if (!p) return;
+    setName(p.name || "");
+    setCategoryId(p.category_id || p.category?.id || null);
+    setCategoryName(p.category?.name || (typeof p.category === "string" ? p.category : ""));
+    setPrice(String(p.price !== undefined && p.price !== null ? p.price : ""));
+    setSalePrice(String(p.sale_price !== undefined && p.sale_price !== null ? p.sale_price : ""));
+    setStockQuantity(String(p.stock_quantity ?? p.quantity ?? p.stock ?? ""));
+    setMinStockAlert(String(p.min_stock_alert ?? "5"));
+    setSku(p.sku || "");
+    setWeight(String(p.weight !== undefined && p.weight !== null ? p.weight : ""));
+    setShortDescription(p.short_description || "");
+    setDescription(p.description || "");
+
+    const rawTags = p.tags || [];
+    setTags(rawTags.map((t) => (typeof t === "string" ? t : t?.name || "")).filter(Boolean));
+
+    // 1. Primary image from API
+    const primary = p.image_url || p.image || null;
+    if (primary) {
+      setExistingMainImageUri(primary);
+    }
+
+    // 2. Product Image Details (Gallery photos) from API
+    const rawGallery = p.gallery || p.images || p.product_images || p.gallery_images || [];
+    if (Array.isArray(rawGallery) && rawGallery.length > 0) {
+      const urls = rawGallery
+        .map((img) => (typeof img === "string" ? img : img?.url || img?.image_url || img?.image))
+        .filter(Boolean);
+      setExistingGalleryImages(urls);
+    }
+  };
+
+  const loadProduct = async (idToFetch) => {
     try {
-      setLoading(true);
-      const res = await getSellerProductDetails(productId);
+      if (!routeProduct) setLoading(true);
+      const res = await getSellerProductDetails(idToFetch);
       const p = res?.data || res?.product || res;
-      populateForm(p);
+      if (p) {
+        populateForm(p);
+      }
     } catch (err) {
-      Alert.alert("Error", err.message || "Failed to load product");
-      navigation.goBack();
+      console.warn("Failed to load full product details from API:", err);
+      if (!routeProduct) {
+        CustomAlert.showError("Error", err.message || "Failed to load product");
+        navigation.goBack();
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const populateForm = (p) => {
-    setName(p.name || "");
-    setCategoryId(p.category_id || p.category?.id || null);
-    setCategoryName(p.category?.name || "");
-    setPrice(String(p.price || ""));
-    setSalePrice(String(p.sale_price || ""));
-    setStockQuantity(String(p.stock_quantity ?? p.quantity ?? ""));
-    setMinStockAlert(String(p.min_stock_alert || "5"));
-    setSku(p.sku || "");
-    setWeight(String(p.weight || ""));
-    setShortDescription(p.short_description || "");
-    setDescription(p.description || "");
-    const rawTags = p.tags || [];
-    setTags(rawTags.map((t) => (typeof t === "string" ? t : t?.name || "")));
-    setExistingImageUri(p.image || null);
+  const requestCameraPermission = async () => {
+    if (Platform.OS !== "android") return true;
+    try {
+      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA, {
+        title: "Camera Permission",
+        message: "This app needs access to your camera to take product photos.",
+        buttonNegative: "Cancel",
+        buttonPositive: "OK",
+      });
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    } catch (err) {
+      return false;
+    }
   };
 
-  const handlePickImage = async () => {
-    const result = await launchImageLibrary({ mediaType: "photo", quality: 0.8 });
-    if (!result.didCancel && result.assets?.length > 0) {
-      setMainImage(result.assets[0]);
-    }
+  // --- Primary Image Handlers ---
+  const handlePickPrimaryImage = () => {
+    CustomAlert.alert("Primary Product Image", "Choose source for the main product photo (max 4MB)", [
+      {
+        text: "Camera",
+        onPress: async () => {
+          const hasPerm = await requestCameraPermission();
+          if (!hasPerm) {
+            CustomAlert.showWarning("Permission Required", "Camera permission is needed to take product photos.");
+            return;
+          }
+          launchCamera({ mediaType: "photo", quality: 0.8 }, (response) => {
+            if (!response.didCancel && response.assets && response.assets.length > 0) {
+              const asset = response.assets[0];
+              setNewMainImage({
+                uri: asset.uri,
+                type: asset.type || "image/jpeg",
+                fileName: asset.fileName || `product_main_${Date.now()}.jpg`,
+              });
+            }
+          });
+        },
+      },
+      {
+        text: "Gallery",
+        onPress: () => {
+          launchImageLibrary({ mediaType: "photo", quality: 0.8 }, (response) => {
+            if (!response.didCancel && response.assets && response.assets.length > 0) {
+              const asset = response.assets[0];
+              setNewMainImage({
+                uri: asset.uri,
+                type: asset.type || "image/jpeg",
+                fileName: asset.fileName || `product_main_${Date.now()}.jpg`,
+              });
+            }
+          });
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  // --- Product Image Details (Gallery Photos) Handlers ---
+  const handlePickGalleryImages = () => {
+    CustomAlert.alert("Product Image Details", "Choose source for additional product detail photos", [
+      {
+        text: "Camera",
+        onPress: async () => {
+          const hasPerm = await requestCameraPermission();
+          if (!hasPerm) {
+            CustomAlert.showWarning("Permission Required", "Camera permission is needed to take product photos.");
+            return;
+          }
+          launchCamera({ mediaType: "photo", quality: 0.8 }, (response) => {
+            if (!response.didCancel && response.assets && response.assets.length > 0) {
+              const asset = response.assets[0];
+              setNewGalleryImages((prev) => [
+                ...prev,
+                {
+                  uri: asset.uri,
+                  type: asset.type || "image/jpeg",
+                  fileName: asset.fileName || `detail_${Date.now()}.jpg`,
+                },
+              ]);
+            }
+          });
+        },
+      },
+      {
+        text: "Gallery",
+        onPress: () => {
+          launchImageLibrary({ mediaType: "photo", quality: 0.8, selectionLimit: 5 }, (response) => {
+            if (!response.didCancel && response.assets && response.assets.length > 0) {
+              const newAssets = response.assets.map((asset, index) => ({
+                uri: asset.uri,
+                type: asset.type || "image/jpeg",
+                fileName: asset.fileName || `detail_${Date.now()}_${index}.jpg`,
+              }));
+              setNewGalleryImages((prev) => [...prev, ...newAssets]);
+            }
+          });
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const handleRemoveExistingGalleryImage = (index) => {
+    setExistingGalleryImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleRemoveNewGalleryImage = (index) => {
+    setNewGalleryImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleAddTag = () => {
@@ -125,41 +267,77 @@ const EditProduct = ({ route, navigation }) => {
   };
 
   const handleSubmit = async () => {
-    if (!name.trim()) return Alert.alert("Validation", "Product name is required.");
-    if (!price.trim()) return Alert.alert("Validation", "Price is required.");
-    if (!stockQuantity.trim()) return Alert.alert("Validation", "Stock quantity is required.");
+    // Note: Use product_id for updating
+    const targetProductId =
+      routeProduct?.product_id ||
+      productId ||
+      routeProduct?.id;
+
+    if (!targetProductId) {
+      CustomAlert.showError("Error", "Product ID (product_id) not found.");
+      return;
+    }
+
+    if (!name.trim()) {
+      CustomAlert.showWarning("Validation", "Product name is required.");
+      return;
+    }
+    if (!price.trim() || isNaN(Number(price))) {
+      CustomAlert.showWarning("Validation", "Valid base price is required.");
+      return;
+    }
+    if (!stockQuantity.trim() || isNaN(Number(stockQuantity))) {
+      CustomAlert.showWarning("Validation", "Valid stock quantity is required.");
+      return;
+    }
 
     try {
       setIsSubmitting(true);
 
       const formData = new FormData();
-      formData.append("_method", "PUT");
       formData.append("name", name.trim());
-      formData.append("price", price);
-      if (salePrice) formData.append("sale_price", salePrice);
-      formData.append("stock_quantity", stockQuantity);
-      formData.append("min_stock_alert", minStockAlert);
-      if (categoryId) formData.append("category_id", categoryId);
-      if (sku) formData.append("sku", sku);
-      if (weight) formData.append("weight", weight);
-      if (shortDescription) formData.append("short_description", shortDescription);
-      if (description) formData.append("description", description);
+      formData.append("price", String(Number(price)));
+      if (salePrice && !isNaN(Number(salePrice))) {
+        formData.append("sale_price", String(Number(salePrice)));
+      }
+      formData.append("stock_quantity", String(parseInt(stockQuantity, 10)));
+      formData.append("min_stock_alert", String(parseInt(minStockAlert, 10) || 5));
+      if (categoryId) formData.append("category_id", String(categoryId));
+      if (sku) formData.append("sku", sku.trim());
+      if (weight) formData.append("weight", String(weight));
+      if (shortDescription) formData.append("short_description", shortDescription.trim());
+      if (description) formData.append("description", description.trim());
+
       tags.forEach((tag) => formData.append("tags[]", tag));
 
-      if (mainImage) {
-        formData.append("image", {
-          uri: mainImage.uri,
-          type: mainImage.type || "image/jpeg",
-          name: mainImage.fileName || "product.jpg",
+      // 1. Primary Image File
+      if (newMainImage && newMainImage.uri) {
+        const file = {
+          uri: Platform.OS === "android" ? newMainImage.uri : newMainImage.uri.replace("file://", ""),
+          type: newMainImage.type || "image/jpeg",
+          name: newMainImage.fileName || `product_main_${Date.now()}.jpg`,
+        };
+        formData.append("image", file);
+      }
+
+      // 2. Product Image Details (Gallery Files)
+      if (newGalleryImages && newGalleryImages.length > 0) {
+        newGalleryImages.forEach((img, idx) => {
+          const file = {
+            uri: Platform.OS === "android" ? img.uri : img.uri.replace("file://", ""),
+            type: img.type || "image/jpeg",
+            name: img.fileName || `gallery_${Date.now()}_${idx}.jpg`,
+          };
+          formData.append("gallery[]", file);
         });
       }
 
-      await updateSellerProduct(productId, formData);
-      Alert.alert("Success", "Product updated successfully!", [
-        { text: "OK", onPress: () => navigation.goBack() },
-      ]);
+      const res = await updateSellerProduct(targetProductId, formData);
+      CustomAlert.showSuccess("Success", res?.message || "Product updated successfully!", () => {
+        navigation.goBack();
+      });
     } catch (err) {
-      Alert.alert("Error", err.message || "Failed to update product.");
+      CustomAlert.showError("Error", err.message || "Failed to update product.");
     } finally {
       setIsSubmitting(false);
     }
@@ -169,11 +347,13 @@ const EditProduct = ({ route, navigation }) => {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading product details...</Text>
       </View>
     );
   }
 
-  const displayImageUri = mainImage?.uri || existingImageUri;
+  const displayPrimaryUri = newMainImage?.uri || existingMainImageUri;
+  const totalGalleryCount = existingGalleryImages.length + newGalleryImages.length;
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
@@ -197,36 +377,154 @@ const EditProduct = ({ route, navigation }) => {
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
           <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Edit Product</Text>
+        <View style={{ flex: 1, marginHorizontal: 8 }}>
+          <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Edit Product</Text>
+          {productId ? (
+            <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
+              Product ID: #{productId}
+            </Text>
+          ) : null}
+        </View>
         <View style={{ width: 38 }} />
       </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 50 }}
       >
-        {/* Image Picker */}
-        <TouchableOpacity
-          style={[styles.imagePicker, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderMedium }]}
-          onPress={handlePickImage}
-          activeOpacity={0.8}
-        >
-          {displayImageUri ? (
-            <Image source={{ uri: displayImageUri }} style={styles.imagePreview} resizeMode="cover" />
-          ) : (
-            <View style={styles.imagePlaceholder}>
-              <Ionicons name="camera-outline" size={32} color={colors.textMuted} />
-              <Text style={[styles.imagePlaceholderText, { color: colors.textMuted }]}>Tap to change image</Text>
+        {/* ========================================================================= */}
+        {/* 1. PRIMARY IMAGE FIELD */}
+        {/* ========================================================================= */}
+        <View style={[styles.section, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+          <View style={styles.sectionHeaderRow}>
+            <View>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Primary Image</Text>
+              <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+                Main product cover photo displayed in lists and cards
+              </Text>
             </View>
-          )}
-          {displayImageUri && (
-            <View style={[styles.changeImageOverlay, { backgroundColor: "rgba(0,0,0,0.45)" }]}>
-              <Ionicons name="camera-outline" size={22} color="#fff" />
-              <Text style={styles.changeImageText}>Change</Text>
+            {newMainImage && (
+              <TouchableOpacity
+                onPress={() => setNewMainImage(null)}
+                style={[styles.revertBtn, { backgroundColor: colors.backgroundAlt }]}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="arrow-undo-outline" size={13} color={colors.textSecondary} />
+                <Text style={[styles.revertBtnText, { color: colors.textSecondary }]}>Revert</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.primaryImagePicker,
+              { backgroundColor: colors.backgroundAlt, borderColor: colors.borderMedium },
+            ]}
+            onPress={handlePickPrimaryImage}
+            activeOpacity={0.85}
+          >
+            {displayPrimaryUri ? (
+              <Image source={{ uri: displayPrimaryUri }} style={styles.primaryImagePreview} resizeMode="cover" />
+            ) : (
+              <View style={styles.imagePlaceholder}>
+                <Ionicons name="camera-outline" size={38} color={colors.textMuted} />
+                <Text style={[styles.imagePlaceholderText, { color: colors.textMuted }]}>
+                  Tap to upload primary image
+                </Text>
+              </View>
+            )}
+            <View style={[styles.changeImageOverlay, { backgroundColor: "rgba(0,0,0,0.55)" }]}>
+              <Ionicons name="camera" size={18} color="#fff" />
+              <Text style={styles.changeImageText}>
+                {displayPrimaryUri ? "Change Primary Photo" : "Upload Photo"}
+              </Text>
             </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* ========================================================================= */}
+        {/* 2. PRODUCT IMAGE DETAILS (GALLERY PHOTOS) FIELD */}
+        {/* ========================================================================= */}
+        <View style={[styles.section, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                Product Image Details
+              </Text>
+              <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+                Detail photos fetched from API & additional uploads ({totalGalleryCount})
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.addDetailBtn, { backgroundColor: colors.primary }]}
+              onPress={handlePickGalleryImages}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add" size={16} color="#fff" />
+              <Text style={styles.addDetailBtnText}>Add Photo</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.galleryScroll}>
+            {/* Quick Add Button Tile */}
+            <TouchableOpacity
+              style={[
+                styles.addGalleryTile,
+                { borderColor: colors.primary, backgroundColor: colors.primaryBgLight || "#EFF6FF" },
+              ]}
+              onPress={handlePickGalleryImages}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="images-outline" size={24} color={colors.primary} />
+              <Text style={[styles.addGalleryTileText, { color: colors.primary }]}>+ Add</Text>
+            </TouchableOpacity>
+
+            {/* Existing Detail Photos from API */}
+            {existingGalleryImages.map((uri, idx) => (
+              <View key={`existing-${idx}`} style={[styles.galleryCard, { backgroundColor: colors.backgroundAlt }]}>
+                <Image source={{ uri }} style={styles.galleryCardImg} resizeMode="cover" />
+                <View style={styles.badgeContainer}>
+                  <View style={[styles.badge, { backgroundColor: "rgba(30, 41, 59, 0.85)" }]}>
+                    <Text style={styles.badgeText}>API</Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.removePhotoBtn}
+                  onPress={() => handleRemoveExistingGalleryImage(idx)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close" size={13} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            {/* Newly Uploaded Detail Photos */}
+            {newGalleryImages.map((item, idx) => (
+              <View key={`new-${idx}`} style={[styles.galleryCard, { backgroundColor: colors.backgroundAlt }]}>
+                <Image source={{ uri: item.uri }} style={styles.galleryCardImg} resizeMode="cover" />
+                <View style={styles.badgeContainer}>
+                  <View style={[styles.badge, { backgroundColor: COLORS.success || "#10B981" }]}>
+                    <Text style={styles.badgeText}>New</Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.removePhotoBtn}
+                  onPress={() => handleRemoveNewGalleryImage(idx)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close" size={13} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+
+          {totalGalleryCount === 0 && (
+            <Text style={[styles.emptyGalleryNote, { color: colors.textMuted }]}>
+              No detail photos uploaded yet. Tap "+ Add Photo" to upload extra product angles.
+            </Text>
           )}
-        </TouchableOpacity>
+        </View>
 
         {/* Basic Info */}
         <View style={[styles.section, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
@@ -354,7 +652,7 @@ const EditProduct = ({ route, navigation }) => {
               returnKeyType="done"
             />
             <TouchableOpacity
-              style={[styles.addTagBtn, { backgroundColor: colors.primaryBgLight }]}
+              style={[styles.addTagBtn, { backgroundColor: colors.primaryBgLight || "#EFF6FF" }]}
               onPress={handleAddTag}
               activeOpacity={0.8}
             >
@@ -364,7 +662,7 @@ const EditProduct = ({ route, navigation }) => {
           {tags.length > 0 && (
             <View style={styles.tagsRow}>
               {tags.map((tag, i) => (
-                <View key={i} style={[styles.tag, { backgroundColor: colors.primaryBgLight }]}>
+                <View key={i} style={[styles.tag, { backgroundColor: colors.primaryBgLight || "#EFF6FF" }]}>
                   <Text style={[styles.tagText, { color: colors.primary }]}>#{tag}</Text>
                   <TouchableOpacity onPress={() => handleRemoveTag(i)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
                     <Ionicons name="close" size={13} color={colors.primary} />
@@ -439,7 +737,7 @@ const EditProduct = ({ route, navigation }) => {
                   style={[
                     styles.categoryRow,
                     { borderBottomColor: colors.borderLight },
-                    categoryId === cat.id && { backgroundColor: colors.primaryBgLight },
+                    categoryId === cat.id && { backgroundColor: colors.primaryBgLight || "#EFF6FF" },
                   ]}
                   onPress={() => {
                     setCategoryId(cat.id);
@@ -471,7 +769,8 @@ const FormField = ({ label, children, colors }) => (
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
+  centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  loadingText: { fontSize: 14, fontWeight: "500" },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -486,19 +785,42 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  headerTitle: { flex: 1, fontSize: 17, fontWeight: "700", marginHorizontal: 8 },
-  imagePicker: {
-    height: 200,
+  headerTitle: { fontSize: 17, fontWeight: "700" },
+  headerSubtitle: { fontSize: 12, marginTop: 1 },
+  section: {
     borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 14,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  sectionTitle: { fontSize: 15, fontWeight: "700" },
+  sectionSubtitle: { fontSize: 12, marginTop: 2 },
+  revertBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
+  },
+  revertBtnText: { fontSize: 11, fontWeight: "600" },
+  primaryImagePicker: {
+    height: 190,
+    borderRadius: 14,
     borderWidth: 1.5,
     borderStyle: "dashed",
     overflow: "hidden",
-    marginBottom: 14,
     position: "relative",
     alignItems: "center",
     justifyContent: "center",
   },
-  imagePreview: { width: "100%", height: "100%" },
+  primaryImagePreview: { width: "100%", height: "100%" },
   imagePlaceholder: { alignItems: "center", gap: 8 },
   imagePlaceholderText: { fontSize: 13 },
   changeImageOverlay: {
@@ -509,17 +831,71 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
+    paddingVertical: 9,
     gap: 6,
   },
   changeImageText: { color: "#fff", fontSize: 13, fontWeight: "600" },
-  section: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 16,
-    marginBottom: 14,
+  addDetailBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 4,
   },
-  sectionTitle: { fontSize: 15, fontWeight: "700", marginBottom: 14 },
+  addDetailBtnText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  galleryScroll: {
+    marginTop: 4,
+    paddingVertical: 4,
+  },
+  addGalleryTile: {
+    width: 82,
+    height: 82,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+    gap: 4,
+  },
+  addGalleryTileText: { fontSize: 11, fontWeight: "700" },
+  galleryCard: {
+    width: 82,
+    height: 82,
+    borderRadius: 12,
+    overflow: "hidden",
+    marginRight: 10,
+    position: "relative",
+  },
+  galleryCardImg: { width: "100%", height: "100%" },
+  badgeContainer: {
+    position: "absolute",
+    bottom: 4,
+    left: 4,
+  },
+  badge: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeText: { color: "#fff", fontSize: 9, fontWeight: "700", textTransform: "uppercase" },
+  removePhotoBtn: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyGalleryNote: {
+    fontSize: 12,
+    marginTop: 8,
+    fontStyle: "italic",
+  },
   row: { flexDirection: "row" },
   formField: { marginBottom: 12 },
   fieldLabel: { fontSize: 12, fontWeight: "600", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 },

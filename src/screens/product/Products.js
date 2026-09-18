@@ -192,7 +192,10 @@ const Products = () => {
   };
 
   const handleEdit = (product) => {
-    navigation.navigate("EditProduct", { product });
+    navigation.navigate("EditProduct", {
+      product,
+      productId: product.product_id || product.id,
+    });
   };
 
   const handleDelete = (id, name) => {
@@ -207,7 +210,7 @@ const Products = () => {
           onPress: async () => {
             try {
               const res = await deleteSellerProduct(id);
-              setProducts((prev) => prev.filter((p) => (p.id || p.product_id) !== id));
+              setProducts((prev) => prev.filter((p) => (p.product_id) !== id));
               CustomAlert.showSuccess("Deleted 🎉", res?.message || "Product deleted successfully.");
             } catch (err) {
               console.warn("Delete product blocked:", err?.message);
@@ -220,7 +223,7 @@ const Products = () => {
   };
 
   const handleStockEdit = (product) => {
-    const id = product.id || product.product_id;
+    const id = product.product_id;
     const currentStock = product.stock_quantity ?? product.stock ?? 0;
     setStockEditProduct({ ...product, id });
     setStockInputValue(String(currentStock));
@@ -241,7 +244,7 @@ const Products = () => {
       // Update locally
       setProducts((prev) =>
         prev.map((p) => {
-          const pId = p.id || p.product_id;
+          const pId = p.product_id;
           if (pId === stockEditProduct.id) {
             return {
               ...p,
@@ -560,7 +563,7 @@ const Products = () => {
       ) : (
         <FlatList
           data={displayedProducts}
-          keyExtractor={(item, index) => String(item.id || item.product_id || index)}
+          keyExtractor={(item, index) => String(item.product_id || index)}
           renderItem={renderProductItem}
           contentContainerStyle={styles.listScrollContent}
           refreshControl={
