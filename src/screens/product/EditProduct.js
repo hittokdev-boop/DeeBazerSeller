@@ -32,6 +32,28 @@ const PRESET_CATEGORIES = [
   { id: 10, name: "Books & Stationery" },
 ];
 
+const getFilenameFromUrl = (url, fallback) => {
+  if (!url || typeof url !== "string") return fallback;
+  try {
+    const cleanUrl = url.split("?")[0].split("#")[0];
+    const parts = cleanUrl.split("/");
+    const lastPart = parts[parts.length - 1];
+    if (lastPart && lastPart.includes(".")) {
+      return decodeURIComponent(lastPart);
+    }
+  } catch (e) {}
+  return fallback;
+};
+
+const getMimeTypeFromUrl = (url) => {
+  if (!url || typeof url !== "string") return "image/jpeg";
+  const cleanUrl = url.toLowerCase().split("?")[0];
+  if (cleanUrl.endsWith(".png")) return "image/png";
+  if (cleanUrl.endsWith(".webp")) return "image/webp";
+  if (cleanUrl.endsWith(".gif")) return "image/gif";
+  return "image/jpeg";
+};
+
 const EditProduct = ({ route, navigation }) => {
   const routeProduct = route.params?.product || null;
   // Note: API returns product_id rather than id
@@ -89,7 +111,7 @@ const EditProduct = ({ route, navigation }) => {
       const res = await getSellerCategories();
       const cats = res?.data || res?.categories || res;
       if (Array.isArray(cats) && cats.length > 0) setCategoriesList(cats);
-    } catch {}
+    } catch { }
   };
 
   const populateForm = (p) => {
@@ -320,7 +342,23 @@ const EditProduct = ({ route, navigation }) => {
         formData.append("image", file);
       }
 
-      // 2. Product Image Details (Gallery Files)
+      // 2. Product Image Details (Gallery Files: Existing + New)
+      if (existingGalleryImages && existingGalleryImages.length > 0) {
+        existingGalleryImages.forEach((imgUri, idx) => {
+          const uri = typeof imgUri === "string" ? imgUri : imgUri?.uri || imgUri?.url || imgUri?.image;
+          if (uri) {
+            const fileName = getFilenameFromUrl(uri, `existing_gallery_${Date.now()}_${idx}.jpg`);
+            const fileType = getMimeTypeFromUrl(uri);
+            const file = {
+              uri: uri,
+              type: fileType,
+              name: fileName,
+            };
+            formData.append("gallery[]", file);
+          }
+        });
+      }
+
       if (newGalleryImages && newGalleryImages.length > 0) {
         newGalleryImages.forEach((img, idx) => {
           const file = {
@@ -331,7 +369,7 @@ const EditProduct = ({ route, navigation }) => {
           formData.append("gallery[]", file);
         });
       }
-
+      console.log(formData);
       const res = await updateSellerProduct(targetProductId, formData);
       CustomAlert.showSuccess("Success", res?.message || "Product updated successfully!", () => {
         navigation.goBack();
