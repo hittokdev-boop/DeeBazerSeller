@@ -104,8 +104,8 @@ const AppTab = () => {
 const AuthScreens = () => {
   return (
     <Stack.Group>
-      <Stack.Screen name="SellerRegistration" component={SellerRegistration} />
       <Stack.Screen name="Login" component={Login} />
+      <Stack.Screen name="SellerRegistration" component={SellerRegistration} />
       <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
       <Stack.Screen name="ForgotPasswordOtp" component={ForgotPasswordOtp} />
       <Stack.Screen name="ResetPassword" component={ResetPassword} />
@@ -139,6 +139,13 @@ const AppScreens = () => {
       <Stack.Screen name="BankDetails" component={BankDetails} />
       <Stack.Screen name="ChangePassword" component={ChangePassword} />
       <Stack.Screen name="Notifications" component={Notifications} />
+
+      {/* Auth Flow (Accessible from logged-out tabs) */}
+      <Stack.Screen name="Login" component={Login} />
+      <Stack.Screen name="SellerRegistration" component={SellerRegistration} />
+      <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
+      <Stack.Screen name="ForgotPasswordOtp" component={ForgotPasswordOtp} />
+      <Stack.Screen name="ResetPassword" component={ResetPassword} />
     </Stack.Group>
   );
 };
@@ -151,6 +158,10 @@ const SellerStack = () => {
   const [splashFinished, setSplashFinished] = useState(false);
 
   useEffect(() => {
+    AsyncStorage.getItem("token").then((t) => {
+      if (t) setUserToken(t);
+    });
+
     // Listen for auth state changes
     const authListener = DeviceEventEmitter.addListener(
       "authStateChanged",
@@ -173,10 +184,8 @@ const SellerStack = () => {
     >
       {!splashFinished ? (
         <Stack.Screen name="Splash" component={Splash} />
-      ) : userToken ? (
-        AppScreens()
       ) : (
-        AuthScreens()
+        AppScreens()
       )}
     </Stack.Navigator>
   );

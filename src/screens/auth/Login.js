@@ -124,6 +124,12 @@ const Login = ({ navigation }) => {
 
       showAlert("Success", responseData.message || "Login successful!", "success", () => {
         DeviceEventEmitter.emit("authStateChanged", responseData.token);
+        DeviceEventEmitter.emit("sellerLoggedIn", responseData.token);
+        if (navigation && navigation.canGoBack()) {
+          navigation.goBack();
+        } else if (navigation) {
+          navigation.navigate("SellerTabs");
+        }
       });
     } catch (e) {
       console.error("Login error:", e);
@@ -156,6 +162,16 @@ const Login = ({ navigation }) => {
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
           >
+            {navigation && navigation.canGoBack() && (
+              <TouchableOpacity
+                style={styles.backBtn}
+                onPress={() => navigation.goBack()}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
+
             <View style={styles.headerContent}>
               <View style={styles.logoBadge}>
                 <Ionicons name="storefront" size={28} color={COLORS.primary} />
@@ -353,6 +369,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     paddingTop: (Platform.OS === "android" ? StatusBar.currentHeight : 0) + 15,
+    position: "relative",
+  },
+  backBtn: {
+    position: "absolute",
+    top: (Platform.OS === "android" ? StatusBar.currentHeight : 0) + 16,
+    left: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
   },
   headerContent: {
     alignItems: "center",

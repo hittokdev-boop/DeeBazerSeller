@@ -18,8 +18,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useTheme } from "../../context/ThemeContext";
 import COLORS from "../../constants/theme";
-import { getSellerDashboard, getSellerProfile } from "../../api/auth";
+import { getSellerDashboard, getSellerProfile, clearAuthSession } from "../../api/auth";
 import { getUnreadNotificationCount } from "../../api/notifications";
+import LoggedOutView from "../../components/common/LoggedOutView";
 
 const formatCurrency = (amount) => {
   if (amount === undefined || amount === null || isNaN(Number(amount))) return "₹0.00";
@@ -99,6 +100,7 @@ const SellerDashboard = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
@@ -112,6 +114,16 @@ const SellerDashboard = ({ navigation }) => {
     setFetchError(null);
 
     try {
+      const token = await AsyncStorage.getItem("token");
+      if (!token) {
+        setIsLoggedIn(false);
+        setIsLoading(false);
+        setRefreshing(false);
+        setFetchError(null);
+        return;
+      }
+      setIsLoggedIn(true);
+
       // 1. Fetch live dashboard data from API
       const res = await getSellerDashboard();
       if (res && res.data) {
@@ -146,29 +158,51 @@ const SellerDashboard = ({ navigation }) => {
         // Non-blocking profile refresh
       }
     } catch (err) {
-      console.error("Failed to load dashboard data:", err);
+      const isAuth =
+        err?.status === 401 ||
+        (typeof err?.message === "string" && (
+          err.message.toLowerCase().includes("unauthenticated") ||
+          err.message.toLowerCase().includes("no authentication token")
+        ));
 
-      // Auto-logout if session expired / unauthenticated
-      if (err?.status === 401 || (err?.message && err.message.toLowerCase().includes("unauthenticated"))) {
-        AsyncStorage.multiRemove([
-          "token",
-          "isLoggedIn",
-          "sellerProfile",
-          "userData",
-          "sellerData",
-          "isRegistered",
-        ]).then(() => {
-          DeviceEventEmitter.emit("authStateChanged", null);
-        });
+      if (isAuth) {
+        setIsLoggedIn(false);
+        setFetchError(null);
+        await clearAuthSession();
         return;
       }
 
+      console.error("Failed to load dashboard data:", err);
       setFetchError(err?.message || "Failed to load dashboard data");
     } finally {
       setIsLoading(false);
       setRefreshing(false);
     }
   }, []);
+
+  useEffect(() => {
+    const authListener = DeviceEventEmitter.addListener("authStateChanged", (token) => {
+      if (token) {
+        setIsLoggedIn(true);
+        loadDashboardData();
+      } else {
+        setIsLoggedIn(false);
+        setProfile(null);
+        setFetchError(null);
+      }
+    });
+
+    const logoutListener = DeviceEventEmitter.addListener("sellerLoggedOut", () => {
+      setIsLoggedIn(false);
+      setProfile(null);
+      setFetchError(null);
+    });
+
+    return () => {
+      authListener.remove();
+      logoutListener.remove();
+    };
+  }, [loadDashboardData]);
 
   useEffect(() => {
     loadDashboardData();
@@ -180,6 +214,13 @@ const SellerDashboard = ({ navigation }) => {
       let isMounted = true;
       const refreshLive = async () => {
         try {
+          const token = await AsyncStorage.getItem("token");
+          if (!token) {
+            if (isMounted) setIsLoggedIn(false);
+            return;
+          }
+          if (isMounted) setIsLoggedIn(true);
+
           const profileRes = await getSellerProfile();
           if (isMounted && profileRes && profileRes.data) {
             const profileData = profileRes.data.seller || profileRes.data;
@@ -190,6 +231,9 @@ const SellerDashboard = ({ navigation }) => {
         }
 
         try {
+          const token = await AsyncStorage.getItem("token");
+          if (!token) return;
+
           const notifRes = await getUnreadNotificationCount();
           if (isMounted && notifRes) {
             const unread = notifRes?.unread_count ?? notifRes?.data?.unread_count ?? 0;
@@ -238,6 +282,25 @@ const SellerDashboard = ({ navigation }) => {
 
     return matchesSearch && matchesStatus;
   });
+
+  if (!isLoggedIn) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <LoggedOutView
+          iconName="home-outline"
+          title="You Are Logged Out"
+          subtitle="Please log in to view your store dashboard and sales metrics."
+          features={[
+            "Daily sales & order performance overview",
+            "Quick shortcuts for pending seller actions",
+            "Live analytics & business growth tracking",
+          ]}
+          onLoginPress={() => navigation.navigate("Login")}
+          onRegisterPress={() => navigation.navigate("SellerRegistration")}
+        />
+      </View>
+    );
+  }
 
   return (
     <ScrollView
@@ -388,7 +451,7 @@ const SellerDashboard = ({ navigation }) => {
       </View>
 
       {/* Error state banner with retry */}
-      {fetchError && (
+      {fetchError && !fetchError.toLowerCase().includes("unauthenticated") && !fetchError.toLowerCase().includes("no authentication") && (
         <View style={styles.errorBanner}>
           <Ionicons name="alert-circle-outline" size={20} color={COLORS.error} />
           <Text style={styles.errorBannerText}>{fetchError}</Text>

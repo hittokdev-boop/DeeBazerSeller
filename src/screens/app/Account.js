@@ -13,6 +13,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   DeviceEventEmitter,
+  Modal,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -20,7 +21,8 @@ import { useIsFocused, CommonActions } from "@react-navigation/native";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { CustomAlert } from "../../context/AlertContext";
-import { getSellerProfile, logoutSeller } from "../../api/auth";
+import { getSellerProfile, logoutSeller, clearAuthSession } from "../../api/auth";
+import LoggedOutView from "../../components/common/LoggedOutView";
 
 const Account = ({ navigation }) => {
   const [profile, setProfile] = useState(null);
@@ -28,36 +30,20 @@ const Account = ({ navigation }) => {
   const [sellerData, setSellerData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [showLoggedOutModal, setShowLoggedOutModal] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
 
   const isFocused = useIsFocused();
   const { isDarkMode, toggleTheme, themeMode, colors } = useTheme();
 
   const navigateToLogin = useCallback(() => {
-    try {
-      if (navigation && typeof navigation.getParent === 'function') {
-        const parentNav = navigation.getParent();
-        if (parentNav) {
-          parentNav.reset({
-            index: 0,
-            routes: [{ name: "Login" }],
-          });
-          return;
-        }
-      }
-      navigation.navigate("Login");
-    } catch (navErr) {
-      console.error("Navigation error:", navErr);
-      navigation.navigate("Login");
-    }
+    navigation.navigate("Login");
   }, [navigation]);
 
   const navigateToRegister = useCallback(() => {
-    try {
-      DeviceEventEmitter.emit("authStateChanged", null);
-    } catch (navErr) {
-      console.error("Navigation error to register:", navErr);
-    }
-  }, []);
+    navigation.navigate("SellerRegistration");
+  }, [navigation]);
 
   // Fetch live seller details from GET /api/seller/profile
   const fetchSellerDetails = useCallback(async (showFullLoader = false) => {
@@ -65,6 +51,18 @@ const Account = ({ navigation }) => {
       setIsLoading(true);
     }
     try {
+      const token = await AsyncStorage.getItem("token");
+      if (!token) {
+        setIsLoggedIn(false);
+        setProfile(null);
+        setUserData(null);
+        setSellerData(null);
+        setIsLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
+      setIsLoggedIn(true);
+
       const response = await getSellerProfile();
       if (response && response.data) {
         const data = response.data;
@@ -95,38 +93,61 @@ const Account = ({ navigation }) => {
         setProfile(mergedProfile);
       }
     } catch (error) {
-      console.error("Error fetching seller details:", error);
-      if (error.status === 401) {
-        CustomAlert.alert(
-          "Session Expired",
-          "Your login session has expired. Please log in again.",
-          [
-            {
-              text: "OK",
-              onPress: async () => {
-                await AsyncStorage.multiRemove([
-                  "token",
-                  "isLoggedIn",
-                  "sellerProfile",
-                  "userData",
-                  "sellerData",
-                  "isRegistered",
-                ]);
-                navigateToRegister();
-              },
-            },
-          ]
-        );
+      if (error?.status === 401 || (typeof error?.message === "string" && error.message.toLowerCase().includes("unauthenticated"))) {
+        setIsLoggedIn(false);
+        setProfile(null);
+        setUserData(null);
+        setSellerData(null);
+        await clearAuthSession();
+        return;
       }
+      console.error("Error fetching seller details:", error);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [navigateToRegister]);
+  }, []);
+
+  useEffect(() => {
+    const authListener = DeviceEventEmitter.addListener("authStateChanged", (token) => {
+      if (token) {
+        setIsLoggedIn(true);
+        fetchSellerDetails(false);
+      } else {
+        setIsLoggedIn(false);
+        setProfile(null);
+        setUserData(null);
+        setSellerData(null);
+      }
+    });
+
+    const logoutListener = DeviceEventEmitter.addListener("sellerLoggedOut", () => {
+      setIsLoggedIn(false);
+      setProfile(null);
+      setUserData(null);
+      setSellerData(null);
+    });
+
+    return () => {
+      authListener.remove();
+      logoutListener.remove();
+    };
+  }, [fetchSellerDetails]);
 
   useEffect(() => {
     if (isFocused) {
-      fetchSellerDetails(false);
+      AsyncStorage.getItem("token").then((token) => {
+        if (!token) {
+          setIsLoggedIn(false);
+          setProfile(null);
+          setUserData(null);
+          setSellerData(null);
+          setIsLoading(false);
+        } else {
+          setIsLoggedIn(true);
+          fetchSellerDetails(false);
+        }
+      });
     }
   }, [isFocused, fetchSellerDetails]);
 
@@ -146,39 +167,41 @@ const Account = ({ navigation }) => {
           style: "destructive",
           onPress: async () => {
             try {
-              setIsLoading(true);
+              setIsLoggingOut(true);
               try {
                 await logoutSeller();
               } catch (apiErr) {
-                console.error("Logout API call failed:", apiErr);
+                // Ignore apiErr on logout
               }
-              await AsyncStorage.multiRemove([
-                "token",
-                "isLoggedIn",
-                "sellerProfile",
-                "userData",
-                "sellerData",
-                "isRegistered",
-              ]);
-              navigateToRegister();
+              await clearAuthSession();
+              setProfile(null);
+              setUserData(null);
+              setSellerData(null);
+              setIsLoggedIn(false);
+              setIsLoggingOut(false);
+              setShowLoggedOutModal(false);
+              DeviceEventEmitter.emit("sellerLoggedOut");
+              DeviceEventEmitter.emit("authStateChanged", null);
             } catch (err) {
-              console.error("Error during logout:", err);
-              await AsyncStorage.multiRemove([
-                "token",
-                "isLoggedIn",
-                "sellerProfile",
-                "userData",
-                "sellerData",
-                "isRegistered",
-              ]);
-              navigateToRegister();
-            } finally {
-              setIsLoading(false);
+              await clearAuthSession();
+              setProfile(null);
+              setUserData(null);
+              setSellerData(null);
+              setIsLoggedIn(false);
+              setIsLoggingOut(false);
+              setShowLoggedOutModal(false);
+              DeviceEventEmitter.emit("sellerLoggedOut");
+              DeviceEventEmitter.emit("authStateChanged", null);
             }
           },
         },
       ]
     );
+  };
+
+  const handleGoToLogin = () => {
+    setShowLoggedOutModal(false);
+    DeviceEventEmitter.emit("authStateChanged", null);
   };
 
   const handleMenuPress = (item) => {
@@ -259,9 +282,29 @@ const Account = ({ navigation }) => {
   const walletBalance = formatCurrency(sellerData?.wallet_balance);
   const totalEarnings = formatCurrency(sellerData?.total_earnings);
 
+  if (!isLoggedIn) {
+    return (
+      <View style={[styles.root, { backgroundColor: colors.backgroundAlt }]}>
+        <LoggedOutView
+          iconName="person-circle-outline"
+          title="You Are Logged Out"
+          subtitle="Please log in to manage your store profile, bank details, and settings."
+          features={[
+            "Store name, logo & business contact details",
+            "Bank account & settlement payout preferences",
+            "Shipping charges & return policy setup",
+          ]}
+          onLoginPress={() => navigation.navigate("Login")}
+          onRegisterPress={() => navigation.navigate("SellerRegistration")}
+        />
+      </View>
+    );
+  }
+
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: colors.backgroundAlt }]}
+    <View style={[styles.root, { backgroundColor: colors.backgroundAlt }]}>
+      <ScrollView
+        style={[styles.container, { backgroundColor: colors.backgroundAlt }]}
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}
       refreshControl={
@@ -522,9 +565,9 @@ const Account = ({ navigation }) => {
         style={[styles.logoutBtn, { backgroundColor: colors.error || "#EF4444" }]}
         activeOpacity={0.9}
         onPress={handleLogout}
-        disabled={isLoading}
+        disabled={isLoggingOut}
       >
-        {isLoading ? (
+        {isLoggingOut ? (
           <ActivityIndicator color={colors.textContrast || "#FFFFFF"} size="small" />
         ) : (
           <>
@@ -545,6 +588,101 @@ const Account = ({ navigation }) => {
         )}
       </TouchableOpacity>
     </ScrollView>
+
+    {/* Full Screen Logged Out UI Modal */}
+    <Modal
+      visible={showLoggedOutModal}
+      animationType="fade"
+      transparent={false}
+      statusBarTranslucent
+      onRequestClose={handleGoToLogin}
+    >
+      <StatusBar
+        barStyle={isDarkMode ? "light-content" : "dark-content"}
+        backgroundColor="transparent"
+        translucent
+      />
+      <View style={[styles.loggedOutContainer, { backgroundColor: colors.background }]}>
+        {/* Ambient Glow */}
+        <View
+          style={[
+            styles.loggedOutGlow,
+            { backgroundColor: isDarkMode ? "rgba(37, 99, 235, 0.15)" : "rgba(37, 99, 235, 0.08)" },
+          ]}
+        />
+
+        <View style={styles.loggedOutCard}>
+          {/* Large Status Icon */}
+          <View
+            style={[
+              styles.loggedOutIconOuter,
+              {
+                backgroundColor: isDarkMode ? "rgba(37, 99, 235, 0.15)" : "#EFF6FF",
+                borderColor: isDarkMode ? "rgba(37, 99, 235, 0.3)" : "#BFDBFE",
+              },
+            ]}
+          >
+            <View style={[styles.loggedOutIconInner, { backgroundColor: colors.primary }]}>
+              <Ionicons name="log-out-outline" size={42} color="#FFFFFF" />
+            </View>
+          </View>
+
+          {/* Title & Bengali Title */}
+          <Text style={[styles.loggedOutTitle, { color: colors.textPrimary }]}>
+            Logged Out Successfully
+          </Text>
+          <Text style={[styles.loggedOutTitleBn, { color: colors.primary }]}>
+            আপনি সফলভাবে লগ আউট হয়েছেন
+          </Text>
+
+          {/* Description */}
+          <Text style={[styles.loggedOutMessage, { color: colors.textSecondary }]}>
+            আপনার বিক্রেতা অ্যাকাউন্ট থেকে সফলভাবে লগ আউট করা হয়েছে। আপনার পণ্য ও অর্ডার পরিচালনা করতে অনুগ্রহ করে পুনরায় লগ ইন করুন।
+          </Text>
+
+          {/* Security Info Box */}
+          <View
+            style={[
+              styles.loggedOutInfoBox,
+              {
+                backgroundColor: colors.cardBg,
+                borderColor: colors.borderLight,
+              },
+            ]}
+          >
+            <View style={styles.loggedOutInfoRow}>
+              <Ionicons name="shield-checkmark" size={20} color={COLORS.success || "#10B981"} />
+              <View style={styles.loggedOutInfoTextCol}>
+                <Text style={[styles.loggedOutInfoHead, { color: colors.textPrimary }]}>Session Ended</Text>
+                <Text style={[styles.loggedOutInfoSub, { color: colors.textSecondary }]}>Access token & cached credentials removed</Text>
+              </View>
+            </View>
+
+            <View style={[styles.loggedOutInfoDivider, { backgroundColor: colors.borderLight }]} />
+
+            <View style={styles.loggedOutInfoRow}>
+              <Ionicons name="lock-closed" size={20} color={colors.primary} />
+              <View style={styles.loggedOutInfoTextCol}>
+                <Text style={[styles.loggedOutInfoHead, { color: colors.textPrimary }]}>Account Protected</Text>
+                <Text style={[styles.loggedOutInfoSub, { color: colors.textSecondary }]}>Sign in anytime with your password</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Primary Action Button to Navigate to Login */}
+          <TouchableOpacity
+            style={[styles.loggedOutLoginBtn, { backgroundColor: colors.primary }]}
+            onPress={handleGoToLogin}
+            activeOpacity={0.88}
+          >
+            <Ionicons name="log-in-outline" size={22} color="#FFFFFF" style={{ marginRight: 8 }} />
+            <Text style={styles.loggedOutLoginBtnText}>লগ ইন করুন (Go to Login)</Text>
+            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" style={{ marginLeft: 8 }} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  </View>
   );
 };
 
@@ -762,5 +900,112 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
     marginLeft: 10,
+  },
+  root: {
+    flex: 1,
+  },
+  loggedOutContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  loggedOutGlow: {
+    position: "absolute",
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    top: "16%",
+  },
+  loggedOutCard: {
+    width: "100%",
+    maxWidth: 380,
+    alignItems: "center",
+  },
+  loggedOutIconOuter: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 2,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+    elevation: 8,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  loggedOutIconInner: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loggedOutTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    textAlign: "center",
+    letterSpacing: 0.3,
+  },
+  loggedOutTitleBn: {
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  loggedOutMessage: {
+    fontSize: 14,
+    lineHeight: 22,
+    textAlign: "center",
+    paddingHorizontal: 8,
+    marginBottom: 24,
+  },
+  loggedOutInfoBox: {
+    width: "100%",
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 28,
+  },
+  loggedOutInfoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  loggedOutInfoTextCol: {
+    flex: 1,
+  },
+  loggedOutInfoHead: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  loggedOutInfoSub: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  loggedOutInfoDivider: {
+    height: 1,
+    marginVertical: 12,
+  },
+  loggedOutLoginBtn: {
+    width: "100%",
+    height: 54,
+    borderRadius: 16,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  loggedOutLoginBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
   },
 });

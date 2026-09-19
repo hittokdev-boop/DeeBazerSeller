@@ -3,7 +3,11 @@ import { BASE_URL } from "./auth";
 
 export const getOrders = async () => {
   const token = await AsyncStorage.getItem("token");
-  if (!token) throw new Error("No authentication token found");
+  if (!token) {
+    const error = new Error("No authentication token found");
+    error.status = 401;
+    throw error;
+  }
 
   const response = await fetch(`${BASE_URL}orders`, {
     method: "GET",
@@ -23,7 +27,10 @@ export const getOrders = async () => {
   }
 
   if (!response.ok) {
-    throw new Error(responseData.message || "Failed to fetch orders");
+    const error = new Error(responseData.message || "Failed to fetch orders");
+    error.status = response.status;
+    error.data = responseData;
+    throw error;
   }
 
   return responseData;
@@ -31,7 +38,11 @@ export const getOrders = async () => {
 
 export const getOrder = async (id) => {
   const token = await AsyncStorage.getItem("token");
-  if (!token) throw new Error("No authentication token found");
+  if (!token) {
+    const error = new Error("No authentication token found");
+    error.status = 401;
+    throw error;
+  }
 
   const response = await fetch(`${BASE_URL}orders/${id}`, {
     method: "GET",
@@ -51,7 +62,10 @@ export const getOrder = async (id) => {
   }
 
   if (!response.ok) {
-    throw new Error(responseData.message || "Failed to fetch order details");
+    const error = new Error(responseData.message || "Failed to fetch order details");
+    error.status = response.status;
+    error.data = responseData;
+    throw error;
   }
 
   return responseData;

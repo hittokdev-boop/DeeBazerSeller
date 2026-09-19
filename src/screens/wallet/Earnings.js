@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,22 +9,37 @@ import {
   StatusBar,
   ActivityIndicator,
   RefreshControl,
+  DeviceEventEmitter,
 } from "react-native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getSellerMe } from "../../api/auth";
+import { getSellerMe, clearAuthSession } from "../../api/auth";
+import LoggedOutView from "../../components/common/LoggedOutView";
 
 const Earnings = () => {
   const { colors } = useTheme();
+  const navigation = useNavigation();
   
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
 
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     try {
+      const token = await AsyncStorage.getItem("token");
+      if (!token) {
+        setIsLoggedIn(false);
+        setProfile(null);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      setIsLoggedIn(true);
+
       const response = await getSellerMe();
       if (response && response.data) {
         const user = response.data.user || {};
@@ -40,16 +55,61 @@ const Earnings = () => {
         setProfile(mergedProfile);
       }
     } catch (err) {
-      console.error("Error fetching profile for earnings:", err);
+      const isAuth =
+        err?.status === 401 ||
+        (typeof err?.message === "string" && (
+          err.message.toLowerCase().includes("unauthenticated") ||
+          err.message.toLowerCase().includes("no authentication token")
+        ));
+      if (isAuth) {
+        setIsLoggedIn(false);
+        setProfile(null);
+        await clearAuthSession();
+        return;
+      }
+      console.warn("Error fetching profile for earnings:", err?.message || err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchProfile();
-  }, []);
+    const authListener = DeviceEventEmitter.addListener("authStateChanged", (token) => {
+      if (token) {
+        setIsLoggedIn(true);
+        fetchProfile();
+      } else {
+        setIsLoggedIn(false);
+        setProfile(null);
+      }
+    });
+
+    const logoutListener = DeviceEventEmitter.addListener("sellerLoggedOut", () => {
+      setIsLoggedIn(false);
+      setProfile(null);
+    });
+
+    return () => {
+      authListener.remove();
+      logoutListener.remove();
+    };
+  }, [fetchProfile]);
+
+  useFocusEffect(
+    useCallback(() => {
+      AsyncStorage.getItem("token").then((token) => {
+        if (!token) {
+          setIsLoggedIn(false);
+          setProfile(null);
+          setLoading(false);
+        } else {
+          setIsLoggedIn(true);
+          fetchProfile();
+        }
+      });
+    }, [fetchProfile])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -60,6 +120,35 @@ const Earnings = () => {
   const walletBalance = profile?.walletBalance || 0;
   // Withdraw-able can be assumed to be walletBalance for now
   const withdrawable = walletBalance;
+
+  if (!isLoggedIn) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.backgroundAlt }]}>
+        <View style={styles.header}>
+          <View>
+            <Text style={[styles.title, { color: colors.textGrayDark }]}>
+              Earnings
+            </Text>
+            <Text style={[styles.subTitle, { color: colors.textGrayLight }]}>
+              Wallet & Revenue Overview
+            </Text>
+          </View>
+        </View>
+        <LoggedOutView
+          iconName="wallet-outline"
+          title="You Are Logged Out"
+          subtitle="Please log in to view your sales revenue, wallet balance, and payouts."
+          features={[
+            "Live revenue tracking & store sales stats",
+            "Wallet balance overview & payout requests",
+            "Detailed settlement & transaction history",
+          ]}
+          onLoginPress={() => navigation.navigate("Login")}
+          onRegisterPress={() => navigation.navigate("SellerRegistration")}
+        />
+      </View>
+    );
+  }
 
   return (
     <ScrollView

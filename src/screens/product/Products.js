@@ -13,14 +13,17 @@ import {
   StatusBar,
   FlatList,
   ActivityIndicator,
-  RefreshControl, Button
+  RefreshControl, Button,
+  DeviceEventEmitter
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useNavigation, useFocusEffect, useRoute } from "@react-navigation/native";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getSellerProducts, deleteSellerProduct, updateProductStock } from "../../api/auth";
+import { getSellerProducts, deleteSellerProduct, updateProductStock, clearAuthSession } from "../../api/auth";
 import { CustomAlert } from "../../context/AlertContext";
+import LoggedOutView from "../../components/common/LoggedOutView";
 
 
 const STATUS_OPTIONS = [
@@ -85,6 +88,7 @@ const Products = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
 
   // Stock update modal
   const [showStockModal, setShowStockModal] = useState(false);
@@ -106,6 +110,20 @@ const Products = () => {
       setFetchError(null);
 
       try {
+        const token = await AsyncStorage.getItem("token");
+        if (!token) {
+          setIsLoggedIn(false);
+          setProducts([]);
+          setCounts({ total: 0, approved: 0, pending: 0, rejected: 0 });
+          setFetchError(null);
+          setIsLoading(false);
+          setIsRefreshing(false);
+          setIsLoadingMore(false);
+          return;
+        }
+
+        setIsLoggedIn(true);
+
         const params = {
           page,
           per_page: 30,
@@ -132,6 +150,21 @@ const Products = () => {
           }
         }
       } catch (err) {
+        const isAuth =
+          err?.status === 401 ||
+          (typeof err?.message === "string" && (
+            err.message.toLowerCase().includes("unauthenticated") ||
+            err.message.toLowerCase().includes("no authentication token")
+          ));
+
+        if (isAuth) {
+          setIsLoggedIn(false);
+          setProducts([]);
+          setFetchError(null);
+          await clearAuthSession();
+          return;
+        }
+
         console.error("Failed to fetch products:", err);
         setFetchError(err?.message || "Failed to load products");
       } finally {
@@ -143,10 +176,45 @@ const Products = () => {
     [searchQuery]
   );
 
+  // Listen for auth events (login/logout)
+  useEffect(() => {
+    const authListener = DeviceEventEmitter.addListener("authStateChanged", (token) => {
+      if (token) {
+        setIsLoggedIn(true);
+        fetchProductsList(1, false, searchQuery);
+      } else {
+        setIsLoggedIn(false);
+        setProducts([]);
+        setFetchError(null);
+      }
+    });
+
+    const logoutListener = DeviceEventEmitter.addListener("sellerLoggedOut", () => {
+      setIsLoggedIn(false);
+      setProducts([]);
+      setFetchError(null);
+    });
+
+    return () => {
+      authListener.remove();
+      logoutListener.remove();
+    };
+  }, [fetchProductsList, searchQuery]);
+
   // Automatically refresh when screen comes into focus
   useFocusEffect(
     useCallback(() => {
-      fetchProductsList(1, false, searchQuery);
+      AsyncStorage.getItem("token").then((token) => {
+        if (!token) {
+          setIsLoggedIn(false);
+          setProducts([]);
+          setFetchError(null);
+          setIsLoading(false);
+        } else {
+          setIsLoggedIn(true);
+          fetchProductsList(1, false, searchQuery);
+        }
+      });
     }, [fetchProductsList, searchQuery])
   );
 
@@ -444,6 +512,35 @@ const Products = () => {
     );
   };
 
+  if (!isLoggedIn) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        {/* Top Header */}
+        <View style={[styles.header, { backgroundColor: colors.cardBg, borderBottomColor: colors.borderLight }]}>
+          <View>
+            <Text style={[styles.title, { color: colors.textPrimary }]}>My Products</Text>
+            <Text style={[styles.subTitle, { color: colors.textSecondary }]}>
+              Product Catalog Management
+            </Text>
+          </View>
+        </View>
+
+        <LoggedOutView
+          iconName="cube-outline"
+          title="You Are Logged Out"
+          subtitle="Please log in to view and manage all products in your store."
+          features={[
+            "View full product catalog & approval status",
+            "Easily add new products & upload photos",
+            "Track inventory & update live stock levels",
+          ]}
+          onLoginPress={() => navigation.navigate("Login")}
+          onRegisterPress={() => navigation.navigate("SellerRegistration")}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Top Header */}
@@ -544,7 +641,7 @@ const Products = () => {
       </View>
 
       {/* Error state */}
-      {fetchError && (
+      {fetchError && !fetchError.toLowerCase().includes("unauthenticated") && !fetchError.toLowerCase().includes("no authentication") && (
         <View style={styles.errorBanner}>
           <Ionicons name="alert-circle-outline" size={18} color={COLORS.error} />
           <Text style={styles.errorBannerText}>{fetchError}</Text>

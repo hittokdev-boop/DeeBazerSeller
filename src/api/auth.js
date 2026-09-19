@@ -2,6 +2,35 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const BASE_URL = "https://deebazar.com/admin/api/seller/";
 
+export const isAuthError = (error) => {
+  return (
+    error?.status === 401 ||
+    (typeof error?.message === "string" && (
+      error.message.toLowerCase().includes("unauthenticated") ||
+      error.message.toLowerCase().includes("no authentication token")
+    ))
+  );
+};
+
+export const clearAuthSession = async () => {
+  const keys = [
+    "token",
+    "TOKEN",
+    "isLoggedIn",
+    "sellerProfile",
+    "userData",
+    "sellerData",
+    "isRegistered",
+  ];
+  for (const k of keys) {
+    try {
+      await AsyncStorage.removeItem(k);
+    } catch (e) {
+      // safe fallback
+    }
+  }
+};
+
 /**
  * Fetch authenticated seller + user profile details
  * Endpoint: GET /api/seller/me
@@ -12,7 +41,9 @@ export const getSellerMe = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
     if (!token) {
-      throw new Error("No authentication token found");
+      const err = new Error("No authentication token found");
+      err.status = 401;
+      throw err;
     }
 
     const response = await fetch(`${BASE_URL}me`, {
@@ -44,7 +75,9 @@ export const getSellerMe = async (customToken = null) => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in getSellerMe API:", error);
+    if (!isAuthError(error)) {
+      console.error("Error in getSellerMe API:", error);
+    }
     throw error;
   }
 };
@@ -58,7 +91,9 @@ export const getSellerProfile = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
     if (!token) {
-      throw new Error("No authentication token found");
+      const err = new Error("No authentication token found");
+      err.status = 401;
+      throw err;
     }
 
     const response = await fetch(`${BASE_URL}profile`, {
@@ -90,7 +125,9 @@ export const getSellerProfile = async (customToken = null) => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in getSellerProfile API:", error);
+    if (!isAuthError(error)) {
+      console.error("Error in getSellerProfile API:", error);
+    }
     throw error;
   }
 };
@@ -378,7 +415,9 @@ export const getSellerDashboard = async (customToken = null) => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in getSellerDashboard API:", error);
+    if (!isAuthError(error)) {
+      console.error("Error in getSellerDashboard API:", error);
+    }
     throw error;
   }
 };
@@ -393,7 +432,9 @@ export const getSellerProducts = async (params = {}, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
     if (!token) {
-      throw new Error("No authentication token found");
+      const err = new Error("No authentication token found");
+      err.status = 401;
+      throw err;
     }
 
     const queryParts = [];
@@ -440,7 +481,9 @@ export const getSellerProducts = async (params = {}, customToken = null) => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in getSellerProducts API:", error);
+    if (!isAuthError(error)) {
+      console.error("Error in getSellerProducts API:", error);
+    }
     throw error;
   }
 };
@@ -489,7 +532,9 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
 
     return responseData;
   } catch (error) {
-    console.error("Error in getSellerProductDetails API:", error);
+    if (!isAuthError(error)) {
+      console.error("Error in getSellerProductDetails API:", error);
+    }
     throw error;
   }
 };

@@ -11,7 +11,7 @@ const GENERAL_API_URL = "https://deebazar.com/admin/api/";
 export const getSellerNotifications = async (page = 1) => {
   try {
     const token = await AsyncStorage.getItem("token");
-    if (!token) throw new Error("No authentication token found");
+    if (!token) return { data: { notifications: [] }, notifications: [] };
 
     const response = await fetch(`${SELLER_API_URL}notifications?page=${page}`, {
       method: "GET",
@@ -39,8 +39,16 @@ export const getSellerNotifications = async (page = 1) => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in getSellerNotifications API:", error);
-    throw error;
+    const isAuth =
+      error?.status === 401 ||
+      (typeof error?.message === "string" && (
+        error.message.toLowerCase().includes("unauthenticated") ||
+        error.message.toLowerCase().includes("no authentication token")
+      ));
+    if (!isAuth) {
+      console.error("Error in getSellerNotifications API:", error);
+    }
+    return { data: { notifications: [] }, notifications: [] };
   }
 };
 
@@ -52,7 +60,9 @@ export const getSellerNotifications = async (page = 1) => {
 export const getUnreadNotificationCount = async () => {
   try {
     const token = await AsyncStorage.getItem("token");
-    if (!token) throw new Error("No authentication token found");
+    if (!token) {
+      return { data: { unread_count: 0 }, unread_count: 0 };
+    }
 
     const response = await fetch(`${SELLER_API_URL}notifications/unread-count`, {
       method: "GET",
@@ -80,8 +90,16 @@ export const getUnreadNotificationCount = async () => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in getUnreadNotificationCount API:", error);
-    throw error;
+    const isAuth =
+      error?.status === 401 ||
+      (typeof error?.message === "string" && (
+        error.message.toLowerCase().includes("unauthenticated") ||
+        error.message.toLowerCase().includes("no authentication token")
+      ));
+    if (!isAuth) {
+      console.error("Error in getUnreadNotificationCount API:", error);
+    }
+    return { data: { unread_count: 0 }, unread_count: 0 };
   }
 };
 

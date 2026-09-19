@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -12,11 +12,16 @@ import {
   StatusBar,
   ActivityIndicator,
   RefreshControl,
+  DeviceEventEmitter,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "@react-navigation/native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { getOrders, updateOrderStatusAPI } from "../../api/orders";
+import { clearAuthSession } from "../../api/auth";
+import LoggedOutView from "../../components/common/LoggedOutView";
 
 const STATUS_FILTERS = ["All", "Pending", "Delivered", "Cancelled"];
 
@@ -27,9 +32,20 @@ const Orders = ({ navigation }) => {
   const [statusFilter, setStatusFilter] = useState("All");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     try {
+      const token = await AsyncStorage.getItem("token");
+      if (!token) {
+        setIsLoggedIn(false);
+        setOrders([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      setIsLoggedIn(true);
+
       const response = await getOrders();
       let ordersList = [];
       if (Array.isArray(response)) {
@@ -45,16 +61,61 @@ const Orders = ({ navigation }) => {
       }
       setOrders(ordersList);
     } catch (error) {
+      const isAuth =
+        error?.status === 401 ||
+        (typeof error?.message === "string" && (
+          error.message.toLowerCase().includes("unauthenticated") ||
+          error.message.toLowerCase().includes("no authentication token")
+        ));
+      if (isAuth) {
+        setIsLoggedIn(false);
+        setOrders([]);
+        await clearAuthSession();
+        return;
+      }
       Alert.alert("Error", error.message || "Failed to load orders");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchOrders();
-  }, []);
+    const authListener = DeviceEventEmitter.addListener("authStateChanged", (token) => {
+      if (token) {
+        setIsLoggedIn(true);
+        fetchOrders();
+      } else {
+        setIsLoggedIn(false);
+        setOrders([]);
+      }
+    });
+
+    const logoutListener = DeviceEventEmitter.addListener("sellerLoggedOut", () => {
+      setIsLoggedIn(false);
+      setOrders([]);
+    });
+
+    return () => {
+      authListener.remove();
+      logoutListener.remove();
+    };
+  }, [fetchOrders]);
+
+  useFocusEffect(
+    useCallback(() => {
+      AsyncStorage.getItem("token").then((token) => {
+        if (!token) {
+          setIsLoggedIn(false);
+          setOrders([]);
+          setLoading(false);
+        } else {
+          setIsLoggedIn(true);
+          fetchOrders();
+        }
+      });
+    }, [fetchOrders])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -99,6 +160,33 @@ const Orders = ({ navigation }) => {
   const handleOrderPress = (order) => {
     navigation.navigate("OrderDetails", { orderId: order.id });
   };
+
+  if (!isLoggedIn) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.backgroundAlt }]}>
+        <View style={styles.header}>
+          <View>
+            <Text style={[styles.title, { color: colors.textGrayDark }]}>Orders</Text>
+            <Text style={[styles.subTitle, { color: colors.textGrayLight }]}>
+              Manage and track customer orders
+            </Text>
+          </View>
+        </View>
+        <LoggedOutView
+          iconName="receipt-outline"
+          title="You Are Logged Out"
+          subtitle="Please log in to track and manage your customer orders."
+          features={[
+            "Track incoming pending & confirmed orders",
+            "Update order fulfillment & delivery progress",
+            "View customer details, shipping address & items",
+          ]}
+          onLoginPress={() => navigation.navigate("Login")}
+          onRegisterPress={() => navigation.navigate("SellerRegistration")}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundAlt }]}>

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, View, DeviceEventEmitter } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../constants/theme";
 import { useTheme } from "../context/ThemeContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getOrders } from "../api/orders";
 
 import Dashboard from "../screens/app/Dashboard";
@@ -21,20 +22,32 @@ const SellerBottomNavigation = () => {
   useEffect(() => {
     const fetchPendingOrders = async () => {
       try {
+        const token = await AsyncStorage.getItem("token");
+        if (!token) {
+          setHasNewOrders(false);
+          return;
+        }
+
         const response = await getOrders();
         const ordersList = response?.data?.orders || response?.orders || response?.data || response || [];
         const safeOrders = Array.isArray(ordersList) ? ordersList : [];
         const pendingCount = safeOrders.filter((o) => (o.status || "").toString().toLowerCase() === "pending").length;
         setHasNewOrders(pendingCount > 0);
       } catch (error) {
-        console.error("Error fetching orders for badge:", error);
+        // silent fail on auth/badge check
       }
     };
     
     fetchPendingOrders();
     // Optionally set up an interval to poll for new orders
     const interval = setInterval(fetchPendingOrders, 30000); // Check every 30 seconds
-    return () => clearInterval(interval);
+    const logoutSub = DeviceEventEmitter.addListener("sellerLoggedOut", () => {
+      setHasNewOrders(false);
+    });
+    return () => {
+      clearInterval(interval);
+      logoutSub.remove();
+    };
   }, []);
 
   return (
