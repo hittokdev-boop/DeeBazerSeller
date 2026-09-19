@@ -1030,7 +1030,8 @@
 // {
 //     "status": 200,
 //     "unread_count": 2
-// }[1:18 PM]seller notification read
+// }
+// 24.[1:18 PM]seller notification read
 
 // POST : {{base_url}}api/notifications/read
 // authorization : bearer_token {seller_token}
@@ -1045,7 +1046,7 @@
 // } (edited) 
 // Rekha  [1:30 PM]
 
-//24.seller notification read all :
+//25.seller notification read all :
 
 // POST : {{base_url}}api/notifications/read-all
 // authorization : bearer_token {seller_token}
@@ -1067,6 +1068,122 @@
 // }
 // ```
 
+// 26.Seller Setting list :
+// GET {{base_url}}api/seller/shipping-settings
+// authorization : bearer_token
+
+// response:
+// {
+//     "status": true,
+//     "message": "Shipping settings retrieved successfully.",
+//     "data": {
+//         "free_shipping_above": "500.00",
+//         "standard_delivery_rate": "40.00",
+//         "express_delivery_rate": "90.00",
+//         "order_processing_time": 2
+//     }
+// }
+// 27.Seller Setting update :
+// POST {{base_url}}api/seller/shipping-settings
+// authorization : bearer_token
+// body:
+// {
+//   "free_shipping_above": 500,
+//   "standard_delivery_rate": 40,
+//   "express_delivery_rate": 90,
+//   "order_processing_time": 2
+// }
+// response:
+// {
+//     "status": true,
+//     "message": "Shipping settings updated successfully.",
+//     "data": {
+//         "free_shipping_above": 500,
+//         "standard_delivery_rate": 40,
+//         "express_delivery_rate": 90,
+//         "order_processing_time": 2
+//     }
+// }
+// 26.[12:57 PM]Store Policy list :
+// GET {{base_url}}api/seller/store-policies
+// authorization : bearer_token
+
+// response:
+// {
+//     "status": true,
+//     "message": "Store return policies retrieved successfully.",
+//     "data": [
+//         {
+//             "id": 5,
+//             "title": "No Return",
+//             "return_days": 0,
+//             "description": "Products are not eligible for return."
+//         },
+//         {
+//             "id": 1,
+//             "title": "7 Days Return",
+//             "return_days": 7,
+//             "description": "Customers can return eligible products within 7 days of delivery."
+//         },
+//         {
+//             "id": 2,
+//             "title": "10 Days Return",
+//             "return_days": 10,
+//             "description": "Customers can return eligible products within 10 days of delivery."
+//         },
+//         {
+//             "id": 3,
+//             "title": "15 Days Return",
+//             "return_days": 15,
+//             "description": "Customers can return eligible products within 15 days of delivery."
+//         },
+//         {
+//             "id": 4,
+//             "title": "30 Days Return",
+//             "return_days": 30,
+//             "description": "Customers can return eligible products within 30 days of delivery."
+//         }
+//     ]
+// }
+// 27.seller setting update:
+// POST :{{base_url}}api/seller/store-policies
+// athorization : bearer_token
+
+// body :
+// store_policy_id:1
+
+// response:
+// {
+//     "status": true,
+//     "message": "Store policy updated successfully.",
+//     "data": {
+//         "store_policy_id": 1,
+//         "policies": {
+//             "policy_type": "return",
+//             "title": "7 Days Return",
+//             "return_days": 7,
+//             "description": "Customers can return eligible products within 7 days of delivery."
+//         }
+//     }
+// }
+// 28.seller store policy :
+// GET : {{base_url}}api/seller/store-policy
+// authorization : bearer_token
+
+// response:
+// {
+//     "status": true,
+//     "message": "Store policy retrieved successfully.",
+//     "data": {
+//         "store_policy_id": 1,
+//         "policies": {
+//             "policy_type": "return",
+//             "title": "7 Days Return",
+//             "return_days": 7,
+//             "description": "Customers can return eligible products within 7 days of delivery."
+//         }
+//     }
+// }
 // | HTTP Code | `status` | When It Occurs |
 // |---|---|---|
 // | 200 | 200 | Success |

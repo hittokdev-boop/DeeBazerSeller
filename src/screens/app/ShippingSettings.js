@@ -17,18 +17,18 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getSellerProfile, updateShippingSettings } from "../../api/auth";
+import { getShippingSettings, updateShippingSettings, getSellerProfile } from "../../api/auth";
 
 const ShippingSettings = ({ navigation }) => {
   const { colors, isDarkMode } = useTheme();
 
-  const [freeShippingAbove, setFreeShippingAbove] = useState("499");
-  const [standardRate, setStandardRate] = useState("49");
-  const [expressRate, setExpressRate] = useState("99");
-  const [processingDays, setProcessingDays] = useState("1");
+  const [freeShippingAbove, setFreeShippingAbove] = useState("");
+  const [standardRate, setStandardRate] = useState("");
+  const [expressRate, setExpressRate] = useState("");
+  const [processingDays, setProcessingDays] = useState("2");
   const [shipsFrom, setShipsFrom] = useState("");
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [activeField, setActiveField] = useState(null);
   const [errors, setErrors] = useState({});
@@ -74,23 +74,36 @@ const ShippingSettings = ({ navigation }) => {
     const loadShippingData = async () => {
       setIsLoading(true);
       try {
-        // Fetch fresh profile from GET /api/seller/profile
-        const res = await getSellerProfile();
-        if (res?.data) {
-          if (res.data.shipping_settings) {
-            const ss = res.data.shipping_settings;
-            if (ss.free_shipping_above !== undefined) setFreeShippingAbove(String(ss.free_shipping_above));
-            if (ss.standard_rate !== undefined) setStandardRate(String(ss.standard_rate));
-            if (ss.express_rate !== undefined) setExpressRate(String(ss.express_rate));
-            if (ss.processing_days !== undefined) setProcessingDays(String(ss.processing_days));
-            if (ss.ships_from) setShipsFrom(ss.ships_from);
+        // Fetch fresh settings from GET /api/seller/shipping-settings
+        const res = await getShippingSettings();
+        const data = res?.data || res;
+        if (data) {
+          if (data.free_shipping_above !== undefined && data.free_shipping_above !== null) {
+            const val = parseFloat(data.free_shipping_above);
+            setFreeShippingAbove(!isNaN(val) ? String(val) : String(data.free_shipping_above));
           }
-          if (res.data.city) {
-            setShipsFrom((prev) => prev || res.data.city);
+          if (data.standard_delivery_rate !== undefined && data.standard_delivery_rate !== null) {
+            const val = parseFloat(data.standard_delivery_rate);
+            setStandardRate(!isNaN(val) ? String(val) : String(data.standard_delivery_rate));
+          }
+          if (data.express_delivery_rate !== undefined && data.express_delivery_rate !== null) {
+            const val = parseFloat(data.express_delivery_rate);
+            setExpressRate(!isNaN(val) ? String(val) : String(data.express_delivery_rate));
+          }
+          if (data.order_processing_time !== undefined && data.order_processing_time !== null) {
+            setProcessingDays(String(data.order_processing_time));
           }
         }
+
+        // Fetch seller profile city as origin fallback
+        try {
+          const profileRes = await getSellerProfile();
+          if (profileRes?.data?.city) {
+            setShipsFrom(profileRes.data.city);
+          }
+        } catch (_) {}
       } catch (err) {
-        console.error("Error loading shipping settings", err);
+        console.warn("Error loading shipping settings:", err?.message || err);
       } finally {
         setIsLoading(false);
       }
@@ -105,17 +118,14 @@ const ShippingSettings = ({ navigation }) => {
       tempErrors.freeShippingAbove = "Enter valid free shipping threshold";
     }
     if (standardRate.trim() === "" || isNaN(Number(standardRate))) {
-      tempErrors.standardRate = "Enter valid standard shipping rate";
+      tempErrors.standardRate = "Enter valid standard delivery rate";
     }
     if (expressRate.trim() === "" || isNaN(Number(expressRate))) {
-      tempErrors.expressRate = "Enter valid express shipping rate";
+      tempErrors.expressRate = "Enter valid express delivery rate";
     }
     const daysNum = parseInt(processingDays, 10);
     if (isNaN(daysNum) || daysNum < 0 || daysNum > 30) {
       tempErrors.processingDays = "Processing days must be between 0 and 30";
-    }
-    if (!shipsFrom.trim()) {
-      tempErrors.shipsFrom = "Ships from location is required";
     }
 
     setErrors(tempErrors);
@@ -129,10 +139,9 @@ const ShippingSettings = ({ navigation }) => {
     try {
       const payload = {
         free_shipping_above: Number(freeShippingAbove) || 0,
-        standard_rate: Number(standardRate) || 0,
-        express_rate: Number(expressRate) || 0,
-        processing_days: parseInt(processingDays || "1", 10),
-        ships_from: shipsFrom.trim(),
+        standard_delivery_rate: Number(standardRate) || 0,
+        express_delivery_rate: Number(expressRate) || 0,
+        order_processing_time: parseInt(processingDays || "1", 10),
       };
 
       const response = await updateShippingSettings(payload);
@@ -140,25 +149,17 @@ const ShippingSettings = ({ navigation }) => {
       showAlert({
         type: "success",
         title: "Shipping Settings Saved!",
-        message: response?.message || "Your shipping rates and delivery timelines have been updated.",
+        message: response?.message || "Shipping settings updated successfully.",
         buttonText: "Done",
         onConfirm: () => navigation.goBack(),
       });
     } catch (err) {
-      console.error("Error updating shipping settings", err);
-
-      let userFriendlyMsg = err.message || "Failed to update shipping settings. Please try again.";
-      if (typeof userFriendlyMsg === "string" && userFriendlyMsg.includes("Unknown column 'shipping_settings'")) {
-        userFriendlyMsg =
-          "Backend Database Notice:\nThe 'shipping_settings' column is not added to the database yet. Saved locally for now.";
-
-        // Database notice
-      }
+      console.warn("Error updating shipping settings:", err?.message || err);
 
       showAlert({
         type: "error",
-        title: "Save Notice",
-        message: userFriendlyMsg,
+        title: "Update Failed",
+        message: err?.message || "Failed to update shipping settings. Please try again.",
         buttonText: "Okay",
       });
     } finally {

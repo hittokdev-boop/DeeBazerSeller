@@ -123,7 +123,14 @@ export const addOrderTrackingAPI = async (id, payload) => {
   }
 
   if (!response.ok) {
-    throw new Error(responseData.message || "Failed to add tracking update");
+    let errorMsg = responseData.message || "Failed to add tracking update";
+    if (responseData.errors && typeof responseData.errors === "object") {
+      const fieldErrors = Object.values(responseData.errors).flat().join(", ");
+      if (fieldErrors) {
+        errorMsg = `${errorMsg}: ${fieldErrors}`;
+      }
+    }
+    throw new Error(errorMsg);
   }
 
   return responseData;

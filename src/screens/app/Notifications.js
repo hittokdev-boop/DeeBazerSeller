@@ -296,27 +296,78 @@ const Notifications = ({ navigation }) => {
       }
     }
 
-    // Action navigation: if it's an order notification, navigate to Orders
-    const eventType = (item?.event_type || "").toLowerCase();
+    // Parse extra payload data if available
+    let dataObj = {};
+    if (typeof item?.data === "string") {
+      try {
+        dataObj = JSON.parse(item.data);
+      } catch (e) {}
+    } else if (item?.data && typeof item.data === "object") {
+      dataObj = item.data;
+    }
+
+    // Check if target screen explicitly specified in data
+    if (dataObj?.screen) {
+      if (["Orders", "Products", "Earnings", "Dashboard", "Account"].includes(dataObj.screen)) {
+        navigation.navigate("SellerTabs", { screen: dataObj.screen });
+        return;
+      }
+      try {
+        navigation.navigate(dataObj.screen, dataObj.params || {});
+        return;
+      } catch (e) {
+        console.warn("Navigation failed for target screen:", dataObj.screen);
+      }
+    }
+
+    const eventType = (item?.event_type || item?.type || "").toLowerCase();
     const title = (item?.title || "").toLowerCase();
     const message = (item?.message || "").toLowerCase();
 
+    // 1. Order notifications: navigate to OrderDetails if order ID exists, otherwise open Orders tab
     if (
       eventType.includes("order") ||
       title.includes("order") ||
       message.includes("order")
     ) {
-      // Extract possible order number / ID (e.g. #225965 or #12)
-      const match = message.match(/#(\w+)/) || title.match(/#(\w+)/);
-      if (match && match[1]) {
-        try {
-          navigation.navigate("Orders");
-        } catch {
-          // ignore
-        }
+      const orderId =
+        item?.order_id ||
+        dataObj?.order_id ||
+        dataObj?.id;
+
+      if (orderId && !isNaN(Number(orderId))) {
+        navigation.navigate("OrderDetails", { orderId: Number(orderId) });
       } else {
-        navigation.navigate("Orders");
+        navigation.navigate("SellerTabs", { screen: "Orders" });
       }
+      return;
+    }
+
+    // 2. Product notifications
+    if (
+      eventType.includes("product") ||
+      title.includes("product") ||
+      message.includes("product")
+    ) {
+      const productId = item?.product_id || dataObj?.product_id;
+      if (productId && !isNaN(Number(productId))) {
+        navigation.navigate("ProductDetails", { productId: Number(productId) });
+      } else {
+        navigation.navigate("SellerTabs", { screen: "Products" });
+      }
+      return;
+    }
+
+    // 3. Earning / Payout / Payment notifications
+    if (
+      eventType.includes("payment") ||
+      eventType.includes("payout") ||
+      eventType.includes("earning") ||
+      title.includes("payment") ||
+      title.includes("payout")
+    ) {
+      navigation.navigate("SellerTabs", { screen: "Earnings" });
+      return;
     }
   };
 

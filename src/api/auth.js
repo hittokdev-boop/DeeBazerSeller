@@ -275,25 +275,25 @@ export const updateSellerProfile = async (formDataOrPayload, customToken = null)
 };
 
 /**
- * Update store policies (return_policy, shipping_policy, privacy_policy)
- * Endpoint: PUT /api/seller/store-policies
- * Headers: Authorization: Bearer {token}, Content-Type: application/json
+ * Fetch available store return policy options list
+ * Endpoint: GET /api/seller/store-policies
+ * Headers: Authorization: Bearer {token}
  */
-export const updateStorePolicies = async (payload, customToken = null) => {
+export const getStorePoliciesList = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
     if (!token) {
-      throw new Error("No authentication token found");
+      const error = new Error("No authentication token found");
+      error.status = 401;
+      throw error;
     }
 
     const response = await fetch(`${BASE_URL}store-policies`, {
-      method: "PUT",
+      method: "GET",
       headers: {
         Accept: "application/json",
-        "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(payload),
     });
 
     const responseText = await response.text();
@@ -305,7 +305,101 @@ export const updateStorePolicies = async (payload, customToken = null) => {
     }
 
     if (!response.ok) {
-      let errorMessage = responseData.message || "Failed to update store policies";
+      const error = new Error(responseData.message || "Failed to fetch store policies list");
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData;
+  } catch (error) {
+    console.warn("Error in getStorePoliciesList API:", error?.message || error);
+    throw error;
+  }
+};
+
+/**
+ * Fetch seller's active store policy
+ * Endpoint: GET /api/seller/store-policy
+ * Headers: Authorization: Bearer {token}
+ */
+export const getSellerStorePolicy = async (customToken = null) => {
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      const error = new Error("No authentication token found");
+      error.status = 401;
+      throw error;
+    }
+
+    const response = await fetch(`${BASE_URL}store-policy`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      const error = new Error(responseData.message || "Failed to fetch active store policy");
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData;
+  } catch (error) {
+    console.warn("Error in getSellerStorePolicy API:", error?.message || error);
+    throw error;
+  }
+};
+
+/**
+ * Update seller store policy
+ * Endpoint: POST /api/seller/store-policies
+ * Headers: Authorization: Bearer {token}, Content-Type: application/json
+ * Body: { store_policy_id: number }
+ */
+export const updateStorePolicy = async (policyIdOrPayload, customToken = null) => {
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      throw new Error("No authentication token found");
+    }
+
+    const body =
+      typeof policyIdOrPayload === "object"
+        ? policyIdOrPayload
+        : { store_policy_id: Number(policyIdOrPayload) };
+
+    const response = await fetch(`${BASE_URL}store-policies`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      let errorMessage = responseData.message || "Failed to update store policy";
       if (responseData.errors) {
         const errorList = Object.values(responseData.errors).flat();
         if (errorList.length > 0) {
@@ -320,16 +414,62 @@ export const updateStorePolicies = async (payload, customToken = null) => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in updateStorePolicies API:", error);
+    console.warn("Error in updateStorePolicy API:", error?.message || error);
+    throw error;
+  }
+};
+
+export const updateStorePolicies = updateStorePolicy;
+
+/**
+ * Fetch store shipping settings
+ * Endpoint: GET /api/seller/shipping-settings
+ * Headers: Authorization: Bearer {token}
+ */
+export const getShippingSettings = async (customToken = null) => {
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      const error = new Error("No authentication token found");
+      error.status = 401;
+      throw error;
+    }
+
+    const response = await fetch(`${BASE_URL}shipping-settings`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      const error = new Error(responseData.message || "Failed to fetch shipping settings");
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData;
+  } catch (error) {
+    console.warn("Error in getShippingSettings API:", error?.message || error);
     throw error;
   }
 };
 
 /**
  * Update store shipping settings
- * Endpoint: PUT /api/seller/shipping-settings
+ * Endpoint: POST /api/seller/shipping-settings
  * Headers: Authorization: Bearer {token}, Content-Type: application/json
- * Body fields: free_shipping_above, standard_rate, express_rate, processing_days, ships_from
+ * Body fields: free_shipping_above, standard_delivery_rate, express_delivery_rate, order_processing_time
  */
 export const updateShippingSettings = async (payload, customToken = null) => {
   try {
@@ -339,7 +479,7 @@ export const updateShippingSettings = async (payload, customToken = null) => {
     }
 
     const response = await fetch(`${BASE_URL}shipping-settings`, {
-      method: "PUT",
+      method: "POST",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
@@ -372,7 +512,7 @@ export const updateShippingSettings = async (payload, customToken = null) => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in updateShippingSettings API:", error);
+    console.warn("Error in updateShippingSettings API:", error?.message || error);
     throw error;
   }
 };
