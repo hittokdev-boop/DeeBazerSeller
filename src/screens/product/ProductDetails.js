@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,8 @@ import {
   Alert,
   Modal,
   TextInput,
+  FlatList,
+  Dimensions,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { useNavigation, useRoute } from "@react-navigation/native";
@@ -20,6 +22,9 @@ import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { getSellerProductDetails, deleteSellerProduct, updateProductStock } from "../../api/auth";
 import { CustomAlert } from "../../context/AlertContext";
+
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const SLIDER_WIDTH = SCREEN_WIDTH - 32;
 
 const formatCurrency = (amount) => {
   if (amount === undefined || amount === null || isNaN(Number(amount))) return "₹0.00";
@@ -52,6 +57,70 @@ const stripHtml = (html) => {
     .trim();
 };
 
+export const normalizeImageUrl = (img) => {
+  if (!img) return null;
+  let uri = null;
+  if (typeof img === "string") {
+    uri = img.trim();
+  } else if (typeof img === "object") {
+    uri = img.image_url || img.url || img.path || img.src || img.uri || null;
+    if (typeof uri !== "string") return null;
+    uri = uri.trim();
+  }
+  if (!uri) return null;
+
+  if (
+    uri.startsWith("http://") ||
+    uri.startsWith("https://") ||
+    uri.startsWith("data:") ||
+    uri.startsWith("file:") ||
+    uri.startsWith("blob:")
+  ) {
+    return uri;
+  }
+
+  if (uri.startsWith("/")) {
+    return `https://deebazar.com${uri}`;
+  }
+  return `https://deebazar.com/${uri}`;
+};
+
+export const getProductImages = (prod) => {
+  if (!prod) return [];
+  const list = [];
+
+  const addImage = (rawImg) => {
+    const formatted = normalizeImageUrl(rawImg);
+    if (formatted && !list.includes(formatted)) {
+      list.push(formatted);
+    }
+  };
+
+  if (prod.image_url) addImage(prod.image_url);
+  if (prod.image) addImage(prod.image);
+  if (prod.thumbnail) addImage(prod.thumbnail);
+  if (prod.featured_image) addImage(prod.featured_image);
+
+  const rawGallery = prod.gallery || prod.images || prod.product_images || prod.gallery_images;
+
+  if (Array.isArray(rawGallery)) {
+    rawGallery.forEach((item) => addImage(item));
+  } else if (typeof rawGallery === "string" && rawGallery.trim()) {
+    try {
+      const parsed = JSON.parse(rawGallery);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item) => addImage(item));
+      } else {
+        rawGallery.split(",").forEach((item) => addImage(item));
+      }
+    } catch (e) {
+      rawGallery.split(",").forEach((item) => addImage(item));
+    }
+  }
+
+  return list;
+};
+
 const getStatusBadge = (status) => {
   const s = (status || "").toLowerCase();
   if (s === "approved" || s === "active") {
@@ -73,11 +142,20 @@ const ProductDetails = () => {
 
   const initialProduct = route.params?.product || null;
   const productId =
-
-    initialProduct?.product_id;
+    route.params?.productId ||
+    route.params?.product_id ||
+    route.params?.id ||
+    initialProduct?.product_id ||
+    initialProduct?.id ||
+    initialProduct?.productId;
 
   const [product, setProduct] = useState(initialProduct);
   const [selectedImage, setSelectedImage] = useState(null);
+  const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+  const [modalImageUri, setModalImageUri] = useState(null);
+  const [showImageModal, setShowImageModal] = useState(false);
+  const sliderRef = useRef(null);
+
   const [isLoading, setIsLoading] = useState(!initialProduct);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState(null);
@@ -86,6 +164,27 @@ const ProductDetails = () => {
   const [showStockModal, setShowStockModal] = useState(false);
   const [stockInputValue, setStockInputValue] = useState("");
   const [isUpdatingStock, setIsUpdatingStock] = useState(false);
+
+  const handleSliderScroll = (event) => {
+    const slideSize = event.nativeEvent.layoutMeasurement.width;
+    if (!slideSize) return;
+    const offset = event.nativeEvent.contentOffset.x;
+    const index = Math.round(offset / slideSize);
+    if (index >= 0 && index !== activeSlideIndex) {
+      setActiveSlideIndex(index);
+    }
+  };
+
+  const scrollToImageIndex = (index) => {
+    setActiveSlideIndex(index);
+    if (sliderRef.current) {
+      try {
+        sliderRef.current.scrollToIndex({ index, animated: true });
+      } catch (e) {
+        // Safe fallback if Layout hasn't completed
+      }
+    }
+  };
 
   const fetchDetails = useCallback(
     async (isRefresh = false) => {
@@ -99,18 +198,17 @@ const ProductDetails = () => {
 
       try {
         const res = await getSellerProductDetails(productId);
-        if (res && res.data) {
-          setProduct(res.data);
-          if (res.data.image_url) {
-            setSelectedImage(res.data.image_url);
+        const data = res?.data || res?.product || res;
+        if (data && typeof data === "object") {
+          setProduct(data);
+          const images = getProductImages(data);
+          if (images.length > 0) {
+            setSelectedImage(images[0]);
           }
-        } else {
-          setProduct(null);
         }
       } catch (err) {
         console.error("Failed to load product details:", err);
         setFetchError(err?.message || "Failed to load product details");
-        setProduct(null);
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
@@ -125,13 +223,9 @@ const ProductDetails = () => {
 
   useEffect(() => {
     if (product) {
-      if (!selectedImage) {
-        setSelectedImage(
-          product.image_url ||
-          product.image ||
-          (Array.isArray(product.gallery) && product.gallery[0]) ||
-          null
-        );
+      const images = getProductImages(product);
+      if (images.length > 0 && (!selectedImage || !images.includes(selectedImage))) {
+        setSelectedImage(images[0]);
       }
     }
   }, [product]);
@@ -281,56 +375,118 @@ const ProductDetails = () => {
             />
           }
         >
-          {/* Main Product Image */}
-          <View style={[styles.imageCard, { backgroundColor: colors.cardBg, justifyContent: 'center', alignItems: 'center' }]}>
-            {!selectedImage && (
-              <ActivityIndicator size="large" color={COLORS.primary} style={{ position: 'absolute' }} />
-            )}
-            <Image
-              source={{
-                uri: selectedImage || null,
-              }}
-              style={styles.mainImage}
-              onError={(e) => {
-                console.error('Image failed to load (Main):', e.nativeEvent?.error || 'Unknown error');
-                setSelectedImage(null);
-              }}
-            />
-            {hasDiscount && (
-              <View style={styles.discountBadge}>
-                <Text style={styles.discountBadgeText}>{discountPercent}% OFF</Text>
-              </View>
-            )}
-          </View>
+          {/* Main Product Image Slider */}
+          {(() => {
+            const allImages = getProductImages(product);
+            const totalImages = allImages.length;
 
-          {/* Interactive Image Gallery */}
-          {galleryList.length > 1 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.galleryContainer}
-            >
-              {galleryList.map((imgUri, index) => {
-                const isSelected = selectedImage === imgUri;
-                return (
-                  <TouchableOpacity
-                    key={index}
-                    activeOpacity={0.85}
-                    onPress={() => setSelectedImage(imgUri)}
-                    style={[
-                      styles.galleryItem,
-                      {
-                        borderColor: isSelected ? COLORS.primary : colors.borderLight,
-                        borderWidth: isSelected ? 2.5 : 1,
-                      },
-                    ]}
+            return (
+              <>
+                <View style={[styles.imageCard, { backgroundColor: colors.cardBg }]}>
+                  {totalImages > 0 ? (
+                    <FlatList
+                      ref={sliderRef}
+                      data={allImages}
+                      horizontal
+                      pagingEnabled
+                      showsHorizontalScrollIndicator={false}
+                      keyExtractor={(_, index) => index.toString()}
+                      onScroll={handleSliderScroll}
+                      scrollEventThrottle={16}
+                      getItemLayout={(_, index) => ({
+                        length: SLIDER_WIDTH,
+                        offset: SLIDER_WIDTH * index,
+                        index,
+                      })}
+                      renderItem={({ item }) => (
+                        <TouchableOpacity
+                          activeOpacity={0.95}
+                          onPress={() => {
+                            setModalImageUri(item);
+                            setShowImageModal(true);
+                          }}
+                          style={{ width: SLIDER_WIDTH, height: 280, justifyContent: 'center', alignItems: 'center' }}
+                        >
+                          <Image
+                            source={{ uri: item }}
+                            style={styles.mainImage}
+                          />
+                        </TouchableOpacity>
+                      )}
+                    />
+                  ) : (
+                    <View style={styles.noImagePlaceholder}>
+                      <Ionicons name="image-outline" size={60} color={colors.textSecondary} />
+                      <Text style={[styles.noImageText, { color: colors.textSecondary }]}>
+                        No image available
+                      </Text>
+                    </View>
+                  )}
+
+                  {hasDiscount && (
+                    <View style={styles.discountBadge}>
+                      <Text style={styles.discountBadgeText}>{discountPercent}% OFF</Text>
+                    </View>
+                  )}
+
+                  {/* Image Counter Badge */}
+                  {totalImages > 1 && (
+                    <View style={styles.imageCountBadge}>
+                      <Ionicons name="images-outline" size={12} color="#FFFFFF" />
+                      <Text style={styles.imageCountText}>
+                        {activeSlideIndex + 1} / {totalImages}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Pagination Dots */}
+                  {totalImages > 1 && (
+                    <View style={styles.paginationDotsContainer}>
+                      {allImages.map((_, i) => (
+                        <TouchableOpacity
+                          key={i}
+                          onPress={() => scrollToImageIndex(i)}
+                          style={[
+                            styles.dot,
+                            i === activeSlideIndex ? styles.dotActive : styles.dotInactive,
+                          ]}
+                        />
+                      ))}
+                    </View>
+                  )}
+                </View>
+
+                {/* Interactive Image Gallery Thumbnails */}
+                {totalImages > 1 && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.galleryContainer}
                   >
-                    <Image source={{ uri: imgUri }} style={styles.galleryImage} />
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          )}
+                    {allImages.map((imgUri, index) => {
+                      const isSelected = activeSlideIndex === index;
+                      return (
+                        <TouchableOpacity
+                          key={index}
+                          activeOpacity={0.85}
+                          onPress={() => scrollToImageIndex(index)}
+                          style={[
+                            styles.galleryItem,
+                            {
+                              borderColor: isSelected ? COLORS.primary : colors.borderLight,
+                              borderWidth: isSelected ? 2.5 : 1,
+                            },
+                          ]}
+                        >
+                          <Image source={{ uri: imgUri }} style={styles.galleryImage} />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </>
+            );
+          })()}
 
           {/* Main Info Card */}
           <View style={[styles.infoCard, { backgroundColor: colors.cardBg }]}>
@@ -569,6 +725,25 @@ const ProductDetails = () => {
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Full-Screen Image Preview Modal */}
+      <Modal visible={showImageModal} transparent animationType="fade" onRequestClose={() => setShowImageModal(false)}>
+        <View style={styles.fullImageModalOverlay}>
+          <TouchableOpacity
+            style={styles.fullImageCloseBtn}
+            onPress={() => setShowImageModal(false)}
+          >
+            <Ionicons name="close-circle" size={36} color="#FFFFFF" />
+          </TouchableOpacity>
+          {modalImageUri && (
+            <Image
+              source={{ uri: modalImageUri }}
+              style={styles.fullImageModalContent}
+              resizeMode="contain"
+            />
+          )}
         </View>
       </Modal>
     </View>
@@ -1002,5 +1177,76 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: COLORS.textContrast,
+  },
+  noImagePlaceholder: {
+    width: "100%",
+    height: 280,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: COLORS.backgroundAlt,
+  },
+  noImageText: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  imageCountBadge: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  imageCountText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  paginationDotsContainer: {
+    position: "absolute",
+    bottom: 12,
+    flexDirection: "row",
+    alignSelf: "center",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  dot: {
+    borderRadius: 4,
+  },
+  dotActive: {
+    width: 18,
+    height: 6,
+    backgroundColor: COLORS.primary,
+  },
+  dotInactive: {
+    width: 6,
+    height: 6,
+    backgroundColor: "rgba(255, 255, 255, 0.75)",
+  },
+  fullImageModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.94)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullImageCloseBtn: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 50 : 35,
+    right: 20,
+    zIndex: 20,
+    padding: 6,
+  },
+  fullImageModalContent: {
+    width: "100%",
+    height: "85%",
   },
 });

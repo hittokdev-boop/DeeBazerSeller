@@ -140,21 +140,6 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
       }
     }
 
-    if (step === 3) {
-      if (!form.bankName.trim()) {
-        stepErrors.bankName = "Bank name is required";
-      }
-      if (!form.accountNo.trim() || form.accountNo.trim().length < 9) {
-        stepErrors.accountNo = "Enter a valid account number (9+ digits)";
-      }
-      if (!form.ifscCode.trim()) {
-        stepErrors.ifscCode = "IFSC code is required";
-      }
-      if (!form.bankHolderName.trim()) {
-        stepErrors.bankHolderName = "Account holder name is required";
-      }
-    }
-
     setErrors(stepErrors);
     return Object.keys(stepErrors).length === 0;
   };
@@ -296,8 +281,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
     const steps = [
       { id: 1, label: "Profile" },
       { id: 2, label: "Store" },
-      { id: 3, label: "Bank & Legal" },
-      { id: 4, label: "Ready" },
+      { id: 3, label: "Ready" },
     ];
 
     return (
@@ -684,6 +668,37 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
               {errors.description && <Text style={styles.errorText}>{errors.description}</Text>}
             </View>
 
+            {/* Optional Tax & Legal Identifiers */}
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
+              <View style={[styles.inputWrapper, { flex: 1, marginRight: 8 }]}>
+                <Text style={styles.inputLabel}>GST Number (Optional)</Text>
+                <View style={styles.inputFieldContainer}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="GSTIN ID"
+                    placeholderTextColor={COLORS.textGrayPlaceholder}
+                    autoCapitalize="characters"
+                    value={form.gstin}
+                    onChangeText={(val) => handleInputChange("gstin", val)}
+                  />
+                </View>
+              </View>
+
+              <View style={[styles.inputWrapper, { flex: 1 }]}>
+                <Text style={styles.inputLabel}>PAN Number (Optional)</Text>
+                <View style={styles.inputFieldContainer}>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="PAN Card No"
+                    placeholderTextColor={COLORS.textGrayPlaceholder}
+                    autoCapitalize="characters"
+                    value={form.panNumber}
+                    onChangeText={(val) => handleInputChange("panNumber", val)}
+                  />
+                </View>
+              </View>
+            </View>
+
             {/* Logo Image Picker */}
             <View style={styles.inputWrapper}>
               <Text style={styles.inputLabel}>Store Logo / Profile Picture (Optional)</Text>
@@ -713,145 +728,6 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
         );
 
       case 3:
-        return (
-          <View style={styles.stepCard}>
-            <Text style={styles.stepTitle}>Bank & Legal</Text>
-            <Text style={styles.stepSubtitle}>
-              Provide legal entity and payout bank details.
-            </Text>
-
-            {/* GSTIN & PAN Row */}
-            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-              <View style={[styles.inputWrapper, { flex: 1, marginRight: 8 }]}>
-                <Text style={styles.inputLabel}>GST Number (Opt)</Text>
-                <View style={styles.inputFieldContainer}>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="GSTIN ID"
-                    placeholderTextColor={COLORS.textGrayPlaceholder}
-                    autoCapitalize="characters"
-                    value={form.gstin}
-                    onChangeText={(val) => handleInputChange("gstin", val)}
-                  />
-                </View>
-              </View>
-
-              <View style={[styles.inputWrapper, { flex: 1 }]}>
-                <Text style={styles.inputLabel}>PAN Number (Opt)</Text>
-                <View style={styles.inputFieldContainer}>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="PAN Card No"
-                    placeholderTextColor={COLORS.textGrayPlaceholder}
-                    autoCapitalize="characters"
-                    value={form.panNumber}
-                    onChangeText={(val) => handleInputChange("panNumber", val)}
-                  />
-                </View>
-              </View>
-            </View>
-
-            {/* Bank Name */}
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Bank Name</Text>
-              <View
-                style={[
-                  styles.inputFieldContainer,
-                  activeField === "bankName" && styles.inputFieldFocus,
-                  errors.bankName && styles.inputFieldError,
-                ]}
-              >
-                <Ionicons name="business-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="e.g. State Bank of India"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
-                  value={form.bankName}
-                  onChangeText={(val) => handleInputChange("bankName", val)}
-                  onFocus={() => setActiveField("bankName")}
-                  onBlur={() => setActiveField(null)}
-                />
-              </View>
-              {errors.bankName && <Text style={styles.errorText}>{errors.bankName}</Text>}
-            </View>
-
-            {/* Account Holder Name */}
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Bank Account Holder Name</Text>
-              <View
-                style={[
-                  styles.inputFieldContainer,
-                  activeField === "bankHolderName" && styles.inputFieldFocus,
-                  errors.bankHolderName && styles.inputFieldError,
-                ]}
-              >
-                <Ionicons name="person-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Enter name registered in bank"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
-                  value={form.bankHolderName}
-                  onChangeText={(val) => handleInputChange("bankHolderName", val)}
-                  onFocus={() => setActiveField("bankHolderName")}
-                  onBlur={() => setActiveField(null)}
-                />
-              </View>
-              {errors.bankHolderName && <Text style={styles.errorText}>{errors.bankHolderName}</Text>}
-            </View>
-
-            {/* Account Number */}
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Bank Account Number</Text>
-              <View
-                style={[
-                  styles.inputFieldContainer,
-                  activeField === "accountNo" && styles.inputFieldFocus,
-                  errors.accountNo && styles.inputFieldError,
-                ]}
-              >
-                <Ionicons name="wallet-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Enter bank account number"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
-                  keyboardType="number-pad"
-                  value={form.accountNo}
-                  onChangeText={(val) => handleInputChange("accountNo", val)}
-                  onFocus={() => setActiveField("accountNo")}
-                  onBlur={() => setActiveField(null)}
-                />
-              </View>
-              {errors.accountNo && <Text style={styles.errorText}>{errors.accountNo}</Text>}
-            </View>
-
-            {/* IFSC Code */}
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>IFSC Code</Text>
-              <View
-                style={[
-                  styles.inputFieldContainer,
-                  activeField === "ifscCode" && styles.inputFieldFocus,
-                  errors.ifscCode && styles.inputFieldError,
-                ]}
-              >
-                <Ionicons name="git-branch-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="11-digit IFSC code"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
-                  autoCapitalize="characters"
-                  value={form.ifscCode}
-                  onChangeText={(val) => handleInputChange("ifscCode", val)}
-                  onFocus={() => setActiveField("ifscCode")}
-                  onBlur={() => setActiveField(null)}
-                />
-              </View>
-              {errors.ifscCode && <Text style={styles.errorText}>{errors.ifscCode}</Text>}
-            </View>
-          </View>
-        );
-
-      case 4:
         return (
           <View style={styles.successCard}>
             <View style={styles.checkmarkOuterCircle}>
@@ -892,22 +768,22 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
               <View style={styles.reviewDivider} />
 
               <View style={styles.reviewRow}>
-                <Text style={styles.reviewLabel}>Bank Settlement</Text>
+                <Text style={styles.reviewLabel}>Pickup City</Text>
                 <Text style={styles.reviewValue}>
-                  {form.bankName} (A/C: *{form.accountNo.slice(-4) || "0000"})
+                  {form.city ? `${form.city}, ${form.state || ""}` : "Not specified"}
                 </Text>
               </View>
             </View>
 
             <View style={styles.infoBadge}>
               <Ionicons
-                name="information-circle-outline"
+                name="wallet-outline"
                 size={20}
                 color={COLORS.info}
                 style={styles.infoBadgeIcon}
               />
               <Text style={styles.infoText}>
-                Your products can be listed immediately once dashboard opens.
+                Payout bank account details can be added anytime from your Wallet settings.
               </Text>
             </View>
           </View>
@@ -969,7 +845,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
             </TouchableOpacity>
           )}
 
-          {currentStep < 4 ? (
+          {currentStep < 3 ? (
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={handleNext}

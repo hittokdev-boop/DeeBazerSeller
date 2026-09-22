@@ -26,6 +26,34 @@ import { CustomAlert } from "../../context/AlertContext";
 import LoggedOutView from "../../components/common/LoggedOutView";
 
 
+const normalizeImageUrl = (img) => {
+  if (!img) return null;
+  let uri = null;
+  if (typeof img === "string") {
+    uri = img.trim();
+  } else if (typeof img === "object") {
+    uri = img.image_url || img.url || img.path || img.src || img.uri || null;
+    if (typeof uri !== "string") return null;
+    uri = uri.trim();
+  }
+  if (!uri) return null;
+
+  if (
+    uri.startsWith("http://") ||
+    uri.startsWith("https://") ||
+    uri.startsWith("data:") ||
+    uri.startsWith("file:") ||
+    uri.startsWith("blob:")
+  ) {
+    return uri;
+  }
+
+  if (uri.startsWith("/")) {
+    return `https://deebazar.com${uri}`;
+  }
+  return `https://deebazar.com/${uri}`;
+};
+
 const STATUS_OPTIONS = [
   { label: "All", value: "all" },
   { label: "Approved", value: "approved" },
@@ -385,11 +413,12 @@ const Products = () => {
 
           <Image
             source={{
-              uri:
+              uri: normalizeImageUrl(
                 item.image_url ||
                 item.image ||
-                item.images?.[0] ||
-                null,
+                (Array.isArray(item.images) ? item.images[0] : item.images) ||
+                item.thumbnail
+              ),
             }}
             style={styles.productImage}
           />
