@@ -39,6 +39,7 @@ const OrderDetails = ({ route, navigation }) => {
     try {
       setLoading(true);
       const response = await getOrder(orderId);
+      
       // Backend returns either { data: { ... } } or just the object
       setOrder(response?.data || response);
 

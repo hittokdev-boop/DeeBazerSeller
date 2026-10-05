@@ -25,6 +25,9 @@ import Account from "../screens/app/Account";
 import OrderDetails from "../screens/product/OrderDetails";
 import ProductDetails from "../screens/product/ProductDetails";
 import AddProductScreen from "../screens/product/AddProductScreen";
+import AddSkuScreen from "../screens/product/AddSkuScreen";
+import AdminApprovedProducts from "../screens/product/AdminApprovedProducts";
+import SkuDetails from "../screens/product/SkuDetails";
 import EditProduct from "../screens/product/EditProduct";
 import Inventory from "../screens/product/Inventory";
 import AIProductStudio from "../screens/product/AIProductStudio";
@@ -126,6 +129,9 @@ const AppScreens = () => {
       <Stack.Screen name="OrderDetails" component={OrderDetails} />
       <Stack.Screen name="ProductDetails" component={ProductDetails} />
       <Stack.Screen name="AddProduct" component={AddProductScreen} />
+      <Stack.Screen name="AddSku" component={AddSkuScreen} />
+      <Stack.Screen name="AdminApprovedProducts" component={AdminApprovedProducts} />
+      <Stack.Screen name="SkuDetails" component={SkuDetails} />
       <Stack.Screen name="EditProduct" component={EditProduct} />
       <Stack.Screen name="Inventory" component={Inventory} />
       <Stack.Screen name="AIProductStudio" component={AIProductStudio} />

@@ -12,6 +12,41 @@ export const isAuthError = (error) => {
   );
 };
 
+export const isTechnicalError = (msg) => {
+  if (!msg || typeof msg !== "string") return false;
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("sqlstate") ||
+    lower.includes("syntax error") ||
+    lower.includes("queryexception") ||
+    lower.includes("pdoexception") ||
+    lower.includes("base table") ||
+    lower.includes("view not found") ||
+    lower.includes("doesn't exist") ||
+    lower.includes("does not exist") ||
+    lower.includes("select count") ||
+    lower.includes("column not found") ||
+    lower.includes("unknown column") ||
+    lower.includes("foreign key") ||
+    lower.includes("call to undefined") ||
+    lower.includes("fatal error") ||
+    lower.includes("uncaught error") ||
+    lower.includes("illuminate\\") ||
+    lower.includes("stack trace") ||
+    lower.includes("integrity constraint") ||
+    lower.includes("sql:")
+  );
+};
+
+export const sanitizeErrorMessage = (msg, fallback = "Something went wrong. Please try again.") => {
+  if (!msg || typeof msg !== "string") return fallback;
+  if (isTechnicalError(msg)) {
+    console.warn("[API Technical Error Suppressed]:", msg);
+    return fallback;
+  }
+  return msg;
+};
+
 export const clearAuthSession = async () => {
   const keys = [
     "token",
@@ -110,6 +145,7 @@ export const getSellerProfile = async (customToken = null) => {
 
     const responseText = await response.text();
     let responseData;
+    // console.log("getSellerProfile responseText:", responseText); // Log the raw response text for debugging
     try {
       responseData = JSON.parse(responseText);
     } catch (e) {
@@ -125,6 +161,24 @@ export const getSellerProfile = async (customToken = null) => {
 
     return responseData;
   } catch (error) {
+    const isProfileFormattingError =
+      error?.status >= 500 &&
+      typeof error?.message === "string" &&
+      error.message.includes("formatProfile");
+
+    if (isProfileFormattingError) {
+      try {
+        console.warn(
+          "Seller profile endpoint failed while formatting a missing seller profile; falling back to seller details."
+        );
+        return await getSellerMe(customToken);
+      } catch (fallbackError) {
+        if (!isAuthError(fallbackError)) {
+          console.error("Error in seller profile fallback API:", fallbackError);
+        }
+      }
+    }
+
     if (!isAuthError(error)) {
       console.error("Error in getSellerProfile API:", error);
     }
@@ -191,7 +245,16 @@ export const updateSellerAccount = async (payload, customToken = null) => {
       throw new Error(`Server returned invalid response: ${responseText}`);
     }
 
-    if (!response.ok) {
+    const isSuccess =
+      response.ok &&
+      (responseData.status === undefined ||
+        responseData.status === 200 ||
+        responseData.status === "200" ||
+        responseData.status === "success" ||
+        responseData.status === true) &&
+      responseData.success !== false;
+
+    if (!isSuccess) {
       let errorMessage = responseData.message || "Failed to update account";
       if (responseData.errors) {
         const errorList = Object.values(responseData.errors).flat();
@@ -200,9 +263,18 @@ export const updateSellerAccount = async (payload, customToken = null) => {
         }
       }
       const error = new Error(errorMessage);
-      error.status = response.status;
+      error.status = response.status || responseData.status || 400;
       error.data = responseData;
+      error.errors = responseData.errors;
       throw error;
+    }
+
+    if (responseData?.data?.user) {
+      try {
+        await AsyncStorage.setItem("userData", JSON.stringify(responseData.data.user));
+      } catch (e) {
+        // safe fallback
+      }
     }
 
     return responseData;
@@ -244,7 +316,7 @@ export const updateSellerProfile = async (formDataOrPayload, customToken = null)
       headers,
       body,
     });
-
+    console.log("updateSellerProfile response status:", response.status);
     const responseText = await response.text();
     let responseData;
     try {
@@ -339,7 +411,7 @@ export const getSellerStorePolicy = async (customToken = null) => {
         Authorization: `Bearer ${token}`,
       },
     });
-
+    console.log("getSellerStorePolicy response:", token);
     const responseText = await response.text();
     let responseData;
     try {
@@ -547,7 +619,8 @@ export const getSellerDashboard = async (customToken = null) => {
     }
 
     if (!response.ok) {
-      const error = new Error(responseData.message || "Failed to fetch dashboard data");
+      console.warn("getSellerDashboard non-ok response:", response.status, responseData);
+      const error = new Error(sanitizeErrorMessage(responseData?.message, "Failed to fetch dashboard data"));
       error.status = response.status;
       error.data = responseData;
       throw error;
@@ -556,7 +629,7 @@ export const getSellerDashboard = async (customToken = null) => {
     return responseData;
   } catch (error) {
     if (!isAuthError(error)) {
-      console.error("Error in getSellerDashboard API:", error);
+      console.warn("getSellerDashboard API:", error?.message || error);
     }
     throw error;
   }
@@ -595,6 +668,7 @@ export const getSellerProducts = async (params = {}, customToken = null) => {
     }
 
     const queryString = queryParts.length > 0 ? `?${queryParts.join("&")}` : "";
+
     const response = await fetch(`${BASE_URL}products${queryString}`, {
       method: "GET",
       headers: {
@@ -605,6 +679,7 @@ export const getSellerProducts = async (params = {}, customToken = null) => {
     });
 
     const responseText = await response.text();
+    // console.log(responseText, 'kjdjf')
     let responseData;
     try {
       responseData = JSON.parse(responseText);
@@ -613,7 +688,7 @@ export const getSellerProducts = async (params = {}, customToken = null) => {
     }
 
     if (!response.ok) {
-      const error = new Error(responseData.message || "Failed to fetch products");
+      const error = new Error(sanitizeErrorMessage(responseData.message, "Failed to fetch products"));
       error.status = response.status;
       error.data = responseData;
       throw error;
@@ -652,7 +727,7 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
         Authorization: `Bearer ${token}`,
       },
     });
-
+    console.log(token)
     const responseText = await response.text();
     let responseData;
 
@@ -664,7 +739,7 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
     }
 
     if (!response.ok) {
-      const error = new Error(responseData.message || "Failed to fetch product details");
+      const error = new Error(sanitizeErrorMessage(responseData.message, "Failed to fetch product details"));
       error.status = response.status;
       error.data = responseData;
       throw error;
@@ -680,11 +755,26 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
 };
 
 /**
- * Submit a new product for admin review (status: pending)
- * Endpoint: POST /api/seller/products
- * Headers: Authorization: Bearer {token}, Content-Type: multipart/form-data
- * Fields: name, price, sale_price, stock_quantity, category_id, short_description, description,
- *         sub_category_id, child_category_id, brand_id, sku, weight, tags[], min_stock_alert, image, gallery[]
+ * Product add by seller :
+ * Endpoint: POST {{base_url}}api/seller/products
+ * Authorization: Bearer {token}
+ * Request format: multipart/form-data
+ *
+ * Body:
+ *   name: string (required)
+ *   short_description: string (optional)
+ *   description: string (optional)
+ *   category_id: integer (required)
+ *   tags[]: array of strings (e.g. cotton, mes)
+ *   image: file (primary image)
+ *   gallery[]: files (additional gallery images)
+ *
+ * Response (201):
+ * {
+ *     "status": 201,
+ *     "message": "Product submitted for review. It will be visible once approved by admin. Then add a SKU/listing to sell it.",
+ *     "data": { ... }
+ * }
  */
 export const createSellerProduct = async (formDataOrPayload, customToken = null) => {
   const controller = new AbortController();
@@ -767,7 +857,7 @@ export const createSellerProduct = async (formDataOrPayload, customToken = null)
           errorMessage = `${errorMessage}\n${errDetail}`;
         }
       }
-      const error = new Error(errorMessage);
+      const error = new Error(sanitizeErrorMessage(errorMessage, "Failed to create product"));
       error.status = response.status;
       error.data = responseData;
       throw error;
@@ -963,18 +1053,22 @@ export const deleteSellerProduct = async (productId, customToken = null) => {
 };
 
 /**
- * Quick stock-only update (no re-review triggered)
- * Endpoint: PATCH /api/seller/products/{id}/stock
+ * Update SKU stock quantity
+ * Endpoint: PATCH /api/seller/skus/{id}/stock
  * Body: { stock_quantity: number }
  */
-export const updateProductStock = async (productId, stockQuantity, customToken = null) => {
+export const updateSkuStock = async (skuId, stockQuantity, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
     if (!token) {
       throw new Error("No authentication token found");
     }
 
-    const response = await fetch(`${BASE_URL}products/${productId}/stock`, {
+    if (!skuId) {
+      throw new Error("SKU ID is required");
+    }
+
+    const response = await fetch(`${BASE_URL}skus/${skuId}/stock`, {
       method: "PATCH",
       headers: {
         Accept: "application/json",
@@ -1001,9 +1095,242 @@ export const updateProductStock = async (productId, stockQuantity, customToken =
 
     return responseData;
   } catch (error) {
-    console.warn("updateProductStock:", error?.message);
+    if (!isAuthError(error)) {
+      console.warn("updateSkuStock:", error?.message);
+    }
     throw error;
   }
 };
+
+// Alias for backwards compatibility if needed
+export const updateProductStock = updateSkuStock;
+
+/**
+ * Fetch unmapped approved SKUs from master catalog
+ * Endpoint: GET /api/seller/skus/approved
+ * Headers: Authorization: Bearer {token}
+ */
+export const getUnmappedApprovedSkus = async (customToken = null) => {
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      const err = new Error("No authentication token found");
+      err.status = 401;
+      throw err;
+    }
+
+    const response = await fetch(`${BASE_URL}skus/approved`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      const error = new Error(responseData.message || "Failed to fetch approved SKUs");
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData?.data || responseData;
+  } catch (error) {
+    console.warn("getUnmappedApprovedSkus error:", error?.message);
+    throw error;
+  }
+};
+
+/**
+ * Fetch approved master products
+ * Endpoint: GET /api/seller/products/approved
+ * Headers: Authorization: Bearer {token}
+ */
+export const getApprovedProducts = async (customToken = null) => {
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      const err = new Error("No authentication token found");
+      err.status = 401;
+      throw err;
+    }
+
+    const response = await fetch(`${BASE_URL}products/approved`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      const error = new Error(responseData.message || "Failed to fetch approved products");
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData?.data || responseData;
+  } catch (error) {
+    console.warn("getApprovedProducts error:", error?.message);
+    throw error;
+  }
+};
+
+/**
+ * Add / Map a SKU to the seller's catalog
+ * Endpoint: POST /api/seller/skus
+ * Headers: Authorization: Bearer {token}
+ * Supports:
+ *   Case 1: Mapping existing SKU: { product_id, product_sku_id, price, sale_price, stock_quantity, min_stock_alert, seller_sku }
+ *   Case 2: Adding new SKU variant (FormData): { product_id, name, weight, length, width, height, price, sale_price, stock_quantity, min_stock_alert, seller_sku, image }
+ */
+export const addSellerSku = async (formDataOrPayload, customToken = null) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 35000);
+
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      throw new Error("No authentication token found");
+    }
+
+    const isFormData = typeof FormData !== "undefined" && formDataOrPayload instanceof FormData;
+
+    const headers = {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    };
+
+    let body = formDataOrPayload;
+    if (!isFormData) {
+      const formData = new FormData();
+      Object.keys(formDataOrPayload).forEach((key) => {
+        const val = formDataOrPayload[key];
+        if (val !== undefined && val !== null) {
+          formData.append(key, String(val));
+        }
+      });
+      body = formData;
+    }
+
+    const response = await fetch(`${BASE_URL}skus`, {
+      method: "POST",
+      headers,
+      body,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      let errorMsg = responseData.message || "Failed to add SKU";
+      if (responseData.errors && typeof responseData.errors === "object") {
+        const firstKey = Object.keys(responseData.errors)[0];
+        if (Array.isArray(responseData.errors[firstKey])) {
+          errorMsg = responseData.errors[firstKey][0];
+        } else if (typeof responseData.errors[firstKey] === "string") {
+          errorMsg = responseData.errors[firstKey];
+        }
+      }
+      const error = new Error(errorMsg);
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === "AbortError") {
+      throw new Error("Request timed out. Please check your internet connection.");
+    }
+    console.warn("addSellerSku error:", error?.message);
+    throw error;
+  }
+};
+
+/**
+ * Fetch detailed information for a specific seller SKU
+ * Endpoint: GET /api/seller/skus/{id}
+ * Headers: Authorization: Bearer {token}
+ */
+export const getSellerSkuDetails = async (skuId, customToken = null) => {
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      const err = new Error("No authentication token found");
+      err.status = 401;
+      throw err;
+    }
+
+    if (!skuId) {
+      throw new Error("SKU ID is required");
+    }
+
+    const response = await fetch(`${BASE_URL}skus/${skuId}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const responseText = await response.text();
+    console.log("responseText getSellerSkuDetails", responseText);
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      const error = new Error(responseData.message || "Failed to fetch SKU details");
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData;
+  } catch (error) {
+    if (!isAuthError(error)) {
+      console.warn("getSellerSkuDetails error:", error?.message);
+    }
+    throw error;
+  }
+};
+
+export const getSellerSku = getSellerSkuDetails;
+export const showSku = getSellerSkuDetails;
+export const getSku = getSellerSkuDetails;
+
 
 

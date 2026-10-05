@@ -160,10 +160,10 @@ export async function getFCMToken() {
       token = await AsyncStorage.getItem(FCM_TOKEN_KEY);
     }
 
-    console.log('\n========================================');
+    // console.log('\n========================================');
     console.log('🔥 [FCM TOKEN] 🔥 :');
     console.log(token);
-    console.log('========================================\n');
+    // console.log('========================================\n');
 
     return token;
   } catch (error) {
@@ -174,13 +174,13 @@ export async function getFCMToken() {
     try {
       const cached = await AsyncStorage.getItem(FCM_TOKEN_KEY);
       if (cached) {
-        console.log('\n========================================');
-        console.log('🔥 [CACHED FCM TOKEN] 🔥 :');
+        // console.log('\n========================================');
+        // console.log('🔥 [CACHED FCM TOKEN] 🔥 :');
         console.log(cached);
         console.log('========================================\n');
         return cached;
       }
-    } catch (e) {}
+    } catch (e) { }
     return null;
   }
 }
@@ -209,7 +209,7 @@ export async function displayLocalNotification(remoteMessage) {
       data.notification_id ||
       undefined;
 
-    console.log('🔔 [NotificationService] Displaying foreground notification:', { title, body, channelId, notificationId });
+    // console.log('🔔 [NotificationService] Displaying foreground notification:', { title, body, channelId, notificationId });
 
     await nft.displayNotification({
       ...(notificationId ? { id: notificationId } : {}),
@@ -266,9 +266,9 @@ export function setupNotificationListeners(onNotificationClick) {
         try {
           await AsyncStorage.setItem(FCM_TOKEN_KEY, token);
           console.log('\n========================================');
-          console.log('🔥 [REFRESHED FCM TOKEN] 🔥 :');
+          // console.log('🔥 [REFRESHED FCM TOKEN] 🔥 :');
           console.log(token);
-          console.log('========================================\n');
+          // console.log('========================================\n');
         } catch (err) {
           console.error('[NotificationService] Error saving refreshed FCM token:', err?.message || err);
         }
@@ -286,7 +286,7 @@ export function setupNotificationListeners(onNotificationClick) {
     // 2. Listen to Foreground Messages
     try {
       const foregroundHandler = async (remoteMessage) => {
-        console.log('🔔 [NotificationService] Foreground message arrived:', JSON.stringify(remoteMessage));
+        // console.log('🔔 [NotificationService] Foreground message arrived:', JSON.stringify(remoteMessage));
         await displayLocalNotification(remoteMessage);
       };
 
@@ -322,8 +322,8 @@ export function setupNotificationListeners(onNotificationClick) {
         typeof messagingModule.getInitialNotification === 'function'
           ? messagingModule.getInitialNotification(msg)
           : typeof msg.getInitialNotification === 'function'
-          ? msg.getInitialNotification()
-          : null;
+            ? msg.getInitialNotification()
+            : null;
 
       if (initialPromise && typeof initialPromise.then === 'function') {
         initialPromise

@@ -555,43 +555,56 @@
 // ---
 
 // ## 14. Products — Create
+// Product add by seller :
+// {{base_url}}api/seller/products
+// method:POST
+// Authorization : bearer_token
 
-// ### `POST /api/seller/products`
+// Body :
+// name:Updated Product Name 3
+// short_description:Updated short description text
+// description:Updated full description goes here
+// category_id:1
+// tags[]:cotton, mes
+// image : file
+// gallery[] : files
 
-// Submits a new product for admin review. Newly created products have `status: pending` and are **not visible** to buyers until approved.
-
-// **Content-Type:** `multipart/form-data`
-
-// | Field | Type | Required | Notes |
-// |---|---|---|---|
-// | `name` | string | :white_check_mark: | |
-// | `price` | numeric | :white_check_mark: | Base price |
-// | `sale_price` | numeric | :x: | Must be less than `price` |
-// | `stock_quantity` | integer | :white_check_mark: | |
-// | `category_id` | integer | :white_check_mark: | Must exist in categories table |
-// | `short_description` | string | :x: | Max 500 chars |
-// | `description` | string | :x: | Full HTML/text description |
-// | `sub_category_id` | integer | :x: | |
-// | `child_category_id` | integer | :x: | |
-// | `brand_id` | integer | :x: | |
-// | `sku` | string | :x: | Auto-generated if not provided |
-// | `weight` | numeric | :x: | In kg |
-// | `tags` | array | :x: | e.g. `tags[]=wireless&tags[]=earbuds` |
-// | `min_stock_alert` | integer | :x: | Default 5 — triggers low stock flag |
-// | `image` | file | :x: | Main product image (max 4MB) |
-// | `gallery[]` | file | :x: | Additional images (multiple files) |
-
-// **Response** — `201`
-
-// ```json
+// Response :
 // {
-//   "status": 201,
-//   "message": "Product submitted for review. It will be visible once approved by admin.",
-//   "data": { "id": 21, "name": "New Headphones", "status": "pending", "..." }
+//     "status": 201,
+//     "message": "Product submitted for review. It will be visible once approved by admin. Then add a SKU/listing to sell it.",
+//     "data": {
+//         "id": 5,
+//         "name": "Updated Product Name 3",
+//         "slug": "updated-product-name-3",
+//         "short_description": "Updated short description text",
+//         "description": "Updated full description goes here",
+//         "tags": [
+//             "cotton",
+//             "mes"
+//         ],
+//         "category": {
+//             "id": 1,
+//             "name": "Electronics"
+//         },
+//         "brand": null,
+//         "status": "pending",
+//         "approval_status": "pending",
+//         "rejection_reason": null,
+//         "image_url": "https://deebazar.com/admin/admin/storage/products/k2ZrLGeRmtxoDY2AcvnXPrMGmryV3gSSpikpaBFX.png",
+//         "images": [
+//             {
+//                 "id": 10,
+//                 "image_url": "https://deebazar.com/admin/images/uploads/products/5/k2ZrLGeRmtxoDY2AcvnXPrMGmryV3gSSpikpaBFX.png",
+//                 "is_primary": true,
+//                 "sort_order": 0,
+//                 "alt_text": null
+//             }
+//         ],
+//         "created_at": "2026-09-26T12:49:59.000000Z"
+//     }
 // }
-// ```
 
-// ---
 
 // User Profile Update :
 //15 POST : {{base_url}}api/user/profile
@@ -1283,8 +1296,92 @@
 // | GET | `/api/seller/products/{id}` | Yes | **Yes** |
 // | POST | `/api/seller/products/{id}` | Yes | **Yes** |
 // | DELETE | `/api/seller/products/{id}` | Yes | **Yes** |
-// | PATCH | `/api/seller/products/{id}/stock` | Yes | **Yes** |
+// | PATCH | `/api/seller/skus/{id}/stock` | Yes | **Yes** |
 // | GET | `/api/seller/orders` | Yes | **Yes** |
 // | GET | `/api/seller/orders/{id}` | Yes | **Yes** |
 // | PATCH | `/api/seller/orders/{id}/status` | Yes | **Yes** |
 // | POST | `/api/seller/orders/{id}/tracking` | Yes | **Yes** |
+// | GET | `/api/seller/skus/approved` | Yes | **Yes** |
+// | GET | `/api/seller/products/approved` | Yes | **Yes** |
+// | POST | `/api/seller/skus` | Yes | **Yes** |
+// | GET | `/api/seller/skus/{id}` | Yes | **Yes** |
+//
+// ---
+//
+// ## 29. Show SKU Details
+//
+// Returns full details for a seller SKU including master catalog SKU, listing information, stock, pricing, and master product.
+//
+// **Endpoint:** `GET /api/seller/skus/{id}`
+// **Headers:** `Authorization: Bearer {token}`
+//
+// **Response** — `200`
+//
+// ```json
+// {
+//     "status": 200,
+//     "data": {
+//         "seller_product_id": 1,
+//         "listing": {
+//             "price": "999.00",
+//             "sale_price": "799.00",
+//             "on_sale": true,
+//             "in_stock": true,
+//             "stock_quantity": 50,
+//             "min_stock_alert": 5,
+//             "seller_sku": "MY-CODE-1",
+//             "status": "approved",
+//             "rejection_reason": null,
+//             "approved_at": null
+//         },
+//         "sku": {
+//             "id": 1,
+//             "name": "TestSKU",
+//             "sku": "SKU-LDIORISA",
+//             "image_url": "https://deebazar.com/admin/images/uploads/skus/1/gBlfgTuQbJqz2CoitmFH_1790576872.png",
+//             "weight": 12,
+//             "length": 10,
+//             "width": 10,
+//             "height": 10,
+//             "dimensions": "10x10x10",
+//             "is_active": true,
+//             "approval_status": "approved",
+//             "rejection_reason": null
+//         },
+//         "product": {
+//             "id": 1,
+//             "name": "Test Admin Product",
+//             "category": "Electronics"
+//         }
+//     }
+// }
+// ```
+//
+// ---
+//
+// ## 30. Update SKU Stock
+//
+// Update stock quantity for a seller SKU.
+//
+// **Endpoint:** `PATCH /api/seller/skus/{id}/stock`
+// **Headers:** `Authorization: Bearer {token}`
+//
+// **Body:**
+// ```json
+// {
+//     "stock_quantity": 100
+// }
+// ```
+//
+// **Response (200):**
+// ```json
+// {
+//     "status": 200,
+//     "message": "Stock updated successfully.",
+//     "data": {
+//         "product_sku_id": 2,
+//         "stock_quantity": 100,
+//         "in_stock": true
+//     }
+// }
+// ```

@@ -20,8 +20,9 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getSellerProductDetails, deleteSellerProduct, updateProductStock } from "../../api/auth";
+import { getSellerProductDetails, getSellerProducts, deleteSellerProduct, updateSkuStock, isTechnicalError } from "../../api/auth";
 import { CustomAlert } from "../../context/AlertContext";
+import { groupProductsByMasterProduct } from "./Products";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const SLIDER_WIDTH = SCREEN_WIDTH - 32;
@@ -61,11 +62,11 @@ export const normalizeImageUrl = (img) => {
   if (!img) return null;
   let uri = null;
   if (typeof img === "string") {
-    uri = img.trim();
+    uri = img.replace(/\\/g, "").trim();
   } else if (typeof img === "object") {
     uri = img.image_url || img.url || img.path || img.src || img.uri || null;
     if (typeof uri !== "string") return null;
-    uri = uri.trim();
+    uri = uri.replace(/\\/g, "").trim();
   }
   if (!uri) return null;
 
@@ -85,7 +86,7 @@ export const normalizeImageUrl = (img) => {
   return `https://deebazar.com/${uri}`;
 };
 
-export const getProductImages = (prod) => {
+export const getProductImages = (prod, currentSku = null) => {
   if (!prod) return [];
   const list = [];
 
@@ -96,26 +97,58 @@ export const getProductImages = (prod) => {
     }
   };
 
-  if (prod.image_url) addImage(prod.image_url);
-  if (prod.image) addImage(prod.image);
-  if (prod.thumbnail) addImage(prod.thumbnail);
-  if (prod.featured_image) addImage(prod.featured_image);
+  // 1. If a specific active SKU is passed, prioritize ONLY its images
+  if (currentSku) {
+    if (currentSku.image_url) addImage(currentSku.image_url);
+    if (currentSku.image) addImage(currentSku.image);
+    if (Array.isArray(currentSku.images)) {
+      currentSku.images.forEach((img) => addImage(img));
+    }
+  }
 
-  const rawGallery = prod.gallery || prod.images || prod.product_images || prod.gallery_images;
+  // 2. Direct SKU images if prod itself is an SKU object
+  if (prod.sku?.image_url && (!currentSku || prod.sku.id === currentSku.id)) {
+    addImage(prod.sku.image_url);
+  }
+  if (prod.sku?.image && (!currentSku || prod.sku.id === currentSku.id)) {
+    addImage(prod.sku.image);
+  }
 
-  if (Array.isArray(rawGallery)) {
-    rawGallery.forEach((item) => addImage(item));
-  } else if (typeof rawGallery === "string" && rawGallery.trim()) {
-    try {
-      const parsed = JSON.parse(rawGallery);
-      if (Array.isArray(parsed)) {
-        parsed.forEach((item) => addImage(item));
-      } else {
+  // 3. If no SKU-specific images found, fallback to product level images
+  if (list.length === 0) {
+    if (Array.isArray(prod.images)) {
+      const primaryImg = prod.images.find((img) => img?.is_primary);
+      if (primaryImg) addImage(primaryImg);
+    }
+    if (prod.image_url) addImage(prod.image_url);
+    if (prod.image) addImage(prod.image);
+    if (prod.product?.image_url) addImage(prod.product.image_url);
+    if (prod.product?.image) addImage(prod.product.image);
+    if (prod.thumbnail) addImage(prod.thumbnail);
+    if (prod.featured_image) addImage(prod.featured_image);
+
+    const rawGallery = prod.images || prod.gallery || prod.product_images || prod.gallery_images;
+    if (Array.isArray(rawGallery)) {
+      rawGallery.forEach((item) => addImage(item));
+    } else if (typeof rawGallery === "string" && rawGallery.trim()) {
+      try {
+        const parsed = JSON.parse(rawGallery);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((item) => addImage(item));
+        } else {
+          rawGallery.split(",").forEach((item) => addImage(item));
+        }
+      } catch (e) {
         rawGallery.split(",").forEach((item) => addImage(item));
       }
-    } catch (e) {
-      rawGallery.split(",").forEach((item) => addImage(item));
     }
+  }
+
+  // 4. Fallback if still empty
+  if (list.length === 0 && Array.isArray(prod.skus) && prod.skus.length > 0) {
+    const s = currentSku || prod.skus[0];
+    if (s?.image_url) addImage(s.image_url);
+    if (s?.image) addImage(s.image);
   }
 
   return list;
@@ -143,13 +176,14 @@ const ProductDetails = () => {
   const initialProduct = route.params?.product || null;
   const productId =
     route.params?.productId ||
-    route.params?.product_id ||
     route.params?.id ||
-    initialProduct?.product_id ||
+    route.params?.product_id ||
     initialProduct?.id ||
-    initialProduct?.productId;
+    initialProduct?.productId ||
+    initialProduct?.product_id;
 
   const [product, setProduct] = useState(initialProduct);
+  const [selectedSkuIndex, setSelectedSkuIndex] = useState(0);
   const [selectedImage, setSelectedImage] = useState(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [modalImageUri, setModalImageUri] = useState(null);
@@ -159,6 +193,19 @@ const ProductDetails = () => {
   const [isLoading, setIsLoading] = useState(!initialProduct);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+
+  // Sync state if navigation opens a different product
+  useEffect(() => {
+    if (route.params?.product) {
+      setProduct(route.params.product);
+      const images = getProductImages(route.params.product);
+      if (images.length > 0) {
+        setSelectedImage(images[0]);
+      }
+      setActiveSlideIndex(0);
+      setSelectedSkuIndex(0);
+    }
+  }, [route.params?.product, route.params?.productId, route.params?.id]);
 
   // Stock update modal
   const [showStockModal, setShowStockModal] = useState(false);
@@ -188,37 +235,200 @@ const ProductDetails = () => {
 
   const fetchDetails = useCallback(
     async (isRefresh = false) => {
-      if (!productId) return;
+      const idToFetch = productId || product?.id || product?.product_id;
+      if (!idToFetch && !initialProduct) return;
       if (isRefresh) {
         setIsRefreshing(true);
-      } else if (!product) {
+      } else if (!product && !initialProduct) {
         setIsLoading(true);
       }
       setFetchError(null);
 
       try {
-        const res = await getSellerProductDetails(productId);
-        const data = res?.data || res?.product || res;
-        if (data && typeof data === "object") {
-          setProduct(data);
-          const images = getProductImages(data);
-          if (images.length > 0) {
-            setSelectedImage(images[0]);
+        // 1. Fetch fresh seller products list from server
+        let sellerProductsList = [];
+        try {
+          const sellerProdRes = await getSellerProducts({ status: "all", per_page: 50 });
+          sellerProductsList = sellerProdRes?.data?.products || [];
+        } catch (e) {
+          // ignore
+        }
+
+        // 2. Fetch specific product details (if idToFetch exists)
+        let data = null;
+        if (idToFetch) {
+          try {
+            const res = await getSellerProductDetails(idToFetch);
+            data = res?.data || res?.product || res;
+          } catch (e) {
+            console.log("ProductDetails getSellerProductDetails err:", e?.message);
           }
         }
+
+        setProduct((prev) => {
+          const currentProd = prev || initialProduct || {};
+          const prevSkus = Array.isArray(currentProd?.skus) && currentProd.skus.length > 0
+            ? currentProd.skus
+            : currentProd?.sku && typeof currentProd.sku === "object"
+              ? [currentProd.sku]
+              : [];
+
+          const currentId = currentProd?.id || productId;
+          const currentMasterId = currentProd?.product_id || currentProd?.product?.id;
+          const currentSkuCodes = prevSkus.map((s) => s.code || s.sku).filter(Boolean);
+          const currentSkuNames = prevSkus.map((s) => s.name || s.sku_name).filter(Boolean);
+          const currentSkuIds = prevSkus.map((s) => s.id || s.seller_sku_id || s.product_sku_id || s.sku_id).filter(Boolean);
+
+          // Group seller products list using the exact same grouping logic as Products screen
+          const groupedList = groupProductsByMasterProduct(sellerProductsList);
+
+          // Find the exact matching grouped product for this screen
+          let matchedSellerProduct = null;
+          if (groupedList.length > 0) {
+            matchedSellerProduct = groupedList.find((gp) => {
+              if (currentId && (gp.id === currentId || gp.seller_product_id === currentId)) return true;
+              if (Array.isArray(gp.skus) && gp.skus.length > 0) {
+                return gp.skus.some((s) => {
+                  const sCode = s.code || s.sku;
+                  const sName = s.name || s.sku_name;
+                  const sId = s.id || s.seller_sku_id || s.product_sku_id || s.sku_id;
+                  return (
+                    (sCode && currentSkuCodes.includes(sCode)) ||
+                    (sName && currentSkuNames.includes(sName)) ||
+                    (sId && currentSkuIds.includes(sId))
+                  );
+                });
+              }
+              return false;
+            });
+
+            if (!matchedSellerProduct && currentMasterId) {
+              matchedSellerProduct = groupedList.find((gp) => {
+                const gpMasterId = gp.product_id || gp.product?.id;
+                return gpMasterId === currentMasterId;
+              });
+            }
+          }
+
+          const freshGroupedSkus = Array.isArray(matchedSellerProduct?.skus) && matchedSellerProduct.skus.length > 0
+            ? matchedSellerProduct.skus
+            : [];
+
+          let finalSkus = [];
+          if (prevSkus.length > 0) {
+            // NEVER overwrite the product's SKUs with unrelated catalog SKUs!
+            // Update the existing SKUs with the latest stock/price/status from the seller's inventory.
+            finalSkus = prevSkus.map((oldSku) => {
+              const oldCode = oldSku.code || oldSku.sku;
+              const oldName = oldSku.name || oldSku.sku_name;
+              const oldId = oldSku.id || oldSku.seller_sku_id || oldSku.product_sku_id || oldSku.sku_id;
+
+              // Check freshGroupedSkus
+              const freshMatch = freshGroupedSkus.find((fs) => {
+                const fsCode = fs.code || fs.sku;
+                const fsName = fs.name || fs.sku_name;
+                const fsId = fs.id || fs.seller_sku_id || fs.product_sku_id || fs.sku_id;
+                return (
+                  (fsCode && oldCode && fsCode === oldCode) ||
+                  (fsName && oldName && fsName === oldName) ||
+                  (fsId && oldId && fsId === oldId)
+                );
+              });
+
+              // Check raw seller products list
+              const rawMatch = sellerProductsList.find((sp) => {
+                const spCode = sp.sku?.code || sp.sku?.sku || sp.sku_code || (typeof sp.sku === "string" ? sp.sku : null);
+                const spName = sp.sku?.name || sp.sku_name || sp.name;
+                const spId = sp.sku?.id || sp.sku_id || sp.product_sku_id || sp.id;
+                return (
+                  (spCode && oldCode && spCode === oldCode) ||
+                  (spName && oldName && spName === oldName) ||
+                  (spId && oldId && spId === oldId)
+                );
+              });
+
+              const resolvedStock =
+                freshMatch?.stock_quantity ??
+                rawMatch?.stock_quantity ??
+                rawMatch?.stock ??
+                oldSku.stock_quantity;
+
+              const resolvedInStock =
+                freshMatch?.in_stock ??
+                rawMatch?.in_stock ??
+                (resolvedStock > 0);
+
+              const resolvedPrice =
+                freshMatch?.price ??
+                rawMatch?.price ??
+                oldSku.price;
+
+              const resolvedSalePrice =
+                freshMatch?.sale_price ??
+                rawMatch?.sale_price ??
+                oldSku.sale_price;
+
+              const resolvedStatus =
+                freshMatch?.approval_status ??
+                freshMatch?.status ??
+                rawMatch?.sku?.approval_status ??
+                rawMatch?.approval_status ??
+                rawMatch?.status ??
+                oldSku.approval_status ??
+                oldSku.status;
+
+              return {
+                ...oldSku,
+                ...(freshMatch || {}),
+                stock_quantity: resolvedStock,
+                in_stock: resolvedInStock,
+                price: resolvedPrice,
+                sale_price: resolvedSalePrice,
+                status: resolvedStatus,
+                approval_status: resolvedStatus,
+                seller_sku_id: freshMatch?.seller_sku_id || rawMatch?.id || oldSku.seller_sku_id || oldSku.id,
+                seller_product_id: freshMatch?.seller_product_id || rawMatch?.id || oldSku.seller_product_id || oldSku.id,
+              };
+            });
+          } else if (freshGroupedSkus.length > 0) {
+            finalSkus = freshGroupedSkus;
+          } else if (Array.isArray(data?.skus) && data.skus.length > 0) {
+            finalSkus = data.skus;
+          }
+
+          // Preserve the product's images - DO NOT overwrite with master catalog logo/placeholders!
+          const existingImages = getProductImages(currentProd);
+          const matchedImages = matchedSellerProduct ? getProductImages(matchedSellerProduct) : [];
+          const preservedImages = existingImages.length > 0 ? existingImages : (matchedImages.length > 0 ? matchedImages : (data ? getProductImages(data) : []));
+
+          return {
+            ...(data || {}),
+            ...(currentProd || {}),
+            ...(matchedSellerProduct || {}),
+            skus: finalSkus,
+            images: preservedImages.length > 0 ? preservedImages : (currentProd?.images || data?.images),
+            image_url: currentProd?.image_url || matchedSellerProduct?.image_url || data?.image_url,
+            name: currentProd?.name || matchedSellerProduct?.name || data?.name,
+          };
+        });
+
       } catch (err) {
-        console.error("Failed to load product details:", err);
-        setFetchError(err?.message || "Failed to load product details");
+        console.log("ProductDetails fetch skipped/error:", err?.message);
+        if (!product && !initialProduct) {
+          setFetchError(err?.message || "Failed to load product details");
+        }
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
       }
     },
-    [productId, product]
+    [productId, product, initialProduct]
   );
 
   useEffect(() => {
-    fetchDetails();
+    if (!initialProduct && productId) {
+      fetchDetails();
+    }
   }, [productId]);
 
   useEffect(() => {
@@ -230,16 +440,10 @@ const ProductDetails = () => {
     }
   }, [product]);
 
-  const gotoProductEdit = () => {
-    navigation.navigate("EditProduct", {
-      product,
-      productId: product?.product_id || product?.id,
-    });
-  };
 
   const handleDeleteProduct = () => {
-    const id = product?.product_id
-    const prodName = product?.name || "this product";
+    const id = product?.id || product?.product_id;
+    const prodName = productName || "this product";
 
     CustomAlert.showConfirm(
       "Delete Product",
@@ -269,23 +473,49 @@ const ProductDetails = () => {
   };
 
   const handleStockUpdate = async () => {
-    const pId = product?.product_id
     const newQty = parseInt(stockInputValue, 10);
     if (isNaN(newQty) || newQty < 0) {
       CustomAlert.showWarning("Invalid Quantity", "Please enter a valid stock number (0 or more).");
       return;
     }
 
+    const targetSkuId =
+      activeSku?.product_sku_id ||
+      activeSku?.sku_id ||
+      activeSku?.id ||
+      primarySku?.product_sku_id ||
+      primarySku?.sku_id ||
+      primarySku?.id ||
+      product?.product_sku_id ||
+      product?.sku_id ||
+      product?.sku?.id ||
+      product?.id;
+
+    if (!targetSkuId) {
+      CustomAlert.showWarning("Missing SKU ID", "Cannot update stock: SKU ID not found.");
+      return;
+    }
+
     setIsUpdatingStock(true);
     try {
-      const res = await updateProductStock(pId, newQty);
-      setProduct((prev) => ({
-        ...prev,
-        stock_quantity: res.data?.stock_quantity ?? newQty,
-        in_stock: res.data?.in_stock ?? newQty > 0,
-      }));
+      const res = await updateSkuStock(targetSkuId, newQty);
+      const updatedStock = res?.data?.stock_quantity ?? newQty;
+      const updatedInStock = res?.data?.in_stock ?? updatedStock > 0;
+      setProduct((prev) => {
+        const targetIdx = selectedSkuIndex >= 0 ? selectedSkuIndex : 0;
+        const updatedSkus = Array.isArray(prev?.skus)
+          ? prev.skus.map((s, idx) => (idx === targetIdx ? { ...s, stock_quantity: updatedStock, in_stock: updatedInStock } : s))
+          : prev?.skus;
+        return {
+          ...prev,
+          total_stock: updatedStock,
+          stock_quantity: updatedStock,
+          in_stock: updatedInStock,
+          skus: updatedSkus,
+        };
+      });
       setShowStockModal(false);
-      CustomAlert.showSuccess("Stock Updated \uD83C\uDF89", res?.message || `Stock updated to ${newQty} units.`);
+      CustomAlert.showSuccess("Stock Updated 🎉", res?.message || `Stock updated to ${newQty} units.`);
     } catch (err) {
       console.warn("Stock update failed:", err?.message);
       CustomAlert.showError("Update Failed", err?.message || "Failed to update stock.");
@@ -294,17 +524,106 @@ const ProductDetails = () => {
     }
   };
 
-  const statusInfo = getStatusBadge(product?.approval_status || product?.status);
-  const categoryName = product?.category?.name || product?.category || "General";
-  const regularPrice = Number(product?.price || 0);
-  const salePrice = product?.sale_price ? Number(product.sale_price) : null;
+  const primarySku = Array.isArray(product?.skus) && product.skus.length > 0 ? product.skus[0] : null;
+
+  const rawStatus =
+    product?.sku?.approval_status ||
+    product?.approval_status ||
+    primarySku?.approval_status ||
+    product?.sku?.status ||
+    product?.status ||
+    primarySku?.status ||
+    "approved";
+  const statusInfo = getStatusBadge(rawStatus);
+
+  const categoryName =
+    (typeof product?.category === "string" ? product.category : product?.category?.name) ||
+    (typeof product?.product?.category === "object"
+      ? (product.product.category?.name || product.product.category?.title)
+      : product?.product?.category) ||
+    "General";
+
+  const skusList =
+    Array.isArray(product?.skus) && product.skus.length > 0
+      ? product.skus
+      : product?.sku && typeof product.sku === "object"
+        ? [
+          {
+            seller_sku_id: product.id,
+            product_sku_id: product.product_sku_id || product.sku_id || product.sku?.id,
+            sku_id: product.sku_id || product.product_sku_id || product.sku?.id,
+            name: product.sku.name || product.sku_name || (typeof product.name === "string" ? product.name : ""),
+            code: product.sku.code || product.sku.sku || product.sku_code || product.sku,
+            sku: product.sku.code || product.sku.sku || product.sku_code || product.sku,
+            image_url: product.sku.image_url || product.image_url,
+            price: product.price,
+            sale_price: product.sale_price,
+            stock_quantity: product.stock_quantity,
+            in_stock: product.in_stock,
+            status: product.status,
+            approval_status: product.sku.approval_status || product.approval_status,
+            attributes: product.sku.attributes || [],
+          },
+        ]
+        : [];
+
+  const activeSku =
+    skusList.length > 0 && selectedSkuIndex >= 0 && selectedSkuIndex < skusList.length
+      ? skusList[selectedSkuIndex]
+      : skusList[0] || primarySku;
+
+  const skuName =
+    activeSku?.name ||
+    (typeof product?.sku === "object" ? product.sku.name : "") ||
+    primarySku?.name ||
+    product?.sku_name;
+
+  const parentProductName =
+    product?.product?.name ||
+    (typeof product?.name === "object" ? (product.name?.name || product.name?.title) : product?.name) ||
+    "";
+
+  const productName = skuName || parentProductName || "Product Details";
+
+  const regularPrice = Number(
+    activeSku?.price !== undefined && activeSku?.price !== null && activeSku?.price !== ""
+      ? activeSku.price
+      : product?.price !== undefined && product?.price !== null && product?.price !== ""
+        ? product.price
+        : (primarySku?.price || 0)
+  );
+
+  const rawSalePrice =
+    activeSku?.sale_price !== undefined && activeSku?.sale_price !== null && activeSku?.sale_price !== ""
+      ? activeSku.sale_price
+      : product?.sale_price !== undefined && product?.sale_price !== null && product?.sale_price !== ""
+        ? product.sale_price
+        : primarySku?.sale_price;
+
+  const salePrice = rawSalePrice !== undefined && rawSalePrice !== null && rawSalePrice !== "" ? Number(rawSalePrice) : null;
   const currentPrice = salePrice && salePrice > 0 ? salePrice : regularPrice;
   const hasDiscount = salePrice && regularPrice > salePrice;
   const discountPercent = hasDiscount
     ? Math.round(((regularPrice - salePrice) / regularPrice) * 100)
     : 0;
-  const stock = product?.stock_quantity ?? product?.stock ?? 0;
+
+  const stock =
+    activeSku?.stock_quantity !== undefined && activeSku?.stock_quantity !== null
+      ? Number(activeSku.stock_quantity)
+      : product?.total_stock ??
+      product?.stock_quantity ??
+      product?.stock ??
+      (Array.isArray(product?.skus)
+        ? product.skus.reduce((acc, s) => acc + (Number(s.stock_quantity) || 0), 0)
+        : 0);
   const isOutOfStock = stock <= 0;
+
+  const skuCode =
+    activeSku?.code ||
+    activeSku?.sku ||
+    (typeof product?.sku === "object" ? (product.sku?.code || product.sku?.sku || product.sku?.name) : product?.sku) ||
+    primarySku?.code ||
+    null;
 
   // Build gallery list combining main image and gallery images
   const galleryList = [];
@@ -326,19 +645,14 @@ const ProductDetails = () => {
         </TouchableOpacity>
 
         <Text style={[styles.headerTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-          {product?.name || "Product Details"}
+          {productName}
         </Text>
 
-        <TouchableOpacity
-          style={[styles.iconBtn, { backgroundColor: colors.backgroundAlt }]}
-          onPress={gotoProductEdit}
-        >
-          <Ionicons name="create-outline" size={20} color={COLORS.primary} />
-        </TouchableOpacity>
+        <View style={{ width: 36 }} />
       </View>
 
       {/* Error state */}
-      {fetchError && product && (
+      {fetchError && !product && !isTechnicalError(fetchError) && (
         <View style={styles.errorBanner}>
           <Ionicons name="alert-circle-outline" size={18} color={COLORS.error} />
           <Text style={styles.errorBannerText}>{fetchError}</Text>
@@ -377,7 +691,7 @@ const ProductDetails = () => {
         >
           {/* Main Product Image Slider */}
           {(() => {
-            const allImages = getProductImages(product);
+            const allImages = getProductImages(product, activeSku);
             const totalImages = allImages.length;
 
             return (
@@ -488,6 +802,71 @@ const ProductDetails = () => {
             );
           })()}
 
+          {/* Variant Selector Chips */}
+          {skusList.length > 1 && (
+            <View style={[styles.variantSelectorCard, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+              <View style={styles.variantSelectorHeader}>
+                <Ionicons name="layers-outline" size={15} color={COLORS.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.variantSelectorTitle, { color: colors.textPrimary }]}>
+                  Select Variant ({skusList.length}):
+                </Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.variantChipsRow}>
+                {skusList.map((skuItem, idx) => {
+                  const isSelected = selectedSkuIndex === idx;
+                  const vStock = skuItem.stock_quantity ?? 0;
+                  return (
+                    <TouchableOpacity
+                      key={skuItem.seller_sku_id || skuItem.product_sku_id || idx}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setSelectedSkuIndex(idx);
+                        setActiveSlideIndex(0);
+                        if (sliderRef.current) {
+                          try {
+                            sliderRef.current.scrollToIndex({ index: 0, animated: false });
+                          } catch (e) {}
+                        }
+                      }}
+                      style={[
+                        styles.variantChipBtn,
+                        {
+                          backgroundColor: isSelected ? COLORS.primary : colors.backgroundAlt,
+                          borderColor: isSelected ? COLORS.primary : colors.borderLight,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.variantChipBtnText,
+                          { color: isSelected ? "#FFFFFF" : colors.textPrimary },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {skuItem.name || `Variant #${idx + 1}`}
+                      </Text>
+                      <View
+                        style={[
+                          styles.variantChipStockBadge,
+                          { backgroundColor: isSelected ? "rgba(255,255,255,0.25)" : colors.borderLight },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.variantChipStockText,
+                            { color: isSelected ? "#FFFFFF" : colors.textSecondary },
+                          ]}
+                        >
+                          {vStock}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
           {/* Main Info Card */}
           <View style={[styles.infoCard, { backgroundColor: colors.cardBg }]}>
             <View style={styles.topRow}>
@@ -499,13 +878,112 @@ const ProductDetails = () => {
                 </View>
 
                 <Text style={[styles.productName, { color: colors.textPrimary }]}>
-                  {product?.name || "Product Name"}
+                  {productName}
                 </Text>
 
-                {product?.sku ? (
-                  <Text style={[styles.productSku, { color: colors.textSecondary }]}>
-                    SKU: {product.sku}
+                {parentProductName && parentProductName !== productName ? (
+                  <Text style={[styles.parentProductSubtitle, { color: colors.textSecondary }]}>
+                    Product: <Text style={{ color: colors.textPrimary, fontWeight: "600" }}>{parentProductName}</Text>
                   </Text>
+                ) : null}
+
+                {skuCode ? (
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      const currentTargetSku = activeSku || primarySku;
+                      const sId =
+                        currentTargetSku?.seller_sku_id ||
+                        currentTargetSku?.seller_product_id ||
+                        currentTargetSku?.id ||
+                        product?.id;
+
+                      const sName =
+                        (typeof currentTargetSku?.sku === "object" && currentTargetSku.sku?.name ? currentTargetSku.sku.name : null) ||
+                        currentTargetSku?.name ||
+                        currentTargetSku?.sku_name ||
+                        skuName ||
+                        parentProductName;
+
+                      const sCode =
+                        (typeof currentTargetSku?.sku === "object" ? (currentTargetSku.sku?.code || currentTargetSku.sku?.sku) : null) ||
+                        currentTargetSku?.code ||
+                        currentTargetSku?.sku ||
+                        skuCode;
+
+                      const sImg =
+                        (typeof currentTargetSku?.sku === "object" ? currentTargetSku.sku?.image_url : null) ||
+                        currentTargetSku?.image_url ||
+                        currentTargetSku?.image ||
+                        product?.image_url;
+
+                      const sStock =
+                        currentTargetSku?.stock_quantity !== undefined
+                          ? Number(currentTargetSku.stock_quantity)
+                          : stock;
+
+                      const sRegularPrice =
+                        currentTargetSku?.price !== undefined
+                          ? Number(currentTargetSku.price)
+                          : regularPrice;
+
+                      const sSalePrice =
+                        currentTargetSku?.sale_price !== undefined
+                          ? Number(currentTargetSku.sale_price)
+                          : salePrice;
+
+                      const sStatus =
+                        (typeof currentTargetSku?.sku === "object" ? currentTargetSku.sku?.approval_status : null) ||
+                        currentTargetSku?.approval_status ||
+                        currentTargetSku?.status ||
+                        product?.approval_status;
+
+                      const sSellerProductId =
+                        currentTargetSku?.seller_sku_id ||
+                        currentTargetSku?.seller_product_id ||
+                        product?.id;
+
+                      if (sId) {
+                        navigation.navigate("SkuDetails", {
+                          skuId: sId,
+                          skuData: {
+                            listing: {
+                              id: sSellerProductId,
+                              price: sRegularPrice,
+                              sale_price: sSalePrice,
+                              stock_quantity: sStock,
+                              in_stock: currentTargetSku?.in_stock !== undefined ? currentTargetSku.in_stock : !isOutOfStock,
+                              status: sStatus,
+                            },
+                            sku: {
+                              id: sId,
+                              code: sCode,
+                              sku: sCode,
+                              name: sName,
+                              image_url: sImg,
+                              approval_status: sStatus,
+                              attributes: currentTargetSku?.attributes || [],
+                              weight: currentTargetSku?.weight ?? currentTargetSku?.sku?.weight ?? product?.weight,
+                              dimensions: currentTargetSku?.dimensions ?? currentTargetSku?.sku?.dimensions ?? product?.dimensions,
+                              length: currentTargetSku?.length ?? currentTargetSku?.sku?.length ?? product?.length,
+                              width: currentTargetSku?.width ?? currentTargetSku?.sku?.width ?? product?.width,
+                              height: currentTargetSku?.height ?? currentTargetSku?.sku?.height ?? product?.height,
+                            },
+                            product: {
+                              id: product?.product?.id || product?.id,
+                              name: parentProductName || product?.name,
+                              category: categoryName,
+                            },
+                            seller_product_id: sSellerProductId,
+                          },
+                        });
+                      }
+                    }}
+                  >
+                    <Text style={[styles.productSku, { color: colors.textSecondary }]}>
+                      SKU: <Text style={{ color: COLORS.primary, fontWeight: "600" }}>{skuCode}</Text>
+                    </Text>
+                  </TouchableOpacity>
                 ) : null}
               </View>
 
@@ -612,6 +1090,189 @@ const ProductDetails = () => {
             )}
           </View>
 
+          {/* Variants & SKUs Section */}
+          {skusList.length > 0 && (
+            <View style={[styles.variantsCard, { backgroundColor: colors.cardBg }]}>
+              <View style={styles.variantsHeader}>
+                <View style={styles.variantsHeaderLeft}>
+                  <Ionicons name="git-branch-outline" size={20} color={COLORS.primary} style={{ marginRight: 8 }} />
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                    Variants & SKUs
+                  </Text>
+                </View>
+                <View style={[styles.variantCountPill, { backgroundColor: colors.backgroundAlt }]}>
+                  <Text style={[styles.variantCountText, { color: COLORS.primary }]}>
+                    {skusList.length} {skusList.length === 1 ? "Variant" : "Variants"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.skuList}>
+                {skusList.map((skuItem, idx) => {
+                  const skuImg = normalizeImageUrl(skuItem.image_url || skuItem.image);
+                  const skuStock = skuItem.stock_quantity ?? 0;
+                  const skuInStock = skuItem.in_stock !== undefined ? skuItem.in_stock : skuStock > 0;
+                  const skuRegularPrice = Number(skuItem.price || 0);
+                  const skuSalePrice = skuItem.sale_price ? Number(skuItem.sale_price) : null;
+                  const skuFinalPrice = skuSalePrice && skuSalePrice > 0 ? skuSalePrice : skuRegularPrice;
+                  const skuStatus = getStatusBadge(skuItem.approval_status || skuItem.status);
+
+                  return (
+                    <TouchableOpacity
+                      key={skuItem.seller_sku_id || skuItem.product_sku_id || idx}
+                      activeOpacity={0.7}
+                      style={[
+                        styles.skuItemCard,
+                        {
+                          backgroundColor: colors.backgroundAlt,
+                          borderColor: colors.borderLight,
+                        },
+                      ]}
+                      onPress={() => {
+                        const targetSkuId =
+                          skuItem?.seller_sku_id ||
+                          skuItem?.seller_product_id ||
+                          skuItem?.id ||
+                          (typeof skuItem?.sku === "object" && skuItem.sku?.id ? skuItem.sku.id : null) ||
+                          skuItem?.product_sku_id ||
+                          skuItem?.sku_id;
+
+                        const sCode =
+                          (typeof skuItem?.sku === "object" ? (skuItem.sku?.code || skuItem.sku?.sku) : "") ||
+                          skuItem?.code ||
+                          skuItem?.sku ||
+                          "";
+
+                        const sName =
+                          (typeof skuItem?.sku === "object" ? skuItem.sku?.name : "") ||
+                          skuItem?.name ||
+                          skuItem?.sku_name ||
+                          parentProductName ||
+                          `Variant #${idx + 1}`;
+
+                        const sImg =
+                          (typeof skuItem?.sku === "object" ? skuItem.sku?.image_url : null) ||
+                          skuItem?.image_url ||
+                          skuItem?.image ||
+                          product?.image_url;
+
+                        const sStock =
+                          skuItem?.stock_quantity !== undefined ? Number(skuItem.stock_quantity) : 0;
+
+                        const sStatus =
+                          (typeof skuItem?.sku === "object" ? skuItem.sku?.approval_status : null) ||
+                          skuItem?.approval_status ||
+                          skuItem?.status ||
+                          product?.approval_status;
+
+                        const sellerProdId =
+                          skuItem?.seller_sku_id ||
+                          skuItem?.id ||
+                          product?.id;
+
+                        navigation.navigate("SkuDetails", {
+                          skuId: targetSkuId,
+                          skuData: {
+                            listing: {
+                              id: sellerProdId,
+                              price: skuItem?.price !== undefined ? skuItem.price : product?.price,
+                              sale_price: skuItem?.sale_price !== undefined ? skuItem.sale_price : product?.sale_price,
+                              stock_quantity: sStock,
+                              in_stock: skuItem?.in_stock !== undefined ? skuItem.in_stock : (sStock > 0),
+                              status: sStatus,
+                            },
+                            sku: {
+                              id: targetSkuId,
+                              code: sCode,
+                              sku: sCode,
+                              name: sName,
+                              image_url: sImg,
+                              approval_status: sStatus,
+                              attributes: skuItem?.attributes || skuItem?.sku?.attributes || [],
+                              weight: skuItem?.weight ?? skuItem?.sku?.weight ?? product?.weight,
+                              dimensions: skuItem?.dimensions ?? skuItem?.sku?.dimensions ?? product?.dimensions,
+                              length: skuItem?.length ?? skuItem?.sku?.length ?? product?.length,
+                              width: skuItem?.width ?? skuItem?.sku?.width ?? product?.width,
+                              height: skuItem?.height ?? skuItem?.sku?.height ?? product?.height,
+                            },
+                            product: {
+                              id: product?.product?.id || product?.id,
+                              name: parentProductName || product?.name,
+                              category: categoryName,
+                            },
+                            seller_product_id: sellerProdId,
+                          },
+                        });
+                      }}
+                    >
+                      {/* SKU Image Thumbnail */}
+                      <View style={[styles.skuImgBox, { backgroundColor: colors.cardBg }]}>
+                        {skuImg ? (
+                          <Image source={{ uri: skuImg }} style={styles.skuThumb} resizeMode="cover" />
+                        ) : (
+                          <Ionicons name="cube-outline" size={24} color={colors.textSecondary} />
+                        )}
+                      </View>
+
+                      {/* SKU Information */}
+                      <View style={styles.skuContent}>
+                        <View style={styles.skuRowTop}>
+                          <Text style={[styles.skuName, { color: colors.textPrimary }]} numberOfLines={1}>
+                            {skuItem.name || `Variant #${idx + 1}`}
+                          </Text>
+                          <View style={[styles.skuStatusPill, { backgroundColor: skuStatus.bg }]}>
+                            <Text style={[styles.skuStatusText, { color: skuStatus.text }]}>
+                              {skuStatus.label}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {skuItem.code ? (
+                          <Text style={[styles.skuCode, { color: colors.textSecondary }]}>
+                            SKU: <Text style={{ color: colors.textPrimary, fontWeight: "600" }}>{skuItem.code}</Text>
+                          </Text>
+                        ) : null}
+
+                        <View style={styles.skuRowBottom}>
+                          <View style={{ flexDirection: "row", alignItems: "baseline" }}>
+                            <Text style={[styles.skuPrice, { color: COLORS.primary }]}>
+                              {formatCurrency(skuFinalPrice)}
+                            </Text>
+                            {skuSalePrice && skuRegularPrice > skuSalePrice ? (
+                              <Text style={[styles.skuOriginalPrice, { color: colors.textSecondary }]}>
+                                {formatCurrency(skuRegularPrice)}
+                              </Text>
+                            ) : null}
+                          </View>
+
+                          <View
+                            style={[
+                              styles.skuStockPill,
+                              {
+                                backgroundColor: skuInStock ? COLORS.successBgLight : COLORS.errorBgLight,
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.skuStockText,
+                                { color: skuInStock ? COLORS.success : COLORS.error },
+                              ]}
+                            >
+                              {skuInStock ? `${skuStock} in stock` : "Out of stock"}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+
+                      <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} style={{ marginLeft: 6 }} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
           {/* Full Description Card */}
           {(product?.description || product?.short_description) && (
             <View style={[styles.descriptionCard, { backgroundColor: colors.cardBg }]}>
@@ -627,57 +1288,34 @@ const ProductDetails = () => {
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Product Details</Text>
 
             {[
-              { title: "Product ID", value: `#${product?.product_id || "-"}` },
+              { title: "Product ID", value: `#${product?.product?.id || product?.id || "-"}` },
+              { title: "Product Name", value: parentProductName && parentProductName !== productName ? parentProductName : null },
               { title: "Category", value: categoryName },
-              { title: "SKU", value: product?.sku || "N/A" },
-              { title: "Slug", value: product?.slug || "N/A" },
-              { title: "Weight", value: product?.weight ? `${product.weight} kg` : "N/A" },
+              { title: "SKU Name", value: skuName || productName },
+              { title: "Primary SKU", value: skuCode || "N/A" },
+              { title: "Total Variants", value: `${skusList.length || 1} Variant(s)` },
+              { title: "Slug", value: product?.slug || product?.product?.slug || null },
+              { title: "Weight", value: product?.weight !== undefined && product?.weight !== null ? `${product.weight} kg` : null },
               { title: "Stock Available", value: `${stock} units` },
               { title: "Approval Status", value: statusInfo.label },
-            ].map((item, index) => (
-              <View
-                key={index}
-                style={[styles.specificationRow, { borderBottomColor: colors.borderLight }]}
-              >
-                <Text style={[styles.specificationTitle, { color: colors.textSecondary }]}>
-                  {item.title}
-                </Text>
-                <Text style={[styles.specificationValue, { color: colors.textPrimary }]}>
-                  {item.value}
-                </Text>
-              </View>
-            ))}
+            ]
+              .filter((item) => item.value !== null)
+              .map((item, index) => (
+                <View
+                  key={index}
+                  style={[styles.specificationRow, { borderBottomColor: colors.borderLight }]}
+                >
+                  <Text style={[styles.specificationTitle, { color: colors.textSecondary }]}>
+                    {item.title}
+                  </Text>
+                  <Text style={[styles.specificationValue, { color: colors.textPrimary }]}>
+                    {item.value}
+                  </Text>
+                </View>
+              ))}
           </View>
 
-          {/* Action Buttons */}
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              activeOpacity={0.9}
-              style={[styles.editButton, { backgroundColor: COLORS.primary }]}
-              onPress={gotoProductEdit}
-            >
-              <Ionicons name="create-outline" size={18} color={COLORS.textContrast} />
-              <Text style={styles.actionText}>Edit Product</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.9}
-              style={[styles.stockButton, { backgroundColor: COLORS.warning }]}
-              onPress={handleStockEdit}
-            >
-              <Ionicons name="layers-outline" size={18} color={COLORS.textContrast} />
-              <Text style={styles.actionText}>Update Stock</Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity
-            activeOpacity={0.9}
-            style={styles.deleteButton}
-            onPress={handleDeleteProduct}
-          >
-            <Ionicons name="trash-outline" size={18} color={COLORS.error} />
-            <Text style={styles.deleteActionText}>Delete Product</Text>
-          </TouchableOpacity>
+          <View style={{ height: 24 }} />
         </ScrollView>
       )}
 
@@ -912,6 +1550,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.textSecondary,
     fontWeight: "500",
+  },
+  parentProductSubtitle: {
+    marginTop: 2,
+    fontSize: 13,
   },
   stockBadge: {
     flexDirection: "row",
@@ -1248,5 +1890,152 @@ const styles = StyleSheet.create({
   fullImageModalContent: {
     width: "100%",
     height: "85%",
+  },
+  variantsCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 18,
+    padding: 16,
+  },
+  variantsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  variantsHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  variantCountPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  variantCountText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  skuList: {
+    gap: 10,
+  },
+  skuItemCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  skuImgBox: {
+    width: 52,
+    height: 52,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+  },
+  skuThumb: {
+    width: "100%",
+    height: "100%",
+  },
+  skuContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  skuRowTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  skuName: {
+    fontSize: 14,
+    fontWeight: "700",
+    flex: 1,
+    marginRight: 6,
+  },
+  skuStatusPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  skuStatusText: {
+    fontSize: 9,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  skuCode: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  skuRowBottom: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 6,
+  },
+  skuPrice: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  skuOriginalPrice: {
+    fontSize: 11,
+    textDecorationLine: "line-through",
+    marginLeft: 6,
+  },
+  skuStockPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  skuStockText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  variantSelectorCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  variantSelectorHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  variantSelectorTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  variantChipsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  variantChipBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  variantChipBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    marginRight: 6,
+  },
+  variantChipStockBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+  },
+  variantChipStockText: {
+    fontSize: 10,
+    fontWeight: "800",
   },
 });

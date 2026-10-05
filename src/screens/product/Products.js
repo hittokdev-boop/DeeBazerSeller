@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -21,7 +21,14 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import { useNavigation, useFocusEffect, useRoute } from "@react-navigation/native";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getSellerProducts, deleteSellerProduct, updateProductStock, clearAuthSession } from "../../api/auth";
+import {
+  getSellerProducts,
+  getApprovedProducts,
+  deleteSellerProduct,
+  updateSkuStock,
+  clearAuthSession,
+  sanitizeErrorMessage,
+} from "../../api/auth";
 import { CustomAlert } from "../../context/AlertContext";
 import LoggedOutView from "../../components/common/LoggedOutView";
 
@@ -30,11 +37,11 @@ const normalizeImageUrl = (img) => {
   if (!img) return null;
   let uri = null;
   if (typeof img === "string") {
-    uri = img.trim();
+    uri = img.replace(/\\/g, "").trim();
   } else if (typeof img === "object") {
     uri = img.image_url || img.url || img.path || img.src || img.uri || null;
     if (typeof uri !== "string") return null;
-    uri = uri.trim();
+    uri = uri.replace(/\\/g, "").trim();
   }
   if (!uri) return null;
 
@@ -54,6 +61,38 @@ const normalizeImageUrl = (img) => {
   return `https://deebazar.com/${uri}`;
 };
 
+const ProductImageThumbnail = ({ uri, hasDiscount, discountPct, isDark, textSecondary }) => {
+  const [imgError, setImgError] = useState(false);
+
+  return (
+    <View style={styles.imageContainer}>
+      {uri && !imgError ? (
+        <Image
+          source={{ uri }}
+          style={styles.productImage}
+          resizeMode="cover"
+          onError={() => setImgError(true)}
+        />
+      ) : (
+        <View
+          style={[
+            styles.productImage,
+            styles.placeholderImage,
+            { backgroundColor: isDark ? "#1e293b" : COLORS.backgroundAlt },
+          ]}
+        >
+          <Ionicons name="image-outline" size={30} color={textSecondary || COLORS.textSecondary} />
+        </View>
+      )}
+      {hasDiscount && (
+        <View style={styles.discountBadge}>
+          <Text style={styles.discountText}>{discountPct}% OFF</Text>
+        </View>
+      )}
+    </View>
+  );
+};
+
 const STATUS_OPTIONS = [
   { label: "All", value: "all" },
   { label: "Approved", value: "approved" },
@@ -68,19 +107,19 @@ const formatCurrency = (amount) => {
 
 const getProductStatus = (item) => {
   if (!item) return "pending";
-  const approval = (item.approval_status || "").toLowerCase();
   const status = (item.status || "").toLowerCase();
+  const approval = (item.approval_status || item.sku?.approval_status || "").toLowerCase();
 
-  if (approval === "rejected" || status === "rejected") {
-    return "rejected";
-  }
-  if (approval === "approved" || status === "approved") {
+  if (status === "approved" || approval === "approved") {
     return "approved";
   }
-  if (approval === "pending" || status === "pending") {
+  if (status === "rejected" || approval === "rejected") {
+    return "rejected";
+  }
+  if (status === "pending" || approval === "pending") {
     return "pending";
   }
-  return approval || status || "pending";
+  return status || approval || "pending";
 };
 
 const getStatusBadge = (itemOrStatus) => {
@@ -97,6 +136,117 @@ const getStatusBadge = (itemOrStatus) => {
   return { bg: COLORS.backgroundAlt, text: COLORS.textSecondary, label: s || "Draft" };
 };
 
+export const extractSkuId = (obj) => {
+  if (!obj) return null;
+  return (
+    obj.product_sku_id ||
+    obj.sku_id ||
+    (typeof obj.sku === "object" && obj.sku ? obj.sku.id : null) ||
+    (typeof obj.sku === "number" ? obj.sku : null) ||
+    obj.id
+  );
+};
+
+export const extractSkuCode = (obj) => {
+  if (!obj) return "";
+  if (typeof obj.sku === "object" && obj.sku) {
+    return obj.sku.code || obj.sku.sku || obj.sku_code || "";
+  }
+  return obj.sku_code || (typeof obj.sku === "string" ? obj.sku : "") || obj.code || "";
+};
+
+export const extractSkuName = (obj) => {
+  if (!obj) return "";
+  if (typeof obj.sku === "object" && obj.sku) {
+    return obj.sku.name || obj.sku.title || obj.sku_name || "";
+  }
+  return obj.sku_name || obj.title || (obj.product?.name !== obj.name ? obj.name : "");
+};
+
+export const groupProductsByMasterProduct = (rawProducts) => {
+  if (!Array.isArray(rawProducts)) return [];
+  const map = new Map();
+  const result = [];
+
+  rawProducts.forEach((item) => {
+    if (!item) return;
+    const masterId = item.product_id || item.product?.id;
+    // Only group if there's a valid master product ID and item doesn't already have its own complete skus array
+    if (masterId && (!Array.isArray(item.skus) || item.skus.length <= 1)) {
+      if (map.has(masterId)) {
+        const existing = map.get(masterId);
+        if (!Array.isArray(existing.skus)) {
+          const firstSku = {
+            id: existing.id,
+            seller_sku_id: existing.id,
+            seller_product_id: existing.id,
+            product_sku_id: extractSkuId(existing),
+            sku_id: extractSkuId(existing),
+            name: extractSkuName(existing) || existing.name,
+            code: extractSkuCode(existing),
+            sku: extractSkuCode(existing),
+            image_url: existing.sku?.image_url || existing.image_url || existing.image,
+            price: existing.price,
+            sale_price: existing.sale_price,
+            stock_quantity: Number(existing.stock_quantity ?? existing.stock ?? 0),
+            in_stock: (existing.stock_quantity ?? existing.stock ?? 0) > 0,
+            status: existing.status,
+            approval_status: existing.sku?.approval_status || existing.approval_status || existing.status,
+          };
+          existing.skus = [firstSku];
+        }
+        const currentSku = {
+          id: item.id,
+          seller_sku_id: item.id,
+          seller_product_id: item.id,
+          product_sku_id: extractSkuId(item),
+          sku_id: extractSkuId(item),
+          name: extractSkuName(item) || item.name,
+          code: extractSkuCode(item),
+          sku: extractSkuCode(item),
+          image_url: item.sku?.image_url || item.image_url || item.image,
+          price: item.price,
+          sale_price: item.sale_price,
+          stock_quantity: Number(item.stock_quantity ?? item.stock ?? 0),
+          in_stock: (item.stock_quantity ?? item.stock ?? 0) > 0,
+          status: item.status,
+          approval_status: item.sku?.approval_status || item.approval_status || item.status,
+        };
+        if (!existing.skus.some((s) => s.id === currentSku.id)) {
+          existing.skus.push(currentSku);
+        }
+        existing.stock_quantity = existing.skus.reduce((sum, s) => sum + (Number(s.stock_quantity) || 0), 0);
+        return;
+      } else {
+        const copy = { ...item };
+        const firstSku = {
+          id: copy.id,
+          seller_sku_id: copy.id,
+          seller_product_id: copy.id,
+          product_sku_id: extractSkuId(copy),
+          sku_id: extractSkuId(copy),
+          name: extractSkuName(copy) || copy.name,
+          code: extractSkuCode(copy),
+          sku: extractSkuCode(copy),
+          image_url: copy.sku?.image_url || copy.image_url || copy.image,
+          price: copy.price,
+          sale_price: copy.sale_price,
+          stock_quantity: Number(copy.stock_quantity ?? copy.stock ?? 0),
+          in_stock: (copy.stock_quantity ?? copy.stock ?? 0) > 0,
+          status: copy.status,
+          approval_status: copy.sku?.approval_status || copy.approval_status || copy.status,
+        };
+        copy.skus = [firstSku];
+        map.set(masterId, copy);
+        result.push(copy);
+        return;
+      }
+    }
+    result.push(item);
+  });
+
+  return result;
+};
 
 const Products = () => {
   const navigation = useNavigation();
@@ -104,6 +254,8 @@ const Products = () => {
   const { colors, isDark } = useTheme();
 
   const [products, setProducts] = useState([]);
+  const [adminApprovedProducts, setAdminApprovedProducts] = useState([]);
+  const [isLoadingApproved, setIsLoadingApproved] = useState(false);
   const [counts, setCounts] = useState({ total: 0, approved: 0, pending: 0, rejected: 0 });
   const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, total: 0 });
 
@@ -126,6 +278,20 @@ const Products = () => {
 
   const searchDebounceTimer = useRef(null);
 
+  // Fetch Admin Approved Master Products from GET api/seller/products/approved
+  const fetchApprovedList = useCallback(async () => {
+    try {
+      setIsLoadingApproved(true);
+      const res = await getApprovedProducts();
+      const list = Array.isArray(res) ? res : res?.data || [];
+      setAdminApprovedProducts(list);
+    } catch (err) {
+      console.warn("fetchApprovedList error:", err?.message);
+    } finally {
+      setIsLoadingApproved(false);
+    }
+  }, []);
+
   const fetchProductsList = useCallback(
     async (page = 1, isRefresh = false, searchTxt = searchQuery) => {
       if (isRefresh) {
@@ -142,6 +308,7 @@ const Products = () => {
         if (!token) {
           setIsLoggedIn(false);
           setProducts([]);
+          setAdminApprovedProducts([]);
           setCounts({ total: 0, approved: 0, pending: 0, rejected: 0 });
           setFetchError(null);
           setIsLoading(false);
@@ -165,9 +332,9 @@ const Products = () => {
         if (res && res.data) {
           const fetchedProducts = res.data.products || [];
           if (page === 1) {
-            setProducts(fetchedProducts);
+            setProducts(groupProductsByMasterProduct(fetchedProducts));
           } else {
-            setProducts((prev) => [...prev, ...fetchedProducts]);
+            setProducts((prev) => groupProductsByMasterProduct([...prev, ...fetchedProducts]));
           }
 
           if (res.data.counts) {
@@ -188,13 +355,14 @@ const Products = () => {
         if (isAuth) {
           setIsLoggedIn(false);
           setProducts([]);
+          setAdminApprovedProducts([]);
           setFetchError(null);
           await clearAuthSession();
           return;
         }
 
         console.error("Failed to fetch products:", err);
-        setFetchError(err?.message || "Failed to load products");
+        setFetchError(sanitizeErrorMessage(err?.message, "Failed to load products"));
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
@@ -210,9 +378,11 @@ const Products = () => {
       if (token) {
         setIsLoggedIn(true);
         fetchProductsList(1, false, searchQuery);
+        fetchApprovedList();
       } else {
         setIsLoggedIn(false);
         setProducts([]);
+        setAdminApprovedProducts([]);
         setFetchError(null);
       }
     });
@@ -220,6 +390,7 @@ const Products = () => {
     const logoutListener = DeviceEventEmitter.addListener("sellerLoggedOut", () => {
       setIsLoggedIn(false);
       setProducts([]);
+      setAdminApprovedProducts([]);
       setFetchError(null);
     });
 
@@ -227,7 +398,7 @@ const Products = () => {
       authListener.remove();
       logoutListener.remove();
     };
-  }, [fetchProductsList, searchQuery]);
+  }, [fetchProductsList, fetchApprovedList, searchQuery]);
 
   // Automatically refresh when screen comes into focus
   useFocusEffect(
@@ -236,14 +407,16 @@ const Products = () => {
         if (!token) {
           setIsLoggedIn(false);
           setProducts([]);
+          setAdminApprovedProducts([]);
           setFetchError(null);
           setIsLoading(false);
         } else {
           setIsLoggedIn(true);
           fetchProductsList(1, false, searchQuery);
+          fetchApprovedList();
         }
       });
-    }, [fetchProductsList, searchQuery])
+    }, [fetchProductsList, fetchApprovedList, searchQuery])
   );
 
   // Instantly prepend newly added product if passed from AddProductScreen
@@ -255,13 +428,12 @@ const Products = () => {
           (p) => (p.id && p.id === newProd.id) || (p.product_id && p.product_id === newProd.product_id)
         );
         if (exists) return prev;
-        return [newProd, ...prev];
+        return groupProductsByMasterProduct([newProd, ...prev]);
       });
       fetchProductsList(1, true);
+      fetchApprovedList();
     }
   }, [route.params?.timestamp]);
-
-
 
   const handleSearchChange = (text) => {
     setSearchQuery(text);
@@ -275,6 +447,7 @@ const Products = () => {
 
   const handleRefresh = () => {
     fetchProductsList(1, true, searchQuery);
+    fetchApprovedList();
   };
 
   const handleLoadMore = () => {
@@ -287,12 +460,6 @@ const Products = () => {
     navigation.navigate("AddProduct");
   };
 
-  const handleEdit = (product) => {
-    navigation.navigate("EditProduct", {
-      product,
-      productId: product.product_id || product.id,
-    });
-  };
 
   const handleDelete = (id, name) => {
     CustomAlert.alert(
@@ -306,7 +473,7 @@ const Products = () => {
           onPress: async () => {
             try {
               const res = await deleteSellerProduct(id);
-              setProducts((prev) => prev.filter((p) => (p.product_id) !== id));
+              setProducts((prev) => prev.filter((p) => (p.product_id || p.id) !== id));
               CustomAlert.showSuccess("Deleted 🎉", res?.message || "Product deleted successfully.");
             } catch (err) {
               console.warn("Delete product blocked:", err?.message);
@@ -319,7 +486,12 @@ const Products = () => {
   };
 
   const handleStockEdit = (product) => {
-    const id = product.product_id;
+    if (Array.isArray(product.skus) && product.skus.length > 1) {
+      const pId = product.id || product.product_id;
+      navigation.navigate("ProductDetails", { product, productId: pId });
+      return;
+    }
+    const id = product.id || product.product_id;
     const currentStock = product.stock_quantity ?? product.stock ?? 0;
     setStockEditProduct({ ...product, id });
     setStockInputValue(String(currentStock));
@@ -334,14 +506,30 @@ const Products = () => {
       return;
     }
 
+    const targetSkuId =
+      stockEditProduct.product_sku_id ||
+      stockEditProduct.sku_id ||
+      stockEditProduct.skus?.[0]?.product_sku_id ||
+      stockEditProduct.skus?.[0]?.sku_id ||
+      stockEditProduct.skus?.[0]?.id ||
+      stockEditProduct.sku?.id ||
+      stockEditProduct.id;
+
+    if (!targetSkuId) {
+      CustomAlert.showWarning("Missing SKU ID", "Cannot update stock: SKU ID not found.");
+      return;
+    }
+
     setIsUpdatingStock(true);
     try {
-      const res = await updateProductStock(stockEditProduct.id, newQty);
+      const targetId = stockEditProduct.id || stockEditProduct.product_id;
+      const res = await updateSkuStock(targetSkuId, newQty);
+
       // Update locally
       setProducts((prev) =>
         prev.map((p) => {
-          const pId = p.product_id;
-          if (pId === stockEditProduct.id) {
+          const pId = p.id || p.product_id;
+          if (pId === targetId) {
             return {
               ...p,
               stock_quantity: res.data?.stock_quantity ?? newQty,
@@ -363,8 +551,8 @@ const Products = () => {
 
   // Sort products client-side for immediate responsive feel
   const sortedProducts = [...products].sort((a, b) => {
-    const priceA = Number(a.effective_price ?? a.price ?? 0);
-    const priceB = Number(b.effective_price ?? b.price ?? 0);
+    const priceA = Number(a.effective_price ?? a.sale_price ?? a.price ?? 0);
+    const priceB = Number(b.effective_price ?? b.sale_price ?? b.price ?? 0);
     const stockA = Number(a.stock_quantity ?? a.stock ?? 0);
     const stockB = Number(b.stock_quantity ?? b.stock ?? 0);
 
@@ -382,126 +570,99 @@ const Products = () => {
     return itemStatus === selectedStatus;
   });
 
+  const filteredAdminApproved = useMemo(() => {
+    if (!searchQuery.trim()) return adminApprovedProducts;
+    const q = searchQuery.toLowerCase().trim();
+    return adminApprovedProducts.filter((item) => {
+      const name = (item.name || "").toLowerCase();
+      const cat = (typeof item.category === "object" ? item.category?.name : item.category || "").toLowerCase();
+      return name.includes(q) || cat.includes(q) || String(item.id).includes(q);
+    });
+  }, [adminApprovedProducts, searchQuery]);
+
   const displayCounts = {
     total: Math.max(counts.total || 0, products.length),
     approved: products.length > 0 ? products.filter((p) => getProductStatus(p) === "approved").length : counts.approved || 0,
     pending: products.length > 0 ? products.filter((p) => getProductStatus(p) === "pending").length : counts.pending || 0,
     rejected: products.length > 0 ? products.filter((p) => getProductStatus(p) === "rejected").length : counts.rejected || 0,
+    admin_approved: adminApprovedProducts.length,
   };
 
   const renderProductItem = ({ item }) => {
     const badge = getStatusBadge(item);
-    const price = item.effective_price || item.sale_price || item.price;
-    const originalPrice = item.price;
-    const hasDiscount = item.is_on_sale && item.sale_price && item.sale_price < originalPrice;
-    const stock = item.stock_quantity ?? item.stock ?? 0;
-    const isOutOfStock = stock <= 0;
-    const isLowStock = item.is_low_stock || (stock > 0 && stock <= (item.min_stock_alert || 5));
-    const categoryName = item.category?.name || item.category || "General";
-    const productId = item.product_id;
+    const skusList = Array.isArray(item.skus) ? item.skus : [];
+    const variantsCount = skusList.length;
 
+    const categoryName =
+      (typeof item.product?.category === "object"
+        ? (item.product?.category?.name || item.product?.category?.title)
+        : item.product?.category) ||
+      (typeof item.category === "object"
+        ? (item.category?.name || item.category?.code)
+        : item.category) ||
+      "General";
+
+    const parentProductName =
+      item.product?.name ||
+      (typeof item.name === "object" ? (item.name?.name || item.name?.title) : item.name) ||
+      "Product";
+
+    const productName = parentProductName;
+    const productId = item.id || item.product_id || item.product?.id;
+
+    const rawImage =
+      item.image_url ||
+      item.image ||
+      item.product?.image_url ||
+      item.product?.image ||
+      (Array.isArray(item.images) ? item.images[0] : item.images) ||
+      item.thumbnail ||
+      (variantsCount > 0 && (skusList[0]?.image_url || skusList[0]?.image)) ||
+      item.sku?.image_url ||
+      item.sku?.image;
+
+    const imageUri = normalizeImageUrl(rawImage);
 
     return (
       <TouchableOpacity
-        key={productId}
+        key={String(productId)}
         activeOpacity={0.9}
         onPress={() => navigation.navigate("ProductDetails", { product: item, productId })}
         style={[styles.productCard, { backgroundColor: colors.cardBg }]}
       >
         {/* Product Thumbnail */}
-        <View style={styles.imageContainer}>
-
-          <Image
-            source={{
-              uri: normalizeImageUrl(
-                item.image_url ||
-                item.image ||
-                (Array.isArray(item.images) ? item.images[0] : item.images) ||
-                item.thumbnail
-              ),
-            }}
-            style={styles.productImage}
-          />
-          {hasDiscount && (
-            <View style={styles.discountBadge}>
-              <Text style={styles.discountText}>
-                {Math.round(item.discount_pct || ((originalPrice - item.sale_price) / originalPrice) * 100)}% OFF
-              </Text>
-            </View>
-          )}
-        </View>
+        <ProductImageThumbnail
+          uri={imageUri}
+          hasDiscount={false}
+          discountPct={0}
+          isDark={isDark}
+          textSecondary={colors.textSecondary}
+        />
 
         {/* Product Details */}
         <View style={styles.productInfo}>
-          {/* Status Badge */}
+          {/* Status Badge & Variant Count */}
           <View style={styles.statusRow}>
             <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
               <Text style={[styles.statusBadgeText, { color: badge.text }]}>
                 {badge.label.toUpperCase()}
               </Text>
             </View>
-            {item.sku ? (
-              <Text style={[styles.skuText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {item.sku}
-              </Text>
-            ) : null}
+
+            {variantsCount > 1 && (
+              <View style={[styles.variantBadge, { backgroundColor: isDark ? "#1e293b" : "#EEF2FF" }]}>
+                <Ionicons name="layers-outline" size={11} color={COLORS.primary} style={{ marginRight: 3 }} />
+                <Text style={[styles.variantBadgeText, { color: COLORS.primary }]}>
+                  {variantsCount} Variants
+                </Text>
+              </View>
+            )}
           </View>
 
           <Text style={[styles.productName, { color: colors.textPrimary }]} numberOfLines={2}>
-            {item.name}
+            {productName}
           </Text>
           <Text style={[styles.category, { color: colors.textSecondary }]}>{categoryName}</Text>
-
-          {/* Pricing Row */}
-          <View style={styles.priceRow}>
-            <Text style={[styles.price, { color: COLORS.primary }]}>{formatCurrency(price)}</Text>
-            {hasDiscount && (
-              <Text style={[styles.originalPrice, { color: colors.textSecondary }]}>
-                {formatCurrency(originalPrice)}
-              </Text>
-            )}
-          </View>
-
-          {/* Stock and Ratings Row */}
-          <View style={styles.bottomRow}>
-            <View
-              style={[
-                styles.stockBox,
-                isOutOfStock && styles.outOfStockBg,
-                isLowStock && styles.lowStockBg,
-                !isOutOfStock && !isLowStock && styles.inStockBg,
-              ]}
-            >
-              <Ionicons
-                name={isOutOfStock ? "alert-circle" : isLowStock ? "warning" : "checkmark-circle"}
-                size={12}
-                color={isOutOfStock ? COLORS.error : isLowStock ? COLORS.warning : COLORS.success}
-              />
-              <Text
-                style={[
-                  styles.stockText,
-                  isOutOfStock && styles.outOfStockText,
-                  isLowStock && styles.lowStockText,
-                  !isOutOfStock && !isLowStock && styles.inStockText,
-                ]}
-              >
-                {isOutOfStock ? "Out of Stock" : `Stock: ${stock}`}
-              </Text>
-            </View>
-
-            {item.rating_average ? (
-              <View style={styles.ratingBox}>
-                <Ionicons name="star" size={12} color={COLORS.warning} />
-                <Text style={styles.rating}>{Number(item.rating_average).toFixed(1)}</Text>
-              </View>
-            ) : null}
-
-            {item.sales_count > 0 && (
-              <Text style={[styles.salesCount, { color: colors.textSecondary }]}>
-                {item.sales_count} sold
-              </Text>
-            )}
-          </View>
 
           {/* Rejection notice if any */}
           {item.rejection_reason && (
@@ -512,32 +673,110 @@ const Products = () => {
               </Text>
             </View>
           )}
+
+          {/* Ratings & Sales count if any */}
+          {(item.rating_average || item.sales_count > 0) && (
+            <View style={styles.bottomRow}>
+              {item.rating_average ? (
+                <View style={styles.ratingBox}>
+                  <Ionicons name="star" size={12} color={COLORS.warning} />
+                  <Text style={styles.rating}>{Number(item.rating_average).toFixed(1)}</Text>
+                </View>
+              ) : null}
+
+              {item.sales_count > 0 && (
+                <Text style={[styles.salesCount, { color: colors.textSecondary }]}>
+                  {item.sales_count} sold
+                </Text>
+              )}
+            </View>
+          )}
         </View>
 
-        {/* Quick Actions */}
-        <View style={styles.actionsColumn}>
-          <TouchableOpacity
-            style={[styles.editBtn, { backgroundColor: COLORS.primaryBgLight }]}
-            onPress={() => handleEdit(item)}
-          >
-            <Ionicons name="create-outline" size={18} color={COLORS.primary} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.stockBtn, { backgroundColor: COLORS.warningBgLight }]}
-            onPress={() => handleStockEdit(item)}
-          >
-            <Ionicons name="layers-outline" size={18} color={COLORS.warning} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.deleteBtn, { backgroundColor: COLORS.errorBgLight }]}
-            onPress={() => handleDelete(productId, item.name)}
-          >
-            <Ionicons name="trash-outline" size={18} color={COLORS.error} />
-          </TouchableOpacity>
+        {/* Right Navigation Arrow */}
+        <View style={styles.cardRightArrow}>
+          <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
         </View>
       </TouchableOpacity>
+    );
+  };
+
+  const renderAdminApprovedItem = ({ item }) => {
+    const rawImage =
+      item.image_url ||
+      item.image ||
+      (Array.isArray(item.images) ? item.images[0] : item.images) ||
+      item.thumbnail;
+    const imageUri = normalizeImageUrl(rawImage);
+    const catName =
+      (typeof item.category === "object" ? item.category?.name : item.category) ||
+      "Master Product";
+
+    return (
+      <View style={[styles.productCard, { backgroundColor: colors.cardBg }]}>
+        {/* Product Thumbnail */}
+        <View style={styles.imageContainer}>
+          {imageUri ? (
+            <Image
+              source={{ uri: imageUri }}
+              style={styles.productImage}
+              resizeMode="cover"
+            />
+          ) : (
+            <View
+              style={[
+                styles.productImage,
+                styles.placeholderImage,
+                { backgroundColor: isDark ? "#1e293b" : COLORS.backgroundAlt },
+              ]}
+            >
+              <Ionicons name="cube-outline" size={32} color={colors.textSecondary} />
+            </View>
+          )}
+        </View>
+
+        {/* Product Details */}
+        <View style={styles.productInfo}>
+          <View style={styles.statusRow}>
+            <View style={[styles.statusBadge, { backgroundColor: COLORS.successBgLight }]}>
+              <Text style={[styles.statusBadgeText, { color: COLORS.success }]}>
+                ADMIN APPROVED
+              </Text>
+            </View>
+            <Text style={[styles.skuText, { color: colors.textSecondary }]}>
+              ID: #{item.id}
+            </Text>
+          </View>
+
+          <Text style={[styles.productName, { color: colors.textPrimary }]} numberOfLines={2}>
+            {item.name || "Approved Product"}
+          </Text>
+          <Text style={[styles.category, { color: colors.textSecondary }]}>{catName}</Text>
+
+          <View style={styles.approvedNoticeRow}>
+            <Ionicons name="checkmark-circle" size={13} color={COLORS.success} />
+            <Text style={[styles.approvedNoticeText, { color: COLORS.success }]}>
+              Approved by admin • Ready to sell
+            </Text>
+          </View>
+        </View>
+
+        {/* Action Button: Add SKU */}
+        <View style={styles.adminActionCol}>
+          <TouchableOpacity
+            style={styles.addSkuActionBtn}
+            onPress={() =>
+              navigation.navigate("AddSku", {
+                initialTab: "new_variant",
+                preselectedProduct: item,
+              })
+            }
+          >
+            <Ionicons name="flash" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={styles.addSkuActionBtnText}>Add SKU</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     );
   };
 
@@ -574,15 +813,78 @@ const Products = () => {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Top Header */}
       <View style={[styles.header, { backgroundColor: colors.cardBg, borderBottomColor: colors.borderLight }]}>
-        <View>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>My Products</Text>
+        <View style={styles.headerLeft}>
+          <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={1}>My Products</Text>
           <Text style={[styles.subTitle, { color: colors.textSecondary }]}>
             Total: {counts.total || pagination.total || products.length} items
           </Text>
         </View>
-        <TouchableOpacity style={styles.addBtn} onPress={gotoAddProduct}>
-          <Ionicons name="add" size={24} color={COLORS.textContrast} />
-        </TouchableOpacity>
+        <View style={styles.headerRightActions}>
+          <View style={styles.verticalBtnCol}>
+            <TouchableOpacity
+              style={[
+                styles.adminApprovedHeaderBtn,
+                { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: isDark ? "#334155" : COLORS.primaryLight },
+              ]}
+              onPress={() => navigation.navigate("AdminApprovedProducts")}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name="shield-checkmark"
+                size={12}
+                color={COLORS.primary}
+                style={{ marginRight: 3 }}
+              />
+              <Text
+                style={[
+                  styles.adminApprovedHeaderBtnText,
+                  { color: COLORS.primary },
+                ]}
+              >
+                Admin Approved
+              </Text>
+              {adminApprovedProducts.length > 0 && (
+                <View
+                  style={[
+                    styles.adminApprovedBadge,
+                    {
+                      backgroundColor: isDark
+                        ? "rgba(59, 130, 246, 0.2)"
+                        : "#DBEAFE",
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.adminApprovedBadgeText,
+                      {
+                        color: COLORS.primary,
+                      },
+                    ]}
+                  >
+                    {adminApprovedProducts.length}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.skuCatalogBtn,
+                { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: isDark ? "#334155" : COLORS.primaryLight },
+              ]}
+              onPress={() => navigation.navigate("AddSku")}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="flash" size={12} color={COLORS.primary} style={{ marginRight: 3 }} />
+              <Text style={[styles.skuCatalogBtnText, { color: COLORS.primary }]}>Map SKU</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity style={styles.addBtn} onPress={gotoAddProduct} activeOpacity={0.85}>
+            <Ionicons name="add" size={24} color={COLORS.textContrast} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Search & Sort Controls */}
@@ -669,27 +971,22 @@ const Products = () => {
         </ScrollView>
       </View>
 
-      {/* Error state */}
-      {fetchError && !fetchError.toLowerCase().includes("unauthenticated") && !fetchError.toLowerCase().includes("no authentication") && (
-        <View style={styles.errorBanner}>
-          <Ionicons name="alert-circle-outline" size={18} color={COLORS.error} />
-          <Text style={styles.errorBannerText}>{fetchError}</Text>
-          <TouchableOpacity onPress={() => fetchProductsList(1, false, searchQuery, selectedStatus)}>
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+
 
       {/* Products List / Loading */}
       {isLoading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading products...</Text>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Loading products...
+          </Text>
         </View>
       ) : (
         <FlatList
           data={displayedProducts}
-          keyExtractor={(item, index) => String(item.product_id || index)}
+          keyExtractor={(item, index) =>
+            String(item.id || item.product_id || item.product_sku_id || index)
+          }
           renderItem={renderProductItem}
           contentContainerStyle={styles.listScrollContent}
           refreshControl={
@@ -712,9 +1009,13 @@ const Products = () => {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="cube-outline" size={54} color={colors.textSecondary} style={{ opacity: 0.5 }} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No products found</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                No products found
+              </Text>
               <TouchableOpacity style={styles.emptyAddBtn} onPress={gotoAddProduct}>
-                <Text style={styles.emptyAddBtnText}>+ Add First Product</Text>
+                <Text style={styles.emptyAddBtnText}>
+                  + Add First Product
+                </Text>
               </TouchableOpacity>
             </View>
           }
@@ -845,21 +1146,70 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.borderLight,
   },
+  headerLeft: {
+    flexShrink: 1,
+    marginRight: 8,
+  },
   title: {
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: "800",
     color: COLORS.textPrimary,
   },
   subTitle: {
     marginTop: 2,
     color: COLORS.textSecondary,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: "500",
   },
+  headerRightActions: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  verticalBtnCol: {
+    flexDirection: "column",
+    gap: 4,
+    marginRight: 8,
+  },
+  adminApprovedHeaderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  adminApprovedHeaderBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  adminApprovedBadge: {
+    marginLeft: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  adminApprovedBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  skuCatalogBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  skuCatalogBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
   addBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 38,
+    height: 52,
+    borderRadius: 10,
     backgroundColor: COLORS.primary,
     justifyContent: "center",
     alignItems: "center",
@@ -986,6 +1336,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: COLORS.backgroundAlt,
   },
+  placeholderImage: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
   discountBadge: {
     position: "absolute",
     top: 4,
@@ -1024,6 +1378,40 @@ const styles = StyleSheet.create({
   skuText: {
     fontSize: 10,
     fontWeight: "500",
+  },
+  variantBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  variantBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  variantsMiniList: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: 5,
+  },
+  variantChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    maxWidth: 100,
+  },
+  variantChipText: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  variantMoreText: {
+    fontSize: 10,
+    fontWeight: "600",
+    marginLeft: 2,
   },
   productName: {
     fontSize: 14,
@@ -1121,18 +1509,24 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     fontWeight: "500",
   },
+  cardRightArrow: {
+    justifyContent: "center",
+    alignItems: "center",
+    paddingLeft: 6,
+    paddingRight: 4,
+  },
   actionsColumn: {
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
+    gap: 8,
   },
-  editBtn: {
+  stockBtn: {
     width: 34,
     height: 34,
     borderRadius: 8,
-    backgroundColor: COLORS.primaryBgLight,
+    backgroundColor: COLORS.warningBgLight,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 8,
   },
   deleteBtn: {
     width: 34,
@@ -1168,6 +1562,46 @@ const styles = StyleSheet.create({
     color: COLORS.textContrast,
     fontWeight: "700",
     fontSize: 13,
+  },
+  emptySubText: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 6,
+    textAlign: "center",
+    paddingHorizontal: 24,
+  },
+  approvedNoticeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+  },
+  approvedNoticeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginLeft: 4,
+  },
+  adminActionCol: {
+    justifyContent: "center",
+    alignItems: "center",
+    paddingLeft: 4,
+  },
+  addSkuActionBtn: {
+    backgroundColor: COLORS.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  addSkuActionBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
   },
   modalDismissArea: {
     flex: 1,

@@ -14,9 +14,11 @@ import {
   ActivityIndicator,
   DeviceEventEmitter,
   Modal,
+  Linking,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BASE_URL } from "../../api/api";
 import { useIsFocused, CommonActions } from "@react-navigation/native";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
@@ -35,7 +37,7 @@ const Account = ({ navigation }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(true);
 
   const isFocused = useIsFocused();
-  const { isDarkMode, toggleTheme, themeMode, colors } = useTheme();
+  const { isDarkMode, toggleTheme, colors } = useTheme();
 
   const navigateToLogin = useCallback(() => {
     navigation.navigate("Login");
@@ -91,6 +93,10 @@ const Account = ({ navigation }) => {
         };
 
         setProfile(mergedProfile);
+      } else {
+        setProfile(null);
+        setUserData(null);
+        setSellerData(null);
       }
     } catch (error) {
       if (error?.status === 401 || (typeof error?.message === "string" && error.message.toLowerCase().includes("unauthenticated"))) {
@@ -258,8 +264,8 @@ const Account = ({ navigation }) => {
   const displayLogo =
     baseLogo.includes("pravatar.cc") || baseLogo.startsWith("file://")
       ? baseLogo
-      : baseLogo 
-        ? `${baseLogo}${baseLogo.includes("?") ? "&" : "?"}t=${new Date().getTime()}` 
+      : baseLogo
+        ? `${baseLogo}${baseLogo.includes("?") ? "&" : "?"}t=${new Date().getTime()}`
         : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName || "Store")}`;
 
   const accountStatus = (
@@ -305,384 +311,380 @@ const Account = ({ navigation }) => {
     <View style={[styles.root, { backgroundColor: colors.backgroundAlt }]}>
       <ScrollView
         style={[styles.container, { backgroundColor: colors.backgroundAlt }]}
-      contentContainerStyle={styles.scrollContent}
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={onRefresh}
-          colors={[colors.primary]}
-          tintColor={colors.primary}
-        />
-      }
-    >
-      {/* Profile Card */}
-      <View style={[styles.profileCard, { backgroundColor: colors.cardBg }]}>
-        <View style={styles.avatarContainer}>
-          <Image
-            source={{ uri: displayLogo }}
-            style={[styles.profileImage, { borderColor: colors.primary }]}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
           />
-          <View
-            style={[
-              styles.statusBadgeDot,
-              { backgroundColor: isApproved ? "#22C55E" : "#F59E0B" },
-            ]}
-          />
-        </View>
-
-        <Text style={[styles.name, { color: colors.textGrayDark }]}>
-          {displayName}
-        </Text>
-
-        {ownerName ? (
-          <Text style={[styles.ownerNameText, { color: colors.textSecondary }]}>
-            Owner: {ownerName}
-          </Text>
-        ) : null}
-
-        <Text style={[styles.email, { color: colors.textGrayLight }]}>
-          {displayEmail} {displayMobile ? ` • ${displayMobile}` : ""}
-        </Text>
-
-        {/* Rating and Status Row */}
-        <View style={styles.tagsRow}>
-          <View
-            style={[
-              styles.ratingRow,
-              { backgroundColor: colors.warningBgLight || "#FFFBEB" },
-            ]}
-          >
-            <Ionicons name="star" size={16} color={colors.warning || "#F59E0B"} />
-            <Text
-              style={[
-                styles.rating,
-                { color: colors.warningText || "#B45309" },
-              ]}
-            >
-              {displayRating} ({totalRatings} {totalRatings === 1 ? "rating" : "ratings"})
-            </Text>
-          </View>
-
-          <View
-            style={[
-              styles.statusTag,
-              {
-                backgroundColor: isApproved
-                  ? "rgba(34, 197, 94, 0.12)"
-                  : "rgba(245, 158, 11, 0.12)",
-              },
-            ]}
-          >
-            <Ionicons
-              name={isApproved ? "checkmark-circle" : "time-outline"}
-              size={14}
-              color={isApproved ? "#16A34A" : "#D97706"}
-              style={styles.statusTagIcon}
-            />
-            <Text
-              style={[
-                styles.statusTagText,
-                { color: isApproved ? "#16A34A" : "#D97706" },
-              ]}
-            >
-              {accountStatus}
-            </Text>
-          </View>
-        </View>
-
-        {/* Financial Highlights */}
-        <View
-          style={[
-            styles.statsContainer,
-            {
-              backgroundColor: colors.backgroundAlt,
-              borderColor: colors.borderLight || "#E2E8F0",
-            },
-          ]}
-        >
-          <View style={styles.statItem}>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              Wallet Balance
-            </Text>
-            <Text style={[styles.statValue, { color: colors.primary }]}>
-              ₹{walletBalance}
-            </Text>
-          </View>
-
-          <View
-            style={[
-              styles.statDivider,
-              { backgroundColor: colors.borderLight || "#E2E8F0" },
-            ]}
-          />
-
-          <View style={styles.statItem}>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              Total Earnings
-            </Text>
-            <Text style={[styles.statValue, { color: colors.textGrayDark }]}>
-              ₹{totalEarnings}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Dark / Light Mode Toggle Card */}
-      <View style={[styles.themeToggleCard, { backgroundColor: colors.cardBg }]}>
-        <View style={styles.themeToggleLeft}>
-          <View
-            style={[
-              styles.themeIconBox,
-              { backgroundColor: colors.menuSettings || "#6366F1" },
-            ]}
-          >
-            <Ionicons
-              name={isDarkMode ? "moon" : "sunny"}
-              size={22}
-              color={colors.textContrast || "#FFFFFF"}
-            />
-          </View>
-          <View style={styles.themeTextContainer}>
-            <Text style={[styles.themeTitle, { color: colors.textGrayDark }]}>
-              Dark Mode
-            </Text>
-            <Text style={[styles.themeSubtitle, { color: colors.textGrayLight }]}>
-              {isDarkMode ? "Dark Theme Active 🌙" : "Light Theme Active ☀️"}
-            </Text>
-          </View>
-        </View>
-        <Switch
-          value={isDarkMode}
-          onValueChange={toggleTheme}
-          trackColor={{ false: "#CBD5E1", true: colors.primary }}
-          thumbColor={isDarkMode ? "#ffffff" : "#f4f3f4"}
-        />
-      </View>
-
-      {/* Menu List */}
-      {[
-        {
-          icon: "storefront-outline",
-          title: "Store Information",
-          color: colors.menuStore || "#3B82F6",
-          screen: "StoreInfo",
-        },
-        {
-          icon: "boat-outline",
-          title: "Shipping Settings",
-          color: "#F97316",
-          screen: "ShippingSettings",
-        },
-        {
-          icon: "shield-checkmark-outline",
-          title: "Store Policies",
-          color: "#0EA5E9",
-          screen: "StorePolicies",
-        },
-        {
-          icon: "person-outline",
-          title: "Edit Profile",
-          color: colors.menuProfile || "#10B981",
-          screen: "EditProfile",
-        },
-        {
-          icon: "call-outline",
-          title: "Contact Number",
-          color: colors.menuContact || "#EC4899",
-          screen: "ContactNumber",
-        },
-        {
-          icon: "card-outline",
-          title: "Bank Details",
-          color: colors.menuBank || "#8B5CF6",
-          screen: "BankDetails",
-        },
-        {
-          icon: "lock-closed-outline",
-          title: "Change Password",
-          color: colors.menuPassword || "#F59E0B",
-          screen: "ChangePassword",
-        },
-        {
-          icon: "settings-outline",
-          title: "App Theme & Display",
-          color: colors.menuSettings || "#6366F1",
-          onPress: () => {
-            Alert.alert(
-              "Theme Mode",
-              `Current Active Mode: ${themeMode.toUpperCase()}\nToggle the switch above to change themes anytime.`,
-              [{ text: "OK" }]
-            );
-          },
-        },
-        {
-          icon: "help-circle-outline",
-          title: "Help & Support",
-          color: colors.menuHelp || "#06B6D4",
-          onPress: () =>
-            Alert.alert(
-              "Help & Support",
-              "Support ticket system will be active soon. Please contact us at support@deebazar.com."
-            ),
-        },
-      ].map((item, index) => (
-        <TouchableOpacity
-          key={index}
-          activeOpacity={0.88}
-          onPress={() => handleMenuPress(item)}
-          style={[styles.menuCard, { backgroundColor: colors.cardBg }]}
-        >
-          <View
-            style={[
-              styles.menuIcon,
-              {
-                backgroundColor: item.color,
-              },
-            ]}
-          >
-            <Ionicons
-              name={item.icon}
-              color={colors.textContrast || "#FFFFFF"}
-              size={22}
-            />
-          </View>
-
-          <Text style={[styles.menuTitle, { color: colors.textGrayDark }]}>
-            {item.title}
-          </Text>
-
-          <Ionicons
-            name="chevron-forward"
-            size={22}
-            color={colors.textGrayPlaceholder || "#94A3B8"}
-          />
-        </TouchableOpacity>
-      ))}
-
-      {/* Logout Button */}
-      <TouchableOpacity
-        style={[styles.logoutBtn, { backgroundColor: colors.error || "#EF4444" }]}
-        activeOpacity={0.9}
-        onPress={handleLogout}
-        disabled={isLoggingOut}
+        }
       >
-        {isLoggingOut ? (
-          <ActivityIndicator color={colors.textContrast || "#FFFFFF"} size="small" />
-        ) : (
-          <>
-            <Ionicons
-              name="log-out-outline"
-              size={22}
-              color={colors.textContrast || "#FFFFFF"}
+        {/* Profile Card */}
+        <View style={[styles.profileCard, { backgroundColor: colors.cardBg }]}>
+          <View style={styles.avatarContainer}>
+            <Image
+              source={{ uri: displayLogo }}
+              style={[styles.profileImage, { borderColor: colors.primary }]}
             />
-            <Text
+            <View
               style={[
-                styles.logoutText,
-                { color: colors.textContrast || "#FFFFFF" },
+                styles.statusBadgeDot,
+                { backgroundColor: isApproved ? "#22C55E" : "#F59E0B" },
+              ]}
+            />
+          </View>
+
+          <Text style={[styles.name, { color: colors.textGrayDark }]}>
+            {displayName}
+          </Text>
+
+          {ownerName ? (
+            <Text style={[styles.ownerNameText, { color: colors.textSecondary }]}>
+              Owner: {ownerName}
+            </Text>
+          ) : null}
+
+          <Text style={[styles.email, { color: colors.textGrayLight }]}>
+            {displayEmail} {displayMobile ? ` • ${displayMobile}` : ""}
+          </Text>
+
+          {/* Rating and Status Row */}
+          <View style={styles.tagsRow}>
+            <View
+              style={[
+                styles.ratingRow,
+                { backgroundColor: colors.warningBgLight || "#FFFBEB" },
               ]}
             >
-              Logout
-            </Text>
-          </>
-        )}
-      </TouchableOpacity>
-    </ScrollView>
+              <Ionicons name="star" size={16} color={colors.warning || "#F59E0B"} />
+              <Text
+                style={[
+                  styles.rating,
+                  { color: colors.warningText || "#B45309" },
+                ]}
+              >
+                {displayRating} ({totalRatings} {totalRatings === 1 ? "rating" : "ratings"})
+              </Text>
+            </View>
 
-    {/* Full Screen Logged Out UI Modal */}
-    <Modal
-      visible={showLoggedOutModal}
-      animationType="fade"
-      transparent={false}
-      statusBarTranslucent
-      onRequestClose={handleGoToLogin}
-    >
-      <StatusBar
-        barStyle={isDarkMode ? "light-content" : "dark-content"}
-        backgroundColor="transparent"
-        translucent
-      />
-      <View style={[styles.loggedOutContainer, { backgroundColor: colors.background }]}>
-        {/* Ambient Glow */}
-        <View
-          style={[
-            styles.loggedOutGlow,
-            { backgroundColor: isDarkMode ? "rgba(37, 99, 235, 0.15)" : "rgba(37, 99, 235, 0.08)" },
-          ]}
-        />
-
-        <View style={styles.loggedOutCard}>
-          {/* Large Status Icon */}
-          <View
-            style={[
-              styles.loggedOutIconOuter,
-              {
-                backgroundColor: isDarkMode ? "rgba(37, 99, 235, 0.15)" : "#EFF6FF",
-                borderColor: isDarkMode ? "rgba(37, 99, 235, 0.3)" : "#BFDBFE",
-              },
-            ]}
-          >
-            <View style={[styles.loggedOutIconInner, { backgroundColor: colors.primary }]}>
-              <Ionicons name="log-out-outline" size={42} color="#FFFFFF" />
+            <View
+              style={[
+                styles.statusTag,
+                {
+                  backgroundColor: isApproved
+                    ? "rgba(34, 197, 94, 0.12)"
+                    : "rgba(245, 158, 11, 0.12)",
+                },
+              ]}
+            >
+              <Ionicons
+                name={isApproved ? "checkmark-circle" : "time-outline"}
+                size={14}
+                color={isApproved ? "#16A34A" : "#D97706"}
+                style={styles.statusTagIcon}
+              />
+              <Text
+                style={[
+                  styles.statusTagText,
+                  { color: isApproved ? "#16A34A" : "#D97706" },
+                ]}
+              >
+                {accountStatus}
+              </Text>
             </View>
           </View>
 
-          {/* Title & Bengali Title */}
-          <Text style={[styles.loggedOutTitle, { color: colors.textPrimary }]}>
-            Logged Out Successfully
-          </Text>
-          <Text style={[styles.loggedOutTitleBn, { color: colors.primary }]}>
-            আপনি সফলভাবে লগ আউট হয়েছেন
-          </Text>
-
-          {/* Description */}
-          <Text style={[styles.loggedOutMessage, { color: colors.textSecondary }]}>
-            আপনার বিক্রেতা অ্যাকাউন্ট থেকে সফলভাবে লগ আউট করা হয়েছে। আপনার পণ্য ও অর্ডার পরিচালনা করতে অনুগ্রহ করে পুনরায় লগ ইন করুন।
-          </Text>
-
-          {/* Security Info Box */}
+          {/* Financial Highlights */}
           <View
             style={[
-              styles.loggedOutInfoBox,
+              styles.statsContainer,
               {
-                backgroundColor: colors.cardBg,
-                borderColor: colors.borderLight,
+                backgroundColor: colors.backgroundAlt,
+                borderColor: colors.borderLight || "#E2E8F0",
               },
             ]}
           >
-            <View style={styles.loggedOutInfoRow}>
-              <Ionicons name="shield-checkmark" size={20} color={COLORS.success || "#10B981"} />
-              <View style={styles.loggedOutInfoTextCol}>
-                <Text style={[styles.loggedOutInfoHead, { color: colors.textPrimary }]}>Session Ended</Text>
-                <Text style={[styles.loggedOutInfoSub, { color: colors.textSecondary }]}>Access token & cached credentials removed</Text>
-              </View>
+            <View style={styles.statItem}>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                Wallet Balance
+              </Text>
+              <Text style={[styles.statValue, { color: colors.primary }]}>
+                ₹{walletBalance}
+              </Text>
             </View>
 
-            <View style={[styles.loggedOutInfoDivider, { backgroundColor: colors.borderLight }]} />
+            <View
+              style={[
+                styles.statDivider,
+                { backgroundColor: colors.borderLight || "#E2E8F0" },
+              ]}
+            />
 
-            <View style={styles.loggedOutInfoRow}>
-              <Ionicons name="lock-closed" size={20} color={colors.primary} />
-              <View style={styles.loggedOutInfoTextCol}>
-                <Text style={[styles.loggedOutInfoHead, { color: colors.textPrimary }]}>Account Protected</Text>
-                <Text style={[styles.loggedOutInfoSub, { color: colors.textSecondary }]}>Sign in anytime with your password</Text>
-              </View>
+            <View style={styles.statItem}>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                Total Earnings
+              </Text>
+              <Text style={[styles.statValue, { color: colors.textGrayDark }]}>
+                ₹{totalEarnings}
+              </Text>
             </View>
           </View>
-
-          {/* Primary Action Button to Navigate to Login */}
-          <TouchableOpacity
-            style={[styles.loggedOutLoginBtn, { backgroundColor: colors.primary }]}
-            onPress={handleGoToLogin}
-            activeOpacity={0.88}
-          >
-            <Ionicons name="log-in-outline" size={22} color="#FFFFFF" style={{ marginRight: 8 }} />
-            <Text style={styles.loggedOutLoginBtnText}>লগ ইন করুন (Go to Login)</Text>
-            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" style={{ marginLeft: 8 }} />
-          </TouchableOpacity>
         </View>
-      </View>
-    </Modal>
-  </View>
+
+        {/* Dark / Light Mode Toggle Card */}
+        <View style={[styles.themeToggleCard, { backgroundColor: colors.cardBg }]}>
+          <View style={styles.themeToggleLeft}>
+            <View
+              style={[
+                styles.themeIconBox,
+                { backgroundColor: colors.menuSettings || "#6366F1" },
+              ]}
+            >
+              <Ionicons
+                name={isDarkMode ? "moon" : "sunny"}
+                size={22}
+                color={colors.textContrast || "#FFFFFF"}
+              />
+            </View>
+            <View style={styles.themeTextContainer}>
+              <Text style={[styles.themeTitle, { color: colors.textGrayDark }]}>
+                Dark Mode
+              </Text>
+              <Text style={[styles.themeSubtitle, { color: colors.textGrayLight }]}>
+                {isDarkMode ? "Dark Theme Active 🌙" : "Light Theme Active ☀️"}
+              </Text>
+            </View>
+          </View>
+          <Switch
+            value={isDarkMode}
+            onValueChange={toggleTheme}
+            trackColor={{ false: "#CBD5E1", true: colors.primary }}
+            thumbColor={isDarkMode ? "#ffffff" : "#f4f3f4"}
+          />
+        </View>
+
+        {/* Menu List */}
+        {[
+          {
+            icon: "storefront-outline",
+            title: "Store Information",
+            color: colors.menuStore || "#3B82F6",
+            screen: "StoreInfo",
+          },
+          {
+            icon: "boat-outline",
+            title: "Shipping Settings",
+            color: "#F97316",
+            screen: "ShippingSettings",
+          },
+          {
+            icon: "shield-checkmark-outline",
+            title: "Store Policies",
+            color: "#0EA5E9",
+            screen: "StorePolicies",
+          },
+          {
+            icon: "person-outline",
+            title: "Edit Profile",
+            color: colors.menuProfile || "#10B981",
+            screen: "EditProfile",
+          },
+          {
+            icon: "lock-closed-outline",
+            title: "Change Password",
+            color: colors.menuPassword || "#F59E0B",
+            screen: "ChangePassword",
+          },
+          {
+            icon: "help-circle-outline",
+            title: "Help & Support",
+            color: colors.menuHelp || "#06B6D4",
+            onPress: () =>
+              Alert.alert(
+                "Help & Support",
+                "Support ticket system will be active soon. Please contact us at support@deebazar.com."
+              ),
+          },
+          {
+            icon: "document-text-outline",
+            title: "Terms & Conditions",
+            color: "#8B5CF6",
+            onPress: () => {
+
+              const url = 'https://deebazar.com/admin/seller/terms-conditions'
+              // console.log(url)
+              Linking.openURL(url).catch(err => console.error("Error opening URL:", err));
+            },
+          },
+          {
+            icon: "shield-half-outline",
+            title: "Privacy Policy",
+            color: "#10B981",
+            onPress: () => {
+              const url = 'https://deebazar.com/admin/seller/help-support';
+              Linking.openURL(url).catch(err => console.error("Error opening URL:", err));
+            },
+          },
+        ].map((item, index) => (
+          <TouchableOpacity
+            key={index}
+            activeOpacity={0.88}
+            onPress={() => handleMenuPress(item)}
+            style={[styles.menuCard, { backgroundColor: colors.cardBg }]}
+          >
+            <View
+              style={[
+                styles.menuIcon,
+                {
+                  backgroundColor: item.color,
+                },
+              ]}
+            >
+              <Ionicons
+                name={item.icon}
+                color={colors.textContrast || "#FFFFFF"}
+                size={22}
+              />
+            </View>
+
+            <Text style={[styles.menuTitle, { color: colors.textGrayDark }]}>
+              {item.title}
+            </Text>
+
+            <Ionicons
+              name="chevron-forward"
+              size={22}
+              color={colors.textGrayPlaceholder || "#94A3B8"}
+            />
+          </TouchableOpacity>
+        ))}
+
+        {/* Logout Button */}
+        <TouchableOpacity
+          style={[styles.logoutBtn, { backgroundColor: colors.error || "#EF4444" }]}
+          activeOpacity={0.9}
+          onPress={handleLogout}
+          disabled={isLoggingOut}
+        >
+          {isLoggingOut ? (
+            <ActivityIndicator color={colors.textContrast || "#FFFFFF"} size="small" />
+          ) : (
+            <>
+              <Ionicons
+                name="log-out-outline"
+                size={22}
+                color={colors.textContrast || "#FFFFFF"}
+              />
+              <Text
+                style={[
+                  styles.logoutText,
+                  { color: colors.textContrast || "#FFFFFF" },
+                ]}
+              >
+                Logout
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+
+      {/* Full Screen Logged Out UI Modal */}
+      <Modal
+        visible={showLoggedOutModal}
+        animationType="fade"
+        transparent={false}
+        statusBarTranslucent
+        onRequestClose={handleGoToLogin}
+      >
+        <StatusBar
+          barStyle={isDarkMode ? "light-content" : "dark-content"}
+          backgroundColor="transparent"
+          translucent
+        />
+        <View style={[styles.loggedOutContainer, { backgroundColor: colors.background }]}>
+          {/* Ambient Glow */}
+          <View
+            style={[
+              styles.loggedOutGlow,
+              { backgroundColor: isDarkMode ? "rgba(37, 99, 235, 0.15)" : "rgba(37, 99, 235, 0.08)" },
+            ]}
+          />
+
+          <View style={styles.loggedOutCard}>
+            {/* Large Status Icon */}
+            <View
+              style={[
+                styles.loggedOutIconOuter,
+                {
+                  backgroundColor: isDarkMode ? "rgba(37, 99, 235, 0.15)" : "#EFF6FF",
+                  borderColor: isDarkMode ? "rgba(37, 99, 235, 0.3)" : "#BFDBFE",
+                },
+              ]}
+            >
+              <View style={[styles.loggedOutIconInner, { backgroundColor: colors.primary }]}>
+                <Ionicons name="log-out-outline" size={42} color="#FFFFFF" />
+              </View>
+            </View>
+
+            {/* Title & Bengali Title */}
+            <Text style={[styles.loggedOutTitle, { color: colors.textPrimary }]}>
+              Logged Out Successfully
+            </Text>
+            <Text style={[styles.loggedOutTitleBn, { color: colors.primary }]}>
+              আপনি সফলভাবে লগ আউট হয়েছেন
+            </Text>
+
+            {/* Description */}
+            <Text style={[styles.loggedOutMessage, { color: colors.textSecondary }]}>
+              আপনার বিক্রেতা অ্যাকাউন্ট থেকে সফলভাবে লগ আউট করা হয়েছে। আপনার পণ্য ও অর্ডার পরিচালনা করতে অনুগ্রহ করে পুনরায় লগ ইন করুন।
+            </Text>
+
+            {/* Security Info Box */}
+            <View
+              style={[
+                styles.loggedOutInfoBox,
+                {
+                  backgroundColor: colors.cardBg,
+                  borderColor: colors.borderLight,
+                },
+              ]}
+            >
+              <View style={styles.loggedOutInfoRow}>
+                <Ionicons name="shield-checkmark" size={20} color={COLORS.success || "#10B981"} />
+                <View style={styles.loggedOutInfoTextCol}>
+                  <Text style={[styles.loggedOutInfoHead, { color: colors.textPrimary }]}>Session Ended</Text>
+                  <Text style={[styles.loggedOutInfoSub, { color: colors.textSecondary }]}>Access token & cached credentials removed</Text>
+                </View>
+              </View>
+
+              <View style={[styles.loggedOutInfoDivider, { backgroundColor: colors.borderLight }]} />
+
+              <View style={styles.loggedOutInfoRow}>
+                <Ionicons name="lock-closed" size={20} color={colors.primary} />
+                <View style={styles.loggedOutInfoTextCol}>
+                  <Text style={[styles.loggedOutInfoHead, { color: colors.textPrimary }]}>Account Protected</Text>
+                  <Text style={[styles.loggedOutInfoSub, { color: colors.textSecondary }]}>Sign in anytime with your password</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Primary Action Button to Navigate to Login */}
+            <TouchableOpacity
+              style={[styles.loggedOutLoginBtn, { backgroundColor: colors.primary }]}
+              onPress={handleGoToLogin}
+              activeOpacity={0.88}
+            >
+              <Ionicons name="log-in-outline" size={22} color="#FFFFFF" style={{ marginRight: 8 }} />
+              <Text style={styles.loggedOutLoginBtnText}>লগ ইন করুন (Go to Login)</Text>
+              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" style={{ marginLeft: 8 }} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 };
 

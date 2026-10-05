@@ -52,7 +52,7 @@ export const getOrder = async (id) => {
       Authorization: `Bearer ${token}`,
     },
   });
-
+  console.log(token)
   const responseText = await response.text();
   let responseData;
   try {
@@ -151,6 +151,7 @@ export const getOrderStatusList = async (id) => {
   });
 
   const responseText = await response.text();
+  // console.log("getOrderStatusList responseText:", responseText); // Log the raw response text for debugging
   let responseData;
   try {
     responseData = JSON.parse(responseText);

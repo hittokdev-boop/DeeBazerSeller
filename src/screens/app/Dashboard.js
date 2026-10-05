@@ -18,7 +18,15 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useTheme } from "../../context/ThemeContext";
 import COLORS from "../../constants/theme";
-import { getSellerDashboard, getSellerProfile, clearAuthSession } from "../../api/auth";
+import {
+  getSellerDashboard,
+  getSellerProfile,
+  getSellerProducts,
+  clearAuthSession,
+  isAuthError,
+  isTechnicalError,
+} from "../../api/auth";
+import { getOrders } from "../../api/orders";
 import { getUnreadNotificationCount } from "../../api/notifications";
 import LoggedOutView from "../../components/common/LoggedOutView";
 
@@ -124,18 +132,15 @@ const SellerDashboard = ({ navigation }) => {
       }
       setIsLoggedIn(true);
 
-      // 1. Fetch live dashboard data from API
-      const res = await getSellerDashboard();
-      if (res && res.data) {
-        if (res.data.stats) {
-          setStats(res.data.stats);
+      // 1. Refresh seller profile dynamically from API
+      try {
+        const profileRes = await getSellerProfile();
+        if (profileRes && profileRes.data) {
+          const profileData = profileRes.data.seller || profileRes.data;
+          setProfile(profileData);
         }
-        if (Array.isArray(res.data.recent_orders)) {
-          setRecentOrders(res.data.recent_orders);
-        }
-        if (Array.isArray(res.data.recent_products)) {
-          setRecentProducts(res.data.recent_products);
-        }
+      } catch (pErr) {
+        console.warn("Seller profile fetch warning:", pErr?.message);
       }
 
       // 2. Fetch unread notification count
@@ -147,23 +152,81 @@ const SellerDashboard = ({ navigation }) => {
         // Non-blocking notification count fetch
       }
 
-      // 3. Refresh seller profile dynamically from API
+      // 3. Fetch live dashboard data from API
+      let dashboardSuccess = false;
       try {
-        const profileRes = await getSellerProfile();
-        if (profileRes && profileRes.data) {
-          const profileData = profileRes.data.seller || profileRes.data;
-          setProfile(profileData);
+        const res = await getSellerDashboard();
+        if (res && res.data) {
+          dashboardSuccess = true;
+          if (res.data.stats) {
+            setStats(res.data.stats);
+          }
+          if (Array.isArray(res.data.recent_orders)) {
+            setRecentOrders(res.data.recent_orders);
+          }
+          if (Array.isArray(res.data.recent_products)) {
+            setRecentProducts(res.data.recent_products);
+          }
         }
-      } catch (pErr) {
-        // Non-blocking profile refresh
+      } catch (dashErr) {
+        if (isAuthError(dashErr)) {
+          throw dashErr;
+        }
+        console.warn("getSellerDashboard warning:", dashErr?.message);
+      }
+
+      // 4. Fallback if dashboard endpoint returned error (e.g. pending seller or backend issue)
+      if (!dashboardSuccess) {
+        try {
+          const [productsRes, ordersRes] = await Promise.allSettled([
+            getSellerProducts({ per_page: 5 }),
+            getOrders(),
+          ]);
+
+          if (productsRes.status === "fulfilled" && productsRes.value) {
+            const prodData = productsRes.value?.data || productsRes.value;
+            const prods = Array.isArray(prodData?.products)
+              ? prodData.products
+              : Array.isArray(prodData)
+              ? prodData
+              : [];
+            if (prods.length > 0) {
+              setRecentProducts(prods.slice(0, 5));
+              setStats((prev) => ({
+                ...prev,
+                total_products: prodData?.counts?.total ?? prodData?.pagination?.total ?? prods.length,
+                approved_products: prodData?.counts?.approved ?? 0,
+                pending_products: prodData?.counts?.pending ?? 0,
+                rejected_products: prodData?.counts?.rejected ?? 0,
+              }));
+            }
+          }
+
+          if (ordersRes.status === "fulfilled" && ordersRes.value) {
+            const ordData = ordersRes.value?.data || ordersRes.value;
+            const orders = Array.isArray(ordData?.orders)
+              ? ordData.orders
+              : Array.isArray(ordData)
+              ? ordData
+              : [];
+            if (orders.length > 0) {
+              setRecentOrders(orders.slice(0, 5));
+              setStats((prev) => ({
+                ...prev,
+                total_orders: orders.length,
+                pending_orders: orders.filter((o) => (o.status || "").toLowerCase() === "pending").length,
+                processing_orders: orders.filter((o) => (o.status || "").toLowerCase() === "processing").length,
+                shipped_orders: orders.filter((o) => (o.status || "").toLowerCase() === "shipped").length,
+                delivered_orders: orders.filter((o) => (o.status || "").toLowerCase() === "delivered").length,
+              }));
+            }
+          }
+        } catch (fallbackErr) {
+          console.warn("Dashboard fallback calculation error:", fallbackErr?.message);
+        }
       }
     } catch (err) {
-      const isAuth =
-        err?.status === 401 ||
-        (typeof err?.message === "string" && (
-          err.message.toLowerCase().includes("unauthenticated") ||
-          err.message.toLowerCase().includes("no authentication token")
-        ));
+      const isAuth = isAuthError(err);
 
       if (isAuth) {
         setIsLoggedIn(false);
@@ -172,7 +235,7 @@ const SellerDashboard = ({ navigation }) => {
         return;
       }
 
-      console.error("Failed to load dashboard data:", err);
+      console.warn("Failed to load dashboard data:", err?.message || err);
       setFetchError(err?.message || "Failed to load dashboard data");
     } finally {
       setIsLoading(false);
@@ -450,16 +513,7 @@ const SellerDashboard = ({ navigation }) => {
         </View>
       </View>
 
-      {/* Error state banner with retry */}
-      {fetchError && !fetchError.toLowerCase().includes("unauthenticated") && !fetchError.toLowerCase().includes("no authentication") && (
-        <View style={styles.errorBanner}>
-          <Ionicons name="alert-circle-outline" size={20} color={COLORS.error} />
-          <Text style={styles.errorBannerText}>{fetchError}</Text>
-          <TouchableOpacity onPress={() => loadDashboardData()} style={styles.retryBtn}>
-            <Text style={styles.retryBtnText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+
 
       {/* Loading Spinner */}
       {isLoading && !refreshing ? (

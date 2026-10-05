@@ -247,7 +247,7 @@ const Inventory = ({ navigation }) => {
                   {item.name}
                 </Text>
                 <Text style={styles.sku}>
-                  SKU : {item.sku}
+                  SKU : {typeof item.sku === "object" ? item.sku.code || item.sku.sku || item.sku.name : item.sku}
                 </Text>
                 <Text style={styles.stockItemText}>
                   Stock : {item.stock}

@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   Animated,
+  Image,
   StatusBar,
   Dimensions,
   Easing,
@@ -339,80 +340,22 @@ const Splash = ({ navigation }) => {
             },
           ]}
         >
-          {/* Logo Card */}
+          {/* Seller branding image */}
           <Animated.View
             style={[
-              styles.logoCardOuter,
+              styles.brandImageContainer,
               {
                 transform: [{ scale: logoScaleAnim }],
               },
             ]}
           >
-            {/* Soft Glow Underlay */}
-            <View style={styles.logoGlowUnderlay} />
-
-            <View style={styles.glassBorder}>
-              <LinearGradient
-                colors={COLORS.splashGlassGradient}
-                style={styles.logoCardInner}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <Animated.View
-                  style={[
-                    styles.iconPulseWrapper,
-                    {
-                      transform: [{ scale: iconPulseAnim }],
-                    },
-                  ]}
-                >
-                  <LinearGradient
-                    colors={COLORS.splashIconGradient}
-                    style={styles.iconContainer}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                  >
-                    <Ionicons name="storefront-sharp" size={46} color={COLORS.textContrast} />
-                  </LinearGradient>
-                </Animated.View>
-              </LinearGradient>
-            </View>
+            <Image
+              source={require("../../assets/deebazar-seller-splash.png")}
+              style={styles.brandImage}
+              resizeMode="contain"
+            />
           </Animated.View>
 
-          {/* Animated App Title */}
-          <Animated.View
-            style={[
-              styles.titleContainer,
-              {
-                transform: [{ translateY: titleTranslateY }],
-              },
-            ]}
-          >
-            <View style={styles.titleRow}>
-              <Text style={styles.brandTitleText}>DeeBazer</Text>
-              <View style={styles.proDot} />
-            </View>
-          </Animated.View>
-
-          {/* Subtitle Merchant Badge */}
-          <Animated.View
-            style={[
-              styles.badgeContainer,
-              {
-                transform: [{ scale: subtitleScale }],
-              },
-            ]}
-          >
-            <LinearGradient
-              colors={COLORS.splashBadgeGradient}
-              style={styles.badgeGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
-              <Ionicons name="shield-checkmark" size={14} color={COLORS.splashBadgeIcon} style={styles.badgeIcon} />
-              <Text style={styles.subtitleBadgeText}>SELLER CENTER</Text>
-            </LinearGradient>
-          </Animated.View>
         </Animated.View>
 
         {/* Bottom Loading Progress Section */}
@@ -494,12 +437,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 10,
   },
-  // Logo Card Aesthetics
-  logoCardOuter: {
-    marginBottom: 28,
+  brandImageContainer: {
+    width: width * 0.72,
+    height: width * 0.72,
     alignItems: "center",
     justifyContent: "center",
   },
+  brandImage: {
+    width: "100%",
+    height: "100%",
+  },
+  // Logo Card Aesthetics
   logoGlowUnderlay: {
     position: "absolute",
     width: 110,

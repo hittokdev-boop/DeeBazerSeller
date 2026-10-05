@@ -116,29 +116,63 @@ const EditProduct = ({ route, navigation }) => {
 
   const populateForm = (p) => {
     if (!p) return;
-    setName(p.name || "");
-    setCategoryId(p.category_id || p.category?.id || null);
-    setCategoryName(p.category?.name || (typeof p.category === "string" ? p.category : ""));
-    setPrice(String(p.price !== undefined && p.price !== null ? p.price : ""));
-    setSalePrice(String(p.sale_price !== undefined && p.sale_price !== null ? p.sale_price : ""));
-    setStockQuantity(String(p.stock_quantity ?? p.quantity ?? p.stock ?? ""));
-    setMinStockAlert(String(p.min_stock_alert ?? "5"));
-    setSku(p.sku || "");
-    setWeight(String(p.weight !== undefined && p.weight !== null ? p.weight : ""));
-    setShortDescription(p.short_description || "");
-    setDescription(p.description || "");
+    const firstSku = Array.isArray(p.skus) && p.skus.length > 0 ? p.skus[0] : null;
 
-    const rawTags = p.tags || [];
+    setName(
+      p.product?.name ||
+      (typeof p.name === "object" ? p.name?.name || p.name?.title : p.name) ||
+      (typeof p.sku === "object" ? p.sku?.name : "") ||
+      firstSku?.name ||
+      ""
+    );
+    setCategoryId(p.category_id || p.category?.id || p.product?.category_id || p.product?.category?.id || null);
+    setCategoryName(
+      (typeof p.product?.category === "object" ? p.product?.category?.name : p.product?.category) ||
+      (typeof p.category === "object" ? p.category?.name : (typeof p.category === "string" ? p.category : "")) ||
+      ""
+    );
+    const resolvedPrice = p.price !== undefined && p.price !== null && p.price !== "" ? p.price : (firstSku?.price || "");
+    setPrice(String(resolvedPrice));
+
+    const resolvedSalePrice = p.sale_price !== undefined && p.sale_price !== null && p.sale_price !== "" ? p.sale_price : (firstSku?.sale_price || "");
+    setSalePrice(String(resolvedSalePrice));
+
+    const resolvedStock = p.stock_quantity ?? p.total_stock ?? p.quantity ?? p.stock ?? firstSku?.stock_quantity ?? "";
+    setStockQuantity(String(resolvedStock));
+    setMinStockAlert(String(p.min_stock_alert ?? "5"));
+
+    const resolvedSku =
+      typeof p.sku === "object"
+        ? (p.sku?.code || p.sku?.sku || p.sku?.name || "")
+        : (p.sku || firstSku?.code || "");
+    setSku(resolvedSku);
+
+    setWeight(String(p.weight !== undefined && p.weight !== null ? p.weight : ""));
+    setShortDescription(p.short_description || p.product?.short_description || "");
+    setDescription(p.description || p.product?.description || "");
+
+    const rawTags = p.tags || p.product?.tags || [];
     setTags(rawTags.map((t) => (typeof t === "string" ? t : t?.name || "")).filter(Boolean));
 
     // 1. Primary image from API
-    const primary = p.image_url || p.image || null;
+    const primaryImgObj = Array.isArray(p.images) ? p.images.find((img) => img?.is_primary) || p.images[0] : null;
+    const primary =
+      p.sku?.image_url ||
+      p.sku?.image ||
+      p.image_url ||
+      p.image ||
+      primaryImgObj?.url ||
+      primaryImgObj?.image_url ||
+      firstSku?.image_url ||
+      p.product?.image_url ||
+      p.product?.image ||
+      null;
     if (primary) {
       setExistingMainImageUri(primary);
     }
 
     // 2. Product Image Details (Gallery photos) from API
-    const rawGallery = p.gallery || p.images || p.product_images || p.gallery_images || [];
+    const rawGallery = p.images || p.gallery || p.product_images || p.gallery_images || [];
     if (Array.isArray(rawGallery) && rawGallery.length > 0) {
       const urls = rawGallery
         .map((img) => (typeof img === "string" ? img : img?.url || img?.image_url || img?.image))
@@ -369,7 +403,7 @@ const EditProduct = ({ route, navigation }) => {
           formData.append("gallery[]", file);
         });
       }
-      console.log(formData);
+      // console.log(formData);
       const res = await updateSellerProduct(targetProductId, formData);
       CustomAlert.showSuccess("Success", res?.message || "Product updated successfully!", () => {
         navigation.goBack();

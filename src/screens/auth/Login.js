@@ -19,6 +19,7 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
 import { BASE_URL } from "../../api/auth";
+import { getFCMToken } from "../../services/notificationService";
 
 const Login = ({ navigation }) => {
   const [email, setEmail] = useState("");
@@ -79,6 +80,7 @@ const Login = ({ navigation }) => {
 
     setIsLoading(true);
     try {
+      const fcmToken = await getFCMToken();
       const response = await fetch(`${BASE_URL}login`, {
         method: "POST",
         headers: {
@@ -88,10 +90,13 @@ const Login = ({ navigation }) => {
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
           password: password,
+          fcm_token: fcmToken,
+          device_type: Platform.OS,
         }),
       });
 
       const responseText = await response.text();
+    
       let responseData;
       try {
         responseData = JSON.parse(responseText);
@@ -363,7 +368,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   headerBanner: {
-    height: 250,
+    height: 220,
     borderBottomLeftRadius: 40,
     borderBottomRightRadius: 40,
     justifyContent: "center",
@@ -385,6 +390,7 @@ const styles = StyleSheet.create({
   },
   headerContent: {
     alignItems: "center",
+    marginTop: -8,
   },
   logoBadge: {
     width: 60,
@@ -404,6 +410,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: COLORS.textContrast,
     letterSpacing: 1.5,
+    marginTop: 0,
   },
   appTagline: {
     fontSize: 12,
@@ -416,7 +423,7 @@ const styles = StyleSheet.create({
   formContainer: {
     flex: 1,
     paddingHorizontal: 20,
-    marginTop: -40,
+    marginTop: -24,
     paddingBottom: 40,
   },
   loginCard: {

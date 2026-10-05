@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Image,
   StyleSheet,
-  Alert,
   Platform,
   StatusBar,
   PermissionsAndroid,
@@ -34,43 +33,30 @@ const PRESET_CATEGORIES = [
   { id: 10, name: "Books & Stationery" },
 ];
 
-const formatCurrency = (amount) => {
-  if (amount === undefined || amount === null || isNaN(Number(amount))) return "₹0.00";
-  return `₹${Number(amount).toLocaleString("en-IN")}`;
-};
-
 const AddProduct = ({ navigation, route }) => {
   const { colors, isDark } = useTheme();
 
-  // Categories list (fallback to PRESET_CATEGORIES)
+  // Categories list
   const [categoriesList, setCategoriesList] = useState(PRESET_CATEGORIES);
 
-  // Form State
+  // Form State according to API specification
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState(null);
   const [categoryName, setCategoryName] = useState("");
-  const [subCategoryId, setSubCategoryId] = useState(null);
-  const [childCategoryId, setChildCategoryId] = useState(null);
-  const [brandId, setBrandId] = useState(null);
-  const [price, setPrice] = useState("");
-  const [salePrice, setSalePrice] = useState("");
-  const [stockQuantity, setStockQuantity] = useState("");
-  const [minStockAlert, setMinStockAlert] = useState("5");
-  const [sku, setSku] = useState("");
-  const [weight, setWeight] = useState("");
   const [shortDescription, setShortDescription] = useState("");
   const [description, setDescription] = useState("");
 
-  // Tags
+  // Tags State
   const [tags, setTags] = useState([]);
   const [currentTag, setCurrentTag] = useState("");
 
-  // Media
+  // Media State
   const [mainImage, setMainImage] = useState(null);
   const [galleryImages, setGalleryImages] = useState([]);
 
   // UI state
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [categorySearchQuery, setCategorySearchQuery] = useState("");
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [submittedProduct, setSubmittedProduct] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -78,13 +64,19 @@ const AddProduct = ({ navigation, route }) => {
   useEffect(() => {
     let isMounted = true;
     const fetchCats = async () => {
-      const serverCats = await getSellerCategories();
-      if (isMounted && serverCats && Array.isArray(serverCats) && serverCats.length > 0) {
-        setCategoriesList(serverCats);
+      try {
+        const serverCats = await getSellerCategories();
+        if (isMounted && serverCats && Array.isArray(serverCats) && serverCats.length > 0) {
+          setCategoriesList(serverCats);
+        }
+      } catch (e) {
+        console.warn("[AddProduct] Could not fetch server categories:", e?.message);
       }
     };
     fetchCats();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -117,7 +109,7 @@ const AddProduct = ({ navigation, route }) => {
   };
 
   const handlePickMainImage = () => {
-    CustomAlert.alert("Upload Main Product Image", "Choose source for main photo (max 4MB)", [
+    CustomAlert.alert("Upload Primary Product Image", "Choose source for the main catalog photo", [
       {
         text: "Camera",
         onPress: async () => {
@@ -199,13 +191,20 @@ const AddProduct = ({ navigation, route }) => {
   };
 
   const handleAddTag = () => {
-    const cleanTag = currentTag.trim().replace(/^#/, "");
-    if (!cleanTag) return;
-    if (tags.includes(cleanTag)) {
-      CustomAlert.showWarning("Duplicate Tag", "This tag already exists.");
-      return;
-    }
-    setTags((prev) => [...prev, cleanTag]);
+    if (!currentTag.trim()) return;
+    // Support comma-separated tags e.g. "cotton, mes"
+    const splitTags = currentTag
+      .split(",")
+      .map((t) => t.trim().replace(/^#/, ""))
+      .filter((t) => t.length > 0);
+
+    const updated = [...tags];
+    splitTags.forEach((t) => {
+      if (!updated.includes(t)) {
+        updated.push(t);
+      }
+    });
+    setTags(updated);
     setCurrentTag("");
   };
 
@@ -223,12 +222,6 @@ const AddProduct = ({ navigation, route }) => {
     setName("");
     setCategoryId(null);
     setCategoryName("");
-    setPrice("");
-    setSalePrice("");
-    setStockQuantity("");
-    setMinStockAlert("5");
-    setSku("");
-    setWeight("");
     setShortDescription("");
     setDescription("");
     setTags([]);
@@ -236,6 +229,7 @@ const AddProduct = ({ navigation, route }) => {
     setMainImage(null);
     setGalleryImages([]);
     setShowSuccessModal(false);
+    setSubmittedProduct(null);
   };
 
   const handleSubmit = async () => {
@@ -244,26 +238,12 @@ const AddProduct = ({ navigation, route }) => {
       CustomAlert.showWarning("Required Field", "Please enter the product name.");
       return;
     }
-    if (!price.trim() || isNaN(Number(price)) || Number(price) <= 0) {
-      CustomAlert.showWarning("Invalid Price", "Please enter a valid product base price.");
-      return;
-    }
-    if (salePrice.trim()) {
-      if (isNaN(Number(salePrice)) || Number(salePrice) <= 0) {
-        CustomAlert.showWarning("Invalid Sale Price", "Please enter a valid numeric sale price.");
-        return;
-      }
-      if (Number(salePrice) >= Number(price)) {
-        CustomAlert.showWarning("Sale Price Error", "Sale price must be less than regular base price.");
-        return;
-      }
-    }
-    if (!stockQuantity.trim() || isNaN(Number(stockQuantity)) || Number(stockQuantity) < 0) {
-      CustomAlert.showWarning("Required Field", "Please enter a valid stock quantity.");
-      return;
-    }
     if (!categoryId) {
       CustomAlert.showWarning("Required Field", "Please select a category for this product.");
+      return;
+    }
+    if (!mainImage || !mainImage.uri) {
+      CustomAlert.showWarning("Required Field", "Please upload a primary product image.");
       return;
     }
 
@@ -271,37 +251,11 @@ const AddProduct = ({ navigation, route }) => {
     try {
       const formData = new FormData();
 
-      // Core Required Fields
+      // Required Core Fields
       formData.append("name", name.trim());
-      formData.append("price", String(Number(price)));
-      formData.append("stock_quantity", String(parseInt(stockQuantity, 10)));
       formData.append("category_id", String(categoryId));
-      formData.append("status", "active");
 
-      // Optional Category & Brand IDs
-      if (subCategoryId) {
-        formData.append("sub_category_id", String(subCategoryId));
-      }
-      if (childCategoryId) {
-        formData.append("child_category_id", String(childCategoryId));
-      }
-      if (brandId) {
-        formData.append("brand_id", String(brandId));
-      }
-
-      // Optional Fields
-      if (salePrice.trim()) {
-        formData.append("sale_price", String(Number(salePrice)));
-      }
-      if (minStockAlert.trim()) {
-        formData.append("min_stock_alert", String(parseInt(minStockAlert, 10) || 5));
-      }
-      if (sku.trim()) {
-        formData.append("sku", sku.trim());
-      }
-      if (weight.trim() && !isNaN(Number(weight))) {
-        formData.append("weight", String(Number(weight)));
-      }
+      // Optional Text Fields
       if (shortDescription.trim()) {
         formData.append("short_description", shortDescription.trim());
       }
@@ -309,19 +263,19 @@ const AddProduct = ({ navigation, route }) => {
         formData.append("description", description.trim());
       }
 
-      // Tags array: tags[]=tag1&tags[]=tag2
+      // Tags array: tags[]=cotton&tags[]=mes
       if (tags.length > 0) {
         tags.forEach((tag) => {
           formData.append("tags[]", tag);
         });
       }
 
-      // Helper to format image for multipart file upload
+      // Helper to format image object for multipart/form-data
       const formatFileForUpload = (imgObj, defaultName = "product.jpg") => {
         if (!imgObj || !imgObj.uri) return null;
         const uri = imgObj.uri;
         if (typeof uri !== "string" || uri.startsWith("http://") || uri.startsWith("https://")) {
-          return null; // Remote URLs cannot be read as local files
+          return null;
         }
         return {
           uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
@@ -348,18 +302,16 @@ const AddProduct = ({ navigation, route }) => {
         });
       }
 
-
-
       const res = await createSellerProduct(formData);
 
-      const createdProductData = res.data || {
+      const createdProductData = res?.data || {
         name: name.trim(),
-        price: Number(price),
-        sale_price: salePrice ? Number(salePrice) : null,
-        stock_quantity: Number(stockQuantity),
         category: { id: categoryId, name: categoryName },
+        short_description: shortDescription.trim(),
+        description: description.trim(),
+        tags,
         image_url: mainImage?.uri,
-        status: "active",
+        status: "pending",
         approval_status: "pending",
       };
 
@@ -384,12 +336,22 @@ const AddProduct = ({ navigation, route }) => {
     });
   };
 
+  const filteredCategories = categoriesList.filter((cat) =>
+    (cat.name || "").toLowerCase().includes(categorySearchQuery.toLowerCase())
+  );
+
   return (
-    <View style={[styles.container, { backgroundColor: colors.backgroundAlt }]}>
-      {/* Header */}
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar
+        barStyle={isDark ? "light-content" : "dark-content"}
+        backgroundColor="transparent"
+        translucent
+      />
+
+      {/* Top Header */}
       <View style={[styles.header, { backgroundColor: colors.cardBg, borderBottomColor: colors.borderLight }]}>
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={22} color={colors.textPrimary} />
+          <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Add New Product</Text>
         <TouchableOpacity
@@ -406,13 +368,38 @@ const AddProduct = ({ navigation, route }) => {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Main Image & Gallery Upload */}
+        {/* Quick SKU Catalog Banner */}
+        <TouchableOpacity
+          style={[
+            styles.skuQuickBanner,
+            {
+              backgroundColor: isDark ? "#1e293b" : "#EFF6FF",
+              borderColor: isDark ? "#334155" : COLORS.primaryLight,
+            },
+          ]}
+          onPress={() => navigation.navigate("AddSku")}
+        >
+          <View style={styles.skuBannerIconCircle}>
+            <Ionicons name="flash" size={18} color="#fff" />
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={[styles.skuBannerTitle, { color: colors.textPrimary }]}>Quick Map Approved SKU</Text>
+            <Text style={[styles.skuBannerSub, { color: colors.textSecondary }]}>
+              Already have an approved catalog SKU? Map it directly with pricing & stock
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={COLORS.primary} />
+        </TouchableOpacity>
+
+        {/* Section 1: Main Image & Gallery Upload */}
         <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Main Product Photo *</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Product Images</Text>
           <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
-            High-quality primary image for the catalog (Max 4MB)
+            Upload high-resolution images for your product (Main image required)
           </Text>
 
+          {/* Primary Main Photo */}
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Primary Photo (image) *</Text>
           {mainImage ? (
             <View style={styles.mainImageWrapper}>
               <Image source={{ uri: mainImage.uri }} style={styles.mainImagePreview} />
@@ -429,7 +416,9 @@ const AddProduct = ({ navigation, route }) => {
           )}
 
           {/* Additional Gallery Photos */}
-          <Text style={[styles.galleryTitle, { color: colors.textPrimary }]}>Additional Gallery Photos</Text>
+          <Text style={[styles.galleryTitle, { color: colors.textPrimary, marginTop: 18 }]}>
+            Additional Gallery Photos (gallery[])
+          </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.galleryScroll}>
             <TouchableOpacity style={styles.addGalleryBox} onPress={handlePickGalleryImage}>
               <Ionicons name="add" size={26} color={COLORS.primary} />
@@ -450,14 +439,21 @@ const AddProduct = ({ navigation, route }) => {
           </ScrollView>
         </View>
 
-        {/* Basic Information */}
+        {/* Section 2: Basic Product Details */}
         <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Basic Details</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Product Information</Text>
 
           <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Product Name *</Text>
           <TextInput
-            style={[styles.input, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
-            placeholder="e.g. Wireless Bluetooth Earbuds Pro"
+            style={[
+              styles.input,
+              {
+                backgroundColor: colors.backgroundAlt,
+                color: colors.textPrimary,
+                borderColor: colors.borderLight,
+              },
+            ]}
+            placeholder="e.g. Updated Product Name 3"
             placeholderTextColor={colors.textSecondary}
             value={name}
             onChangeText={setName}
@@ -465,7 +461,13 @@ const AddProduct = ({ navigation, route }) => {
 
           <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Category *</Text>
           <TouchableOpacity
-            style={[styles.dropdownSelector, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight }]}
+            style={[
+              styles.dropdownSelector,
+              {
+                backgroundColor: colors.backgroundAlt,
+                borderColor: colors.borderLight,
+              },
+            ]}
             onPress={() => setShowCategoryModal(true)}
           >
             <Text style={[styles.dropdownText, { color: categoryName ? colors.textPrimary : colors.textSecondary }]}>
@@ -473,94 +475,26 @@ const AddProduct = ({ navigation, route }) => {
             </Text>
             <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
           </TouchableOpacity>
-
-          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>SKU (Optional)</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
-            placeholder="e.g. SKU-AB12CD34 (Auto-generated if empty)"
-            placeholderTextColor={colors.textSecondary}
-            value={sku}
-            onChangeText={setSku}
-          />
         </View>
 
-        {/* Pricing & Stock */}
+        {/* Section 3: Descriptions */}
         <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Pricing & Inventory</Text>
-
-          <View style={styles.row}>
-            <View style={styles.halfField}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Base Price (₹) *</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                placeholder="1299.00"
-                placeholderTextColor={colors.textSecondary}
-                value={price}
-                onChangeText={setPrice}
-                keyboardType="numeric"
-              />
-            </View>
-
-            <View style={styles.halfField}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Sale Price (₹)</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                placeholder="999.00"
-                placeholderTextColor={colors.textSecondary}
-                value={salePrice}
-                onChangeText={setSalePrice}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-
-          <View style={styles.row}>
-            <View style={styles.halfField}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Stock Quantity *</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                placeholder="50"
-                placeholderTextColor={colors.textSecondary}
-                value={stockQuantity}
-                onChangeText={setStockQuantity}
-                keyboardType="numeric"
-              />
-            </View>
-
-            <View style={styles.halfField}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Min Stock Alert</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                placeholder="5"
-                placeholderTextColor={colors.textSecondary}
-                value={minStockAlert}
-                onChangeText={setMinStockAlert}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-
-          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Weight in kg (Optional)</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
-            placeholder="0.15"
-            placeholderTextColor={colors.textSecondary}
-            value={weight}
-            onChangeText={setWeight}
-            keyboardType="numeric"
-          />
-        </View>
-
-        {/* Descriptions */}
-        <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Descriptions & Content</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Descriptions</Text>
 
           <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-            Short Summary (Max 500 characters)
+            Short Description (short_description)
           </Text>
           <TextInput
-            style={[styles.textArea, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight, height: 75 }]}
-            placeholder="Brief highlighted features of the product..."
+            style={[
+              styles.textArea,
+              {
+                backgroundColor: colors.backgroundAlt,
+                color: colors.textPrimary,
+                borderColor: colors.borderLight,
+                height: 75,
+              },
+            ]}
+            placeholder="Brief summary e.g. Updated short description text..."
             placeholderTextColor={colors.textSecondary}
             value={shortDescription}
             onChangeText={setShortDescription}
@@ -568,10 +502,20 @@ const AddProduct = ({ navigation, route }) => {
             maxLength={500}
           />
 
-          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Full Description</Text>
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+            Full Description (description)
+          </Text>
           <TextInput
-            style={[styles.textArea, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight, height: 120 }]}
-            placeholder="Detailed product specifications, materials, warranty, usage..."
+            style={[
+              styles.textArea,
+              {
+                backgroundColor: colors.backgroundAlt,
+                color: colors.textPrimary,
+                borderColor: colors.borderLight,
+                height: 120,
+              },
+            ]}
+            placeholder="Detailed description e.g. Updated full description goes here..."
             placeholderTextColor={colors.textSecondary}
             value={description}
             onChangeText={setDescription}
@@ -579,14 +523,24 @@ const AddProduct = ({ navigation, route }) => {
           />
         </View>
 
-        {/* Tags */}
+        {/* Section 4: Tags */}
         <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Tags & Search Keywords</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Tags (tags[])</Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+            Add search tags (type words separated by commas e.g. "cotton, mes" and tap Add)
+          </Text>
 
           <View style={styles.tagInputRow}>
             <TextInput
-              style={[styles.tagInput, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
-              placeholder="e.g. wireless, earbuds, anc"
+              style={[
+                styles.tagInput,
+                {
+                  backgroundColor: colors.backgroundAlt,
+                  color: colors.textPrimary,
+                  borderColor: colors.borderLight,
+                },
+              ]}
+              placeholder="e.g. cotton, mes, summer"
               placeholderTextColor={colors.textSecondary}
               value={currentTag}
               onChangeText={setCurrentTag}
@@ -611,6 +565,22 @@ const AddProduct = ({ navigation, route }) => {
           )}
         </View>
 
+        {/* Info Note on Workflow */}
+        <View
+          style={[
+            styles.infoCard,
+            {
+              backgroundColor: isDark ? "#1e293b" : "#F0FDF4",
+              borderColor: isDark ? "#334155" : "#BBF7D0",
+            },
+          ]}
+        >
+          <Ionicons name="information-circle" size={22} color={COLORS.success} style={{ marginRight: 10 }} />
+          <Text style={[styles.infoCardText, { color: isDark ? "#94a3b8" : "#166534" }]}>
+            Once submitted, your product will be reviewed by admin. After approval, you can add SKU variants, pricing, and live inventory to sell it in the marketplace.
+          </Text>
+        </View>
+
         {/* Submit Button */}
         <TouchableOpacity
           style={[styles.publishButton, isSubmitting && styles.publishButtonDisabled]}
@@ -629,7 +599,7 @@ const AddProduct = ({ navigation, route }) => {
         </TouchableOpacity>
       </ScrollView>
 
-      {/* Professional Success Modal */}
+      {/* Success Modal */}
       <Modal
         visible={showSuccessModal}
         transparent
@@ -638,7 +608,6 @@ const AddProduct = ({ navigation, route }) => {
       >
         <View style={styles.successModalOverlay}>
           <View style={[styles.successModalCard, { backgroundColor: colors.cardBg }]}>
-            {/* Glowing Success Icon Header */}
             <View style={styles.successIconRing}>
               <View style={styles.successIconCircle}>
                 <Ionicons name="checkmark" size={36} color={COLORS.textContrast} />
@@ -649,18 +618,19 @@ const AddProduct = ({ navigation, route }) => {
               Product Submitted!
             </Text>
             <Text style={[styles.successModalSubtitle, { color: colors.textSecondary }]}>
-              Your product has been submitted for admin verification. It will be published live in the marketplace once approved.
+              Product submitted for review. It will be visible once approved by admin. Then add a SKU/listing to sell it.
             </Text>
 
-            {/* Product Summary Preview Box */}
             {submittedProduct && (
-              <View style={[styles.submittedPreviewBox, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight }]}>
+              <View
+                style={[
+                  styles.submittedPreviewBox,
+                  { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
+                ]}
+              >
                 <Image
                   source={{
-                    uri:
-                      submittedProduct.image_url ||
-                      submittedProduct.image ||
-                      null,
+                    uri: submittedProduct.image_url || submittedProduct.image || null,
                   }}
                   style={styles.submittedPreviewImg}
                 />
@@ -671,20 +641,14 @@ const AddProduct = ({ navigation, route }) => {
                   <Text style={[styles.submittedPreviewCategory, { color: colors.textSecondary }]}>
                     {submittedProduct.category?.name || categoryName || "General"}
                   </Text>
-                  <View style={styles.submittedPriceRow}>
-                    <Text style={styles.submittedPreviewPrice}>
-                      {formatCurrency(submittedProduct.sale_price || submittedProduct.price)}
-                    </Text>
-                    <View style={styles.pendingStatusPill}>
-                      <Ionicons name="hourglass-outline" size={11} color={COLORS.warning} />
-                      <Text style={styles.pendingStatusPillText}>Pending Review</Text>
-                    </View>
+                  <View style={styles.pendingStatusPill}>
+                    <Ionicons name="hourglass-outline" size={11} color={COLORS.warning} />
+                    <Text style={styles.pendingStatusPillText}>Pending Admin Review</Text>
                   </View>
                 </View>
               </View>
             )}
 
-            {/* Action Buttons */}
             <TouchableOpacity
               style={styles.viewProductsBtn}
               onPress={handleNavigateToProducts}
@@ -695,12 +659,27 @@ const AddProduct = ({ navigation, route }) => {
             </TouchableOpacity>
 
             <TouchableOpacity
+              style={[styles.addSkuBtn, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: COLORS.primary }]}
+              onPress={() => {
+                setShowSuccessModal(false);
+                navigation.navigate("AddSku", {
+                  initialTab: "map_sku",
+                  initialProductId: submittedProduct?.id,
+                });
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="flash" size={16} color={COLORS.primary} style={{ marginRight: 6 }} />
+              <Text style={[styles.addSkuBtnText, { color: COLORS.primary }]}>Go to SKU Catalog</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               style={[styles.addAnotherBtn, { borderColor: colors.borderLight }]}
               onPress={resetForm}
               activeOpacity={0.7}
             >
-              <Ionicons name="add-circle-outline" size={18} color={COLORS.primary} />
-              <Text style={styles.addAnotherBtnText}>Add Another Product</Text>
+              <Ionicons name="add-circle-outline" size={18} color={colors.textSecondary} />
+              <Text style={[styles.addAnotherBtnText, { color: colors.textSecondary }]}>Add Another Product</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -718,14 +697,29 @@ const AddProduct = ({ navigation, route }) => {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ maxHeight: 350 }}>
-              {categoriesList.map((cat) => {
+            {/* Category Search */}
+            <View style={[styles.modalSearchBox, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight }]}>
+              <Ionicons name="search-outline" size={18} color={colors.textSecondary} />
+              <TextInput
+                style={[styles.modalSearchInput, { color: colors.textPrimary }]}
+                placeholder="Search categories..."
+                placeholderTextColor={colors.textSecondary}
+                value={categorySearchQuery}
+                onChangeText={setCategorySearchQuery}
+              />
+            </View>
+
+            <ScrollView style={{ maxHeight: 320 }}>
+              {filteredCategories.map((cat) => {
                 const isSelected = categoryId === cat.id;
                 return (
                   <TouchableOpacity
                     key={cat.id}
                     style={[styles.categoryItem, { borderBottomColor: colors.borderLight }]}
-                    onPress={() => handleSelectCategory(cat)}
+                    onPress={() => {
+                      handleSelectCategory(cat);
+                      setCategorySearchQuery("");
+                    }}
                   >
                     <Text
                       style={[
@@ -755,21 +749,18 @@ export default AddProduct;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.backgroundAlt,
-    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0,
   },
   scrollContent: {
     paddingBottom: 60,
   },
   header: {
-    height: 60,
     paddingHorizontal: 16,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 44) + 12,
+    paddingBottom: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: COLORS.cardBg,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.borderLight,
   },
   backButton: {
     padding: 4,
@@ -777,7 +768,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "800",
-    color: COLORS.textPrimary,
   },
   aiStudioBtn: {
     flexDirection: "row",
@@ -793,21 +783,44 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginLeft: 4,
   },
+  skuQuickBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  skuBannerIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  skuBannerTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  skuBannerSub: {
+    fontSize: 12,
+    marginTop: 2,
+  },
   card: {
     marginHorizontal: 16,
     marginTop: 14,
-    backgroundColor: COLORS.cardBg,
     borderRadius: 16,
     padding: 16,
     elevation: 2,
-    shadowColor: COLORS.textPrimary,
+    shadowColor: "#000",
     shadowOpacity: 0.04,
     shadowRadius: 6,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "800",
-    color: COLORS.textPrimary,
   },
   sectionSubtitle: {
     fontSize: 12,
@@ -818,17 +831,17 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: COLORS.primary,
     borderStyle: "dashed",
-    borderRadius: 14,
-    paddingVertical: 26,
+    borderRadius: 12,
+    paddingVertical: 24,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: COLORS.primaryBgLight,
   },
   mainUploadText: {
-    fontSize: 14,
-    fontWeight: "700",
     color: COLORS.primary,
-    marginTop: 8,
+    fontWeight: "700",
+    fontSize: 14,
+    marginTop: 6,
   },
   mainUploadSubtext: {
     fontSize: 11,
@@ -837,9 +850,10 @@ const styles = StyleSheet.create({
   },
   mainImageWrapper: {
     position: "relative",
-    borderRadius: 14,
+    width: "100%",
+    height: 200,
+    borderRadius: 12,
     overflow: "hidden",
-    height: 180,
   },
   mainImagePreview: {
     width: "100%",
@@ -848,61 +862,67 @@ const styles = StyleSheet.create({
   },
   removeMainImgBtn: {
     position: "absolute",
-    top: 8,
-    right: 8,
-    backgroundColor: COLORS.error,
-    padding: 6,
-    borderRadius: 20,
+    top: 10,
+    right: 10,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   galleryTitle: {
     fontSize: 14,
     fontWeight: "700",
-    marginTop: 16,
-    marginBottom: 10,
   },
   galleryScroll: {
-    flexDirection: "row",
+    marginTop: 8,
   },
   addGalleryBox: {
-    width: 65,
-    height: 65,
-    borderRadius: 12,
+    width: 72,
+    height: 72,
+    borderRadius: 10,
     borderWidth: 1.5,
     borderColor: COLORS.primary,
     borderStyle: "dashed",
-    justifyContent: "center",
     alignItems: "center",
-    marginRight: 10,
+    justifyContent: "center",
     backgroundColor: COLORS.primaryBgLight,
+    marginRight: 10,
   },
   addGalleryText: {
     fontSize: 11,
     color: COLORS.primary,
     fontWeight: "700",
+    marginTop: 2,
   },
   galleryImgWrapper: {
     position: "relative",
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    overflow: "hidden",
     marginRight: 10,
   },
   galleryImgPreview: {
-    width: 65,
-    height: 65,
-    borderRadius: 12,
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
   },
   removeGalleryBtn: {
     position: "absolute",
-    top: -4,
-    right: -4,
-    backgroundColor: COLORS.error,
-    borderRadius: 10,
+    top: 4,
+    right: 4,
+    backgroundColor: "rgba(0,0,0,0.65)",
     width: 20,
     height: 20,
-    justifyContent: "center",
+    borderRadius: 10,
     alignItems: "center",
+    justifyContent: "center",
   },
   fieldLabel: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
     marginTop: 12,
     marginBottom: 6,
   },
@@ -927,27 +947,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 12,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
   },
   dropdownText: {
     fontSize: 14,
   },
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  halfField: {
-    width: "48%",
-  },
   tagInputRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 8,
   },
   tagInput: {
     flex: 1,
-    height: 44,
+    height: 46,
     borderRadius: 10,
     borderWidth: 1,
     paddingHorizontal: 12,
@@ -955,44 +967,54 @@ const styles = StyleSheet.create({
   },
   addTagBtn: {
     backgroundColor: COLORS.primary,
-    width: 44,
-    height: 44,
+    width: 46,
+    height: 46,
     borderRadius: 10,
-    marginLeft: 8,
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
   },
   tagsWrapper: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginTop: 12,
-    gap: 8,
+    marginTop: 10,
+    gap: 6,
   },
   tagChip: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingVertical: 5,
+    borderRadius: 16,
   },
   tagChipText: {
     fontSize: 12,
     fontWeight: "700",
   },
+  infoCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginHorizontal: 16,
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  infoCardText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+  },
   publishButton: {
+    backgroundColor: COLORS.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     marginHorizontal: 16,
     marginTop: 20,
-    backgroundColor: COLORS.primary,
-    borderRadius: 14,
-    height: 52,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
+    paddingVertical: 15,
+    borderRadius: 12,
     elevation: 3,
-    shadowColor: COLORS.primary,
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
   },
   publishButtonDisabled: {
     opacity: 0.6,
@@ -1005,112 +1027,112 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "flex-end",
   },
   modalDismissArea: {
     flex: 1,
   },
   modalContent: {
-    backgroundColor: COLORS.cardBg,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 30,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: "80%",
   },
   modalHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    justifyContent: "space-between",
+    marginBottom: 12,
   },
   modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  modalSearchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    marginBottom: 10,
+  },
+  modalSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    marginLeft: 6,
+    paddingVertical: 0,
   },
   categoryItem: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
     paddingVertical: 14,
     borderBottomWidth: 1,
   },
   categoryItemText: {
     fontSize: 15,
   },
-  // Professional Success Modal Styles
   successModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.65)",
-    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.6)",
     alignItems: "center",
-    paddingHorizontal: 20,
+    justifyContent: "center",
+    padding: 20,
   },
   successModalCard: {
     width: "100%",
-    borderRadius: 24,
-    paddingHorizontal: 22,
-    paddingTop: 28,
-    paddingBottom: 24,
+    borderRadius: 20,
+    padding: 24,
     alignItems: "center",
-    elevation: 8,
-    shadowColor: "#000",
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
   },
   successIconRing: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: COLORS.successBgLight,
-    justifyContent: "center",
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: COLORS.primaryBgLight,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: 16,
   },
   successIconCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: COLORS.success,
-    justifyContent: "center",
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: COLORS.primary,
     alignItems: "center",
-    elevation: 4,
-    shadowColor: COLORS.success,
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
+    justifyContent: "center",
   },
   successModalTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "800",
-    textAlign: "center",
+    marginBottom: 8,
   },
   successModalSubtitle: {
     fontSize: 13,
-    lineHeight: 19,
     textAlign: "center",
-    marginTop: 8,
-    paddingHorizontal: 6,
+    lineHeight: 18,
+    marginBottom: 16,
   },
   submittedPreviewBox: {
-    width: "100%",
     flexDirection: "row",
     alignItems: "center",
-    borderRadius: 16,
-    padding: 12,
-    marginTop: 18,
+    width: "100%",
+    padding: 10,
+    borderRadius: 12,
     borderWidth: 1,
+    marginBottom: 18,
   },
   submittedPreviewImg: {
-    width: 60,
-    height: 60,
-    borderRadius: 10,
-    backgroundColor: COLORS.backgroundAlt,
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    backgroundColor: "#ccc",
   },
   submittedPreviewInfo: {
-    flex: 1,
     marginLeft: 12,
+    flex: 1,
   },
   submittedPreviewName: {
     fontSize: 14,
@@ -1120,64 +1142,63 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  submittedPriceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 4,
-  },
-  submittedPreviewPrice: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: COLORS.primary,
-  },
   pendingStatusPill: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: COLORS.warningBgLight,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
     borderRadius: 6,
+    alignSelf: "flex-start",
+    marginTop: 4,
   },
   pendingStatusPillText: {
+    color: COLORS.warning,
     fontSize: 10,
     fontWeight: "700",
-    color: COLORS.warning,
-    marginLeft: 3,
+    marginLeft: 4,
   },
   viewProductsBtn: {
-    width: "100%",
-    height: 50,
     backgroundColor: COLORS.primary,
-    borderRadius: 14,
     flexDirection: "row",
-    justifyContent: "center",
     alignItems: "center",
-    marginTop: 20,
-    elevation: 3,
-    shadowColor: COLORS.primary,
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
+    justifyContent: "center",
+    width: "100%",
+    paddingVertical: 13,
+    borderRadius: 10,
   },
   viewProductsBtnText: {
     color: COLORS.textContrast,
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  addSkuBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 10,
+  },
+  addSkuBtnText: {
+    fontSize: 14,
     fontWeight: "700",
   },
   addAnotherBtn: {
-    width: "100%",
-    height: 46,
-    borderRadius: 14,
     flexDirection: "row",
-    justifyContent: "center",
     alignItems: "center",
-    marginTop: 10,
+    justifyContent: "center",
+    width: "100%",
+    paddingVertical: 12,
+    borderRadius: 10,
     borderWidth: 1,
+    marginTop: 8,
   },
   addAnotherBtnText: {
-    color: COLORS.primary,
     fontSize: 14,
-    fontWeight: "700",
+    fontWeight: "600",
     marginLeft: 6,
   },
 });

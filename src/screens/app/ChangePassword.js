@@ -73,19 +73,21 @@ const ChangePassword = ({ navigation }) => {
   const validate = () => {
     let tempErrors = {};
 
-    if (!currentPassword) {
+    if (!currentPassword || !currentPassword.trim()) {
       tempErrors.currentPassword = "Current password is required";
     }
 
-    if (!newPassword || newPassword.length < 6) {
+    if (!newPassword || !newPassword.trim()) {
+      tempErrors.newPassword = "New password is required";
+    } else if (newPassword.trim().length < 6) {
       tempErrors.newPassword = "New password must be at least 6 characters";
-    } else if (newPassword === currentPassword) {
+    } else if (currentPassword && newPassword.trim() === currentPassword.trim()) {
       tempErrors.newPassword = "New password must be different from current password";
     }
 
-    if (!confirmPassword) {
+    if (!confirmPassword || !confirmPassword.trim()) {
       tempErrors.confirmPassword = "Confirmation password is required";
-    } else if (confirmPassword !== newPassword) {
+    } else if (confirmPassword.trim() !== newPassword.trim()) {
       tempErrors.confirmPassword = "Passwords do not match";
     }
 
@@ -97,12 +99,17 @@ const ChangePassword = ({ navigation }) => {
     if (!validate()) return;
 
     setIsSaving(true);
+    setErrors({});
     try {
       const response = await updateSellerAccount({
-        current_password: currentPassword,
-        password: newPassword,
-        password_confirmation: confirmPassword,
+        current_password: currentPassword.trim(),
+        password: newPassword.trim(),
+        password_confirmation: confirmPassword.trim(),
       });
+
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
 
       showAlert({
         type: "success",
@@ -113,11 +120,18 @@ const ChangePassword = ({ navigation }) => {
       });
     } catch (err) {
       console.error("Error saving password", err);
-      if (err?.data?.errors) {
+      const rawErrors = err?.errors || err?.data?.errors;
+      if (rawErrors && typeof rawErrors === "object") {
         const fieldErrors = {};
-        if (err.data.errors.current_password) fieldErrors.currentPassword = err.data.errors.current_password[0];
-        if (err.data.errors.password) fieldErrors.newPassword = err.data.errors.password[0];
-        if (err.data.errors.password_confirmation) fieldErrors.confirmPassword = err.data.errors.password_confirmation[0];
+        const getFirstMsg = (val) => {
+          if (Array.isArray(val) && val.length > 0) return String(val[0]);
+          if (typeof val === "string") return val;
+          return null;
+        };
+
+        if (rawErrors.current_password) fieldErrors.currentPassword = getFirstMsg(rawErrors.current_password);
+        if (rawErrors.password) fieldErrors.newPassword = getFirstMsg(rawErrors.password);
+        if (rawErrors.password_confirmation) fieldErrors.confirmPassword = getFirstMsg(rawErrors.password_confirmation);
         setErrors(fieldErrors);
       }
       showAlert({
@@ -164,11 +178,19 @@ const ChangePassword = ({ navigation }) => {
         >
           {/* Banner decoration */}
           <View style={styles.securityBanner}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="key-outline" size={44} color={COLORS.primary} />
+            <View
+              style={[
+                styles.iconCircle,
+                {
+                  backgroundColor: colors.primaryBgLight || "#EFF6FF",
+                  borderColor: colors.primaryLight || "#DBEAFE",
+                },
+              ]}
+            >
+              <Ionicons name="key-outline" size={44} color={colors.primary} />
             </View>
-            <Text style={styles.bannerTitle}>Reset Store Credentials</Text>
-            <Text style={styles.bannerSubtitle}>
+            <Text style={[styles.bannerTitle, { color: colors.textPrimary }]}>Reset Store Credentials</Text>
+            <Text style={[styles.bannerSubtitle, { color: colors.textSecondary }]}>
               Please choose a strong password consisting of letters, numbers, and symbols to ensure account security.
             </Text>
           </View>
@@ -177,19 +199,28 @@ const ChangePassword = ({ navigation }) => {
           <View style={styles.formContainer}>
             {/* Current Password */}
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Current Password</Text>
+              <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Current Password</Text>
               <View
                 style={[
                   styles.inputFieldContainer,
-                  activeField === "currentPassword" && styles.inputFieldFocus,
-                  errors.currentPassword && styles.inputFieldError,
+                  {
+                    backgroundColor: colors.cardBg,
+                    borderColor: colors.borderMedium || "#E2E8F0",
+                  },
+                  activeField === "currentPassword" && { borderColor: colors.primary },
+                  errors.currentPassword && { borderColor: colors.error || "#EF4444" },
                 ]}
               >
-                <Ionicons name="lock-closed-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={20}
+                  color={colors.textSecondary || COLORS.textGrayLight}
+                  style={styles.inputIcon}
+                />
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { color: colors.textPrimary }]}
                   placeholder="Enter current password"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
+                  placeholderTextColor={colors.textMuted || COLORS.textGrayPlaceholder}
                   secureTextEntry={!showCurrent}
                   value={currentPassword}
                   onChangeText={(val) => {
@@ -208,28 +239,37 @@ const ChangePassword = ({ navigation }) => {
                   <Ionicons
                     name={showCurrent ? "eye-off-outline" : "eye-outline"}
                     size={20}
-                    color={COLORS.textGrayLight}
+                    color={colors.textSecondary || COLORS.textGrayLight}
                   />
                 </TouchableOpacity>
               </View>
-              {errors.currentPassword && <Text style={styles.errorText}>{errors.currentPassword}</Text>}
+              {errors.currentPassword && <Text style={[styles.errorText, { color: colors.error || "#EF4444" }]}>{errors.currentPassword}</Text>}
             </View>
 
             {/* New Password */}
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>New Password</Text>
+              <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>New Password</Text>
               <View
                 style={[
                   styles.inputFieldContainer,
-                  activeField === "newPassword" && styles.inputFieldFocus,
-                  errors.newPassword && styles.inputFieldError,
+                  {
+                    backgroundColor: colors.cardBg,
+                    borderColor: colors.borderMedium || "#E2E8F0",
+                  },
+                  activeField === "newPassword" && { borderColor: colors.primary },
+                  errors.newPassword && { borderColor: colors.error || "#EF4444" },
                 ]}
               >
-                <Ionicons name="lock-closed-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={20}
+                  color={colors.textSecondary || COLORS.textGrayLight}
+                  style={styles.inputIcon}
+                />
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { color: colors.textPrimary }]}
                   placeholder="Enter new password"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
+                  placeholderTextColor={colors.textMuted || COLORS.textGrayPlaceholder}
                   secureTextEntry={!showNew}
                   value={newPassword}
                   onChangeText={(val) => {
@@ -248,28 +288,37 @@ const ChangePassword = ({ navigation }) => {
                   <Ionicons
                     name={showNew ? "eye-off-outline" : "eye-outline"}
                     size={20}
-                    color={COLORS.textGrayLight}
+                    color={colors.textSecondary || COLORS.textGrayLight}
                   />
                 </TouchableOpacity>
               </View>
-              {errors.newPassword && <Text style={styles.errorText}>{errors.newPassword}</Text>}
+              {errors.newPassword && <Text style={[styles.errorText, { color: colors.error || "#EF4444" }]}>{errors.newPassword}</Text>}
             </View>
 
             {/* Confirm Password */}
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Confirm New Password</Text>
+              <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Confirm New Password</Text>
               <View
                 style={[
                   styles.inputFieldContainer,
-                  activeField === "confirmPassword" && styles.inputFieldFocus,
-                  errors.confirmPassword && styles.inputFieldError,
+                  {
+                    backgroundColor: colors.cardBg,
+                    borderColor: colors.borderMedium || "#E2E8F0",
+                  },
+                  activeField === "confirmPassword" && { borderColor: colors.primary },
+                  errors.confirmPassword && { borderColor: colors.error || "#EF4444" },
                 ]}
               >
-                <Ionicons name="lock-closed-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={20}
+                  color={colors.textSecondary || COLORS.textGrayLight}
+                  style={styles.inputIcon}
+                />
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { color: colors.textPrimary }]}
                   placeholder="Re-enter new password"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
+                  placeholderTextColor={colors.textMuted || COLORS.textGrayPlaceholder}
                   secureTextEntry={!showConfirm}
                   value={confirmPassword}
                   onChangeText={(val) => {
@@ -288,11 +337,11 @@ const ChangePassword = ({ navigation }) => {
                   <Ionicons
                     name={showConfirm ? "eye-off-outline" : "eye-outline"}
                     size={20}
-                    color={COLORS.textGrayLight}
+                    color={colors.textSecondary || COLORS.textGrayLight}
                   />
                 </TouchableOpacity>
               </View>
-              {errors.confirmPassword && <Text style={styles.errorText}>{errors.confirmPassword}</Text>}
+              {errors.confirmPassword && <Text style={[styles.errorText, { color: colors.error || "#EF4444" }]}>{errors.confirmPassword}</Text>}
             </View>
           </View>
         </ScrollView>

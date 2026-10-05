@@ -158,3 +158,14 @@ export const removePassword = async () => {
     console.error("password remove error", e);
   }
 };
+
+// Re-export seller SKU and catalog functions
+export {
+  getSellerSkuDetails,
+  getSellerSku,
+  showSku,
+  getUnmappedApprovedSkus,
+  getApprovedProducts,
+  addSellerSku,
+  updateSkuStock,
+} from "./auth";

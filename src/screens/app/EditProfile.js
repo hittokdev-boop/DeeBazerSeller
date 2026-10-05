@@ -17,11 +17,10 @@ import {
   RefreshControl,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { launchImageLibrary, launchCamera } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { updateSellerAccount, updateSellerProfile, getSellerMe } from "../../api/auth";
+import { updateSellerProfile, getSellerMe } from "../../api/auth";
 
 const EditProfile = ({ navigation }) => {
   const { colors, isDarkMode } = useTheme();
@@ -249,40 +248,25 @@ const EditProfile = ({ navigation }) => {
 
     setIsSaving(true);
     try {
-      const payload = {};
-      if (ownerName.trim()) payload.name = ownerName.trim();
-      if (email.trim()) payload.email = email.trim();
-      if (mobile.trim()) payload.mobile = mobile.trim();
+      const formData = new FormData();
+      if (ownerName.trim()) formData.append("store_name", ownerName.trim());
+      if (email.trim()) formData.append("email", email.trim());
+      if (mobile.trim()) formData.append("phone", mobile.trim());
 
-      // 1. Update text account details
-      const response = await updateSellerAccount(payload);
-      let updatedUser = response?.data?.user || {};
-
-      // 2. Upload photo if selected
-      if (selectedPhoto && selectedPhoto.uri) {
-        try {
-          const formData = new FormData();
-          formData.append("logo", {
-            uri:
-              Platform.OS === "android"
-                ? selectedPhoto.uri
-                : selectedPhoto.uri.replace("file://", ""),
-            type: selectedPhoto.type || "image/jpeg",
-            name: selectedPhoto.fileName || `avatar_${Date.now()}.jpg`,
-          });
-
-          const profileRes = await updateSellerProfile(formData);
-          if (profileRes?.data?.logo_url) {
-            updatedUser.logo_url = profileRes.data.logo_url;
-            setAvatarUri(profileRes.data.logo_url);
-          }
-        } catch (photoErr) {
-          console.error("Photo upload error:", photoErr);
-          throw new Error(photoErr.message || "Failed to upload profile photo");
-        }
+      if (selectedPhoto?.uri) {
+        formData.append("logo", {
+          uri:
+            Platform.OS === "android"
+              ? selectedPhoto.uri
+              : selectedPhoto.uri.replace("file://", ""),
+          type: selectedPhoto.type || "image/jpeg",
+          name: selectedPhoto.fileName || `avatar_${Date.now()}.jpg`,
+        });
       }
 
-      const finalLogo = updatedUser.logo_url || avatarUri;
+      const response = await updateSellerProfile(formData);
+      const updatedProfile = response?.data || {};
+      const finalLogo = updatedProfile.logo_url || avatarUri;
 
       if (finalLogo) {
         setAvatarUri(finalLogo);
@@ -302,9 +286,9 @@ const EditProfile = ({ navigation }) => {
       console.error("Error saving profile", err);
       if (err?.data?.errors) {
         const fieldErrors = {};
-        if (err.data.errors.name) fieldErrors.ownerName = err.data.errors.name[0];
+        if (err.data.errors.store_name) fieldErrors.ownerName = err.data.errors.store_name[0];
         if (err.data.errors.email) fieldErrors.email = err.data.errors.email[0];
-        if (err.data.errors.mobile) fieldErrors.mobile = err.data.errors.mobile[0];
+        if (err.data.errors.phone) fieldErrors.mobile = err.data.errors.phone[0];
         setErrors(fieldErrors);
       }
       showAlert({
