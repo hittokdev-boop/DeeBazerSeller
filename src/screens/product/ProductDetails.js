@@ -1100,10 +1100,29 @@ const ProductDetails = () => {
                     Variants & SKUs
                   </Text>
                 </View>
-                <View style={[styles.variantCountPill, { backgroundColor: colors.backgroundAlt }]}>
-                  <Text style={[styles.variantCountText, { color: COLORS.primary }]}>
-                    {skusList.length} {skusList.length === 1 ? "Variant" : "Variants"}
-                  </Text>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <View style={[styles.variantCountPill, { backgroundColor: colors.backgroundAlt }]}>
+                    <Text style={[styles.variantCountText, { color: COLORS.primary }]}>
+                      {skusList.length} {skusList.length === 1 ? "Variant" : "Variants"}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.addVariantHeaderBtn, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF" }]}
+                    onPress={() => {
+                      const prodObj = {
+                        id: product?.product?.id || product?.id,
+                        name: parentProductName || productName || product?.name,
+                      };
+                      navigation.navigate("AddSku", {
+                        initialTab: "new_variant",
+                        preselectedProduct: prodObj,
+                      });
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="add" size={14} color={COLORS.primary} />
+                    <Text style={[styles.addVariantHeaderBtnText, { color: COLORS.primary }]}>+ Variant</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -1270,6 +1289,67 @@ const ProductDetails = () => {
                   );
                 })}
               </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.addVariantBottomBtn,
+                  { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: COLORS.primaryLight },
+                ]}
+                onPress={() => {
+                  const prodObj = {
+                    id: product?.product?.id || product?.id,
+                    name: parentProductName || productName || product?.name,
+                  };
+                  navigation.navigate("AddSku", {
+                    initialTab: "new_variant",
+                    preselectedProduct: prodObj,
+                  });
+                }}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="add-circle-outline" size={17} color={COLORS.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.addVariantBottomBtnText, { color: COLORS.primary }]}>
+                  Add New Variant SKU
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {skusList.length === 0 && (
+            <View style={[styles.variantsCard, { backgroundColor: colors.cardBg }]}>
+              <View style={styles.variantsHeader}>
+                <View style={styles.variantsHeaderLeft}>
+                  <Ionicons name="git-branch-outline" size={20} color={COLORS.primary} style={{ marginRight: 8 }} />
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                    Variants & SKUs
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 12 }}>
+                No variants listed yet for this product.
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.addVariantBottomBtn,
+                  { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: COLORS.primaryLight },
+                ]}
+                onPress={() => {
+                  const prodObj = {
+                    id: product?.product?.id || product?.id,
+                    name: parentProductName || productName || product?.name,
+                  };
+                  navigation.navigate("AddSku", {
+                    initialTab: "new_variant",
+                    preselectedProduct: prodObj,
+                  });
+                }}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="add-circle-outline" size={17} color={COLORS.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.addVariantBottomBtnText, { color: COLORS.primary }]}>
+                  + Add First Variant SKU
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -2037,5 +2117,32 @@ const styles = StyleSheet.create({
   variantChipStockText: {
     fontSize: 10,
     fontWeight: "800",
+  },
+  addVariantHeaderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  addVariantHeaderBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    marginLeft: 2,
+  },
+  addVariantBottomBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 12,
+  },
+  addVariantBottomBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
   },
 });

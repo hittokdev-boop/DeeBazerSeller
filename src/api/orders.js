@@ -52,7 +52,7 @@ export const getOrder = async (id) => {
       Authorization: `Bearer ${token}`,
     },
   });
-  console.log(token)
+  // console.log(token)
   const responseText = await response.text();
   let responseData;
   try {

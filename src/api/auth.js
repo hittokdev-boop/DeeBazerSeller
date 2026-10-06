@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const BASE_URL = "https://deebazar.com/admin/api/seller/";
@@ -411,7 +412,6 @@ export const getSellerStorePolicy = async (customToken = null) => {
         Authorization: `Bearer ${token}`,
       },
     });
-    console.log("getSellerStorePolicy response:", token);
     const responseText = await response.text();
     let responseData;
     try {
@@ -619,7 +619,6 @@ export const getSellerDashboard = async (customToken = null) => {
     }
 
     if (!response.ok) {
-      console.warn("getSellerDashboard non-ok response:", response.status, responseData);
       const error = new Error(sanitizeErrorMessage(responseData?.message, "Failed to fetch dashboard data"));
       error.status = response.status;
       error.data = responseData;
@@ -628,7 +627,7 @@ export const getSellerDashboard = async (customToken = null) => {
 
     return responseData;
   } catch (error) {
-    if (!isAuthError(error)) {
+    if (!isAuthError(error) && !isTechnicalError(error?.data?.message)) {
       console.warn("getSellerDashboard API:", error?.message || error);
     }
     throw error;
@@ -727,7 +726,6 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
         Authorization: `Bearer ${token}`,
       },
     });
-    console.log(token)
     const responseText = await response.text();
     let responseData;
 
@@ -739,7 +737,7 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
     }
 
     if (!response.ok) {
-      const error = new Error(sanitizeErrorMessage(responseData.message, "Failed to fetch product details"));
+      const error = new Error(sanitizeErrorMessage(responseData?.message, "Failed to fetch product details"));
       error.status = response.status;
       error.data = responseData;
       throw error;
@@ -748,7 +746,9 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
     return responseData;
   } catch (error) {
     if (!isAuthError(error)) {
-      console.error("Error in getSellerProductDetails API:", error);
+      if (error?.status !== 404) {
+        console.warn("getSellerProductDetails error:", error?.message);
+      }
     }
     throw error;
   }
@@ -876,11 +876,16 @@ export const createSellerProduct = async (formDataOrPayload, customToken = null)
 
 /**
  * Fetch product categories from the server
- * Endpoint: GET /api/seller/categories
+ * Primary Endpoint: GET /api/seller/categories
+ * Fallback Endpoint: GET /api/categories
  */
 export const getSellerCategories = async (customToken = null) => {
   try {
-    const token = customToken || (await AsyncStorage.getItem("token"));
+    const token =
+      customToken ||
+      (await AsyncStorage.getItem("token")) ||
+      (await AsyncStorage.getItem("TOKEN"));
+
     const headers = {
       Accept: "application/json",
     };
@@ -888,24 +893,58 @@ export const getSellerCategories = async (customToken = null) => {
       headers.Authorization = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${BASE_URL}categories`, {
-      method: "GET",
-      headers,
-    });
-
-    const responseText = await response.text();
-    let responseData;
-    try {
-      responseData = JSON.parse(responseText);
-    } catch (e) {
+    // Helper to safely extract categories array from varying server response wrappers
+    const extractList = (data) => {
+      if (!data) return null;
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data.data)) return data.data;
+      if (Array.isArray(data.categories)) return data.categories;
+      if (Array.isArray(data.data?.categories)) return data.data.categories;
+      if (Array.isArray(data.data?.data)) return data.data.data;
       return null;
+    };
+
+    // 1. Attempt primary seller endpoint: {{base_url}}api/seller/categories
+    try {
+      const response = await fetch(`${BASE_URL}categories`, {
+        method: "GET",
+        headers,
+      });
+
+      if (response.ok) {
+        const responseData = await response.json();
+        const cats = extractList(responseData);
+        if (Array.isArray(cats) && cats.length > 0) {
+          return cats;
+        }
+      }
+    } catch (err) {
+      console.warn("[getSellerCategories] Seller endpoint error, trying fallback:", err?.message);
     }
 
-    if (!response.ok) return null;
-    return responseData.data || responseData.categories || responseData;
+    // 2. Fallback to public categories endpoint: {{base_url}}api/categories
+    try {
+      const fallbackUrl = BASE_URL.replace(/\/seller\/?$/, "/categories");
+      const fallbackResponse = await fetch(fallbackUrl, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+
+      if (fallbackResponse.ok) {
+        const fallbackData = await fallbackResponse.json();
+        const fallbackCats = extractList(fallbackData);
+        if (Array.isArray(fallbackCats) && fallbackCats.length > 0) {
+          return fallbackCats;
+        }
+      }
+    } catch (fallbackErr) {
+      console.warn("[getSellerCategories] Fallback error:", fallbackErr?.message);
+    }
+
+    return [];
   } catch (error) {
     console.error("Error in getSellerCategories API:", error);
-    return null;
+    return [];
   }
 };
 
@@ -1196,16 +1235,240 @@ export const getApprovedProducts = async (customToken = null) => {
 };
 
 /**
- * Add / Map a SKU to the seller's catalog
+/**
+ * Fetch seller attributes and their selectable values (Color, Size, etc.)
+ * Endpoint: POST /api/seller/attributes
+ * Headers: Authorization: Bearer {token}, Content-Type: application/json
+ * Body: { category_id: number/string }
+ */
+export const getSellerAttributes = async (categoryOrPayload = null, customToken = null) => {
+  try {
+    const token =
+      customToken ||
+      (await AsyncStorage.getItem("token")) ||
+      (await AsyncStorage.getItem("TOKEN"));
+    if (!token) {
+      const err = new Error("No authentication token found");
+      err.status = 401;
+      throw err;
+    }
+
+    let categoryId = null;
+    if (typeof categoryOrPayload === "number") {
+      categoryId = categoryOrPayload;
+    } else if (typeof categoryOrPayload === "string" && categoryOrPayload.trim()) {
+      categoryId = !isNaN(Number(categoryOrPayload)) ? Number(categoryOrPayload) : categoryOrPayload.trim();
+    } else if (categoryOrPayload && typeof categoryOrPayload === "object") {
+      categoryId =
+        categoryOrPayload.category_id ??
+        categoryOrPayload.categoryId ??
+        categoryOrPayload.cat_id ??
+        categoryOrPayload.id ??
+        (typeof categoryOrPayload.category === "object" ? categoryOrPayload.category?.id : categoryOrPayload.category);
+      if (typeof categoryId === "string" && !isNaN(Number(categoryId))) {
+        categoryId = Number(categoryId);
+      }
+    }
+
+    // Helper to safely extract attributes array from varying API response structures
+    const extractAttrArray = (data) => {
+      if (!data) return null;
+      if (Array.isArray(data)) return data;
+      if (Array.isArray(data.data)) return data.data;
+      if (Array.isArray(data.attributes)) return data.attributes;
+      if (data.data && typeof data.data === "object") {
+        if (Array.isArray(data.data.attributes)) return data.data.attributes;
+        if (Array.isArray(data.data.data)) return data.data.data;
+      }
+      return null;
+    };
+
+    const parseResponse = async (res) => {
+      try {
+        const text = await res.text();
+        const json = JSON.parse(text);
+        return { ok: res.ok, status: res.status, data: json };
+      } catch (e) {
+        return { ok: false, status: res.status, data: null };
+      }
+    };
+
+    const jsonPayload = {};
+    if (categoryId !== null && categoryId !== undefined && categoryId !== "") {
+      jsonPayload.category_id = Number(categoryId) || categoryId;
+    }
+
+    const queryParam =
+      categoryId !== null && categoryId !== undefined && categoryId !== ""
+        ? `?category_id=${encodeURIComponent(String(categoryId))}`
+        : "";
+
+    let result = null;
+
+    // 1. Primary Attempt: Standard JSON POST with Content-Type: application/json
+    // Send both in JSON body and URL query param to satisfy any backend controller variant
+    try {
+      const res1 = await fetch(`${BASE_URL}attributes${queryParam}`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(jsonPayload),
+      });
+      const parsed1 = await parseResponse(res1);
+      const list1 = extractAttrArray(parsed1.data);
+      if (parsed1.ok && Array.isArray(list1) && list1.length > 0) {
+        result = list1;
+      } else if (parsed1.ok && Array.isArray(list1)) {
+        result = list1;
+      }
+    } catch (e) {
+      console.warn("Primary JSON attributes fetch error:", e?.message);
+    }
+
+    // 2. Secondary Attempt: Standard JSON POST without query param in URL
+    if (!result || result.length === 0) {
+      try {
+        const res2 = await fetch(`${BASE_URL}attributes`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(jsonPayload),
+        });
+        const parsed2 = await parseResponse(res2);
+        console.log("parsed2", parsed2);
+        const list2 = extractAttrArray(parsed2.data);
+        if (parsed2.ok && Array.isArray(list2) && list2.length > 0) {
+          result = list2;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // 3. Fallback: FormData POST
+    if (!result || result.length === 0) {
+      try {
+        const formData = new FormData();
+        if (categoryId !== null && categoryId !== undefined && categoryId !== "") {
+          formData.append("category_id", String(categoryId));
+        }
+        const res3 = await fetch(`${BASE_URL}attributes`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        });
+        const parsed3 = await parseResponse(res3);
+        const list3 = extractAttrArray(parsed3.data);
+        if (parsed3.ok && Array.isArray(list3) && list3.length > 0) {
+          result = list3;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // 4. Fallback: GET request
+    if (!result || result.length === 0) {
+      try {
+        const res4 = await fetch(`${BASE_URL}attributes${queryParam}`, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const parsed4 = await parseResponse(res4);
+        const list4 = extractAttrArray(parsed4.data);
+        if (parsed4.ok && Array.isArray(list4) && list4.length > 0) {
+          result = list4;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    const rawList = Array.isArray(result) ? result : [];
+
+    // Normalize attribute objects & attribute values structure so UI reliably accesses attr.id, attr.name, attr.values[].id, attr.values[].value
+    const normalized = rawList.map((attr) => {
+      const rawVals = Array.isArray(attr.values)
+        ? attr.values
+        : Array.isArray(attr.attribute_values)
+          ? attr.attribute_values
+          : Array.isArray(attr.options)
+            ? attr.options
+            : [];
+
+      return {
+        ...attr,
+        id: attr.id,
+        name: attr.name || attr.title || attr.slug || `Attribute #${attr.id}`,
+        slug: (attr.slug || attr.name || "").toLowerCase(),
+        values: rawVals.map((v) => {
+          if (v && typeof v === "object") {
+            return {
+              ...v,
+              id: v.id ?? v.value_id ?? v.val_id,
+              value: v.value ?? v.name ?? v.title ?? String(v.id ?? ""),
+            };
+          }
+          return { id: v, value: String(v) };
+        }),
+      };
+    });
+
+    return normalized;
+  } catch (error) {
+    console.warn("getSellerAttributes error:", error?.message);
+    throw error;
+  }
+};
+
+/**
+ * Add / Map a SKU or SKU variants to the seller's catalog
  * Endpoint: POST /api/seller/skus
  * Headers: Authorization: Bearer {token}
  * Supports:
  *   Case 1: Mapping existing SKU: { product_id, product_sku_id, price, sale_price, stock_quantity, min_stock_alert, seller_sku }
- *   Case 2: Adding new SKU variant (FormData): { product_id, name, weight, length, width, height, price, sale_price, stock_quantity, min_stock_alert, seller_sku, image }
+ *   Case 2: Adding multi-SKU variants with image grouping (FormData or Object):
+ *     {
+ *       product_id: 1,
+ *       image_by: 1,
+ *       variants: [
+ *         {
+ *           name: "Floral Dress Red S",
+ *           attributes: { 1: 1, 2: 9 }, // attribute_id -> value_id
+ *           stock_quantity: 10,
+ *           price: 1299,
+ *           sale_price: 999,
+ *           weight: 0.40,
+ *           length: 34,
+ *           width: 24,
+ *           height: 4,
+ *           seller_sku: "FD-RED-S",
+ *           min_stock_alert: 2,
+ *         },
+ *         ...
+ *       ],
+ *       images: {
+ *         1: fileOrAsset, // image for attribute value 1 (e.g. Red)
+ *         2: fileOrAsset, // image for attribute value 2 (e.g. Blue)
+ *       }
+ *     }
+ *   Case 3: Single variant legacy FormData or Object
  */
 export const addSellerSku = async (formDataOrPayload, customToken = null) => {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 35000);
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
 
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
@@ -1223,12 +1486,138 @@ export const addSellerSku = async (formDataOrPayload, customToken = null) => {
     let body = formDataOrPayload;
     if (!isFormData) {
       const formData = new FormData();
-      Object.keys(formDataOrPayload).forEach((key) => {
-        const val = formDataOrPayload[key];
-        if (val !== undefined && val !== null) {
-          formData.append(key, String(val));
+
+      const formatFileObj = (img, defaultName = "image.jpg") => {
+        if (!img) return null;
+        if (typeof img === "string") return img;
+        return {
+          uri: Platform.OS === "android" ? img.uri : (img.uri ? img.uri.replace("file://", "") : img),
+          type: img.type || "image/jpeg",
+          name: img.fileName || img.name || defaultName,
+        };
+      };
+
+      if (Array.isArray(formDataOrPayload?.variants)) {
+        // Multi-variant flow or Existing SKU batch flow
+        if (formDataOrPayload.product_id !== undefined && formDataOrPayload.product_id !== null) {
+          formData.append("product_id", String(formDataOrPayload.product_id));
         }
-      });
+        if (formDataOrPayload.image_by !== undefined && formDataOrPayload.image_by !== null && formDataOrPayload.image_by !== "") {
+          formData.append("image_by", String(formDataOrPayload.image_by));
+        }
+        if (formDataOrPayload.min_stock_alert !== undefined && formDataOrPayload.min_stock_alert !== null && formDataOrPayload.min_stock_alert !== "") {
+          formData.append("min_stock_alert", String(formDataOrPayload.min_stock_alert));
+        }
+
+        formDataOrPayload.variants.forEach((v, idx) => {
+          // Existing SKU mapping field
+          if (v.product_sku_id !== undefined && v.product_sku_id !== null && v.product_sku_id !== "") {
+            formData.append(`variants[${idx}][product_sku_id]`, String(v.product_sku_id));
+          }
+          if (v.name) formData.append(`variants[${idx}][name]`, String(v.name));
+          if (v.stock_quantity !== undefined && v.stock_quantity !== null && v.stock_quantity !== "") {
+            formData.append(`variants[${idx}][stock_quantity]`, String(v.stock_quantity));
+          }
+          if (v.price !== undefined && v.price !== null && v.price !== "") {
+            formData.append(`variants[${idx}][price]`, String(v.price));
+          }
+          if (v.sale_price !== undefined && v.sale_price !== null && v.sale_price !== "") {
+            formData.append(`variants[${idx}][sale_price]`, String(v.sale_price));
+          }
+          if (v.weight !== undefined && v.weight !== null && v.weight !== "") {
+            formData.append(`variants[${idx}][weight]`, String(v.weight));
+          }
+          if (v.length !== undefined && v.length !== null && v.length !== "") {
+            formData.append(`variants[${idx}][length]`, String(v.length));
+          }
+          if (v.width !== undefined && v.width !== null && v.width !== "") {
+            formData.append(`variants[${idx}][width]`, String(v.width));
+          }
+          if (v.height !== undefined && v.height !== null && v.height !== "") {
+            formData.append(`variants[${idx}][height]`, String(v.height));
+          }
+          if (v.seller_sku !== undefined && v.seller_sku !== null && v.seller_sku !== "") {
+            formData.append(`variants[${idx}][seller_sku]`, String(v.seller_sku));
+          }
+          if (v.min_stock_alert !== undefined && v.min_stock_alert !== null && v.min_stock_alert !== "") {
+            formData.append(`variants[${idx}][min_stock_alert]`, String(v.min_stock_alert));
+          }
+
+          if (v.attributes && typeof v.attributes === "object") {
+            if (Array.isArray(v.attributes)) {
+              v.attributes.forEach((attr) => {
+                if (attr.attribute_id !== undefined && attr.value_id !== undefined) {
+                  formData.append(`variants[${idx}][attributes][${attr.attribute_id}]`, String(attr.value_id));
+                }
+              });
+            } else {
+              Object.keys(v.attributes).forEach((attrId) => {
+                const valId = v.attributes[attrId];
+                if (valId !== undefined && valId !== null && valId !== "") {
+                  formData.append(`variants[${idx}][attributes][${attrId}]`, String(valId));
+                }
+              });
+            }
+          }
+        });
+
+        // images: images[1], images[2], images[50], images[51], ...
+        if (formDataOrPayload.images && typeof formDataOrPayload.images === "object") {
+          Object.keys(formDataOrPayload.images).forEach((valId) => {
+            const img = formDataOrPayload.images[valId];
+            if (img) {
+              const fileObj = formatFileObj(img, `variant_${valId}.jpg`);
+              if (fileObj) formData.append(`images[${valId}]`, fileObj);
+            }
+          });
+        }
+      } else {
+        // Fallback: single mapping or legacy variant format
+        // If single mapping with product_sku_id, also populate variants[0] for maximum server compatibility
+        if (formDataOrPayload.product_sku_id !== undefined && formDataOrPayload.product_sku_id !== null) {
+          formData.append("variants[0][product_sku_id]", String(formDataOrPayload.product_sku_id));
+          if (formDataOrPayload.stock_quantity !== undefined && formDataOrPayload.stock_quantity !== null) {
+            formData.append("variants[0][stock_quantity]", String(formDataOrPayload.stock_quantity));
+          }
+          if (formDataOrPayload.price !== undefined && formDataOrPayload.price !== null) {
+            formData.append("variants[0][price]", String(formDataOrPayload.price));
+          }
+          if (formDataOrPayload.sale_price !== undefined && formDataOrPayload.sale_price !== null) {
+            formData.append("variants[0][sale_price]", String(formDataOrPayload.sale_price));
+          }
+          if (formDataOrPayload.seller_sku !== undefined && formDataOrPayload.seller_sku !== null) {
+            formData.append("variants[0][seller_sku]", String(formDataOrPayload.seller_sku));
+          }
+          if (formDataOrPayload.min_stock_alert !== undefined && formDataOrPayload.min_stock_alert !== null) {
+            formData.append("variants[0][min_stock_alert]", String(formDataOrPayload.min_stock_alert));
+            formData.append("min_stock_alert", String(formDataOrPayload.min_stock_alert));
+          }
+        }
+
+        Object.keys(formDataOrPayload).forEach((key) => {
+          const val = formDataOrPayload[key];
+          if (val !== undefined && val !== null) {
+            if (key === "variant_attributes" && typeof val === "object") {
+              Object.keys(val).forEach((attrId) => {
+                if (val[attrId] !== undefined && val[attrId] !== null) {
+                  formData.append(`variant_attributes[${attrId}]`, String(val[attrId]));
+                }
+              });
+            } else if (key === "images" && typeof val === "object") {
+              Object.keys(val).forEach((valId) => {
+                const img = val[valId];
+                if (img) {
+                  const fileObj = formatFileObj(img, `image_${valId}.jpg`);
+                  if (fileObj) formData.append(`images[${valId}]`, fileObj);
+                }
+              });
+            } else {
+              formData.append(key, String(val));
+            }
+          }
+        });
+      }
+
       body = formData;
     }
 
@@ -1304,7 +1693,6 @@ export const getSellerSkuDetails = async (skuId, customToken = null) => {
     });
 
     const responseText = await response.text();
-    console.log("responseText getSellerSkuDetails", responseText);
     let responseData;
     try {
       responseData = JSON.parse(responseText);

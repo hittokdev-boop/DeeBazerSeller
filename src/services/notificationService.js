@@ -162,7 +162,7 @@ export async function getFCMToken() {
 
     // console.log('\n========================================');
     console.log('🔥 [FCM TOKEN] 🔥 :');
-    console.log(token);
+    // console.log(token);
     // console.log('========================================\n');
 
     return token;
@@ -267,7 +267,7 @@ export function setupNotificationListeners(onNotificationClick) {
           await AsyncStorage.setItem(FCM_TOKEN_KEY, token);
           console.log('\n========================================');
           // console.log('🔥 [REFRESHED FCM TOKEN] 🔥 :');
-          console.log(token);
+          // console.log(token);
           // console.log('========================================\n');
         } catch (err) {
           console.error('[NotificationService] Error saving refreshed FCM token:', err?.message || err);

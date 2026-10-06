@@ -553,7 +553,123 @@
 // ```
 
 // ---
-
+//
+// ## 13.1. Product Categories (For Product Add & Filter)
+//
+// ### `GET /api/seller/categories`
+//
+// Fetch dynamic categories for seller product add / edit / catalog.
+//
+// **Endpoint:** `{{base_url}}api/seller/categories`
+// **Method:** `GET`
+// **Headers:**
+// - `Authorization: Bearer {token}`
+// - `Accept: application/json`
+//
+// **Response** — `200`
+//
+// ```json
+// {
+//   "status": 200,
+//   "message": "Categories",
+//   "data": [
+//     {
+//       "id": 14,
+//       "name": "Baby Products",
+//       "slug": "baby-products",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1789823088_6aae88704f737.jpg"
+//     },
+//     {
+//       "id": 4,
+//       "name": "Beauty & Personal Care",
+//       "slug": "beauty-personal-care",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1789823131_6aae889b959c9.jpg"
+//     },
+//     {
+//       "id": 6,
+//       "name": "Books & Media",
+//       "slug": "books-media",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1789823186_6aae88d244eb0.jpg"
+//     },
+//     {
+//       "id": 1,
+//       "name": "Electronics",
+//       "slug": "electronics",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1789823157_6aae88b576f84.jpg"
+//     },
+//     {
+//       "id": 2,
+//       "name": "Fashion",
+//       "slug": "fashion",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1789823216_6aae88f0bb432.jpg"
+//     },
+//     {
+//       "id": 15,
+//       "name": "Garden & Outdoors",
+//       "slug": "garden-outdoors",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1764137278_6926993e76552.png"
+//     },
+//     {
+//       "id": 11,
+//       "name": "Grocery & Gourmet",
+//       "slug": "grocery-gourmet",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1764137299_69269953bab71.jpeg"
+//     },
+//     {
+//       "id": 8,
+//       "name": "Health & Wellness",
+//       "slug": "health-wellness",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1764137191_692698e7e300e.png"
+//     },
+//     {
+//       "id": 3,
+//       "name": "Home & Kitchen",
+//       "slug": "home-kitchen",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1764137084_6926987c0b097.jpg"
+//     },
+//     {
+//       "id": 10,
+//       "name": "Jewelry & Watches",
+//       "slug": "jewelry-watches",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1764137214_692698fee218a.png"
+//     },
+//     {
+//       "id": 13,
+//       "name": "Office Products",
+//       "slug": "office-products",
+//       "image": "https://deebazar.com/admin/images/default-category.png"
+//     },
+//     {
+//       "id": 12,
+//       "name": "Pet Supplies",
+//       "slug": "pet-supplies",
+//       "image": "https://deebazar.com/admin/images/default-category.png"
+//     },
+//     {
+//       "id": 5,
+//       "name": "Sports & Outdoors",
+//       "slug": "sports-outdoors",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1764137125_692698a5b6c4b.png"
+//     },
+//     {
+//       "id": 7,
+//       "name": "Toys & Games",
+//       "slug": "toys-games",
+//       "image": "https://deebazar.com/admin/images/uploads/categories/1764137173_692698d556979.png"
+//     }
+//   ]
+// }
+// ```
+//
+// **Response** — `401 Unauthorized`
+// ```json
+// {
+//   "message": "Unauthenticated."
+// }
+// ```
+//
+// ---
+//
 // ## 14. Products — Create
 // Product add by seller :
 // {{base_url}}api/seller/products
@@ -603,11 +719,109 @@
 //         ],
 //         "created_at": "2026-09-26T12:49:59.000000Z"
 //     }
+// ---
+//
+// ## 14.2. Seller Attributes (For Adding SKU / Variants)
+// Fetch variant attributes (Color, Size, etc.) and selectable values for a specific category:
+//
+// **Endpoint:** `POST {{base_url}}api/seller/attributes`
+//
+// **Method:** `POST`
+//
+// **Authorization:** `Bearer {token}`
+//
+// **Headers:**
+// - `Accept: application/json`
+// - `Content-Type: application/json` (or `multipart/form-data`)
+//
+// **Body:**
+// ```json
+// {
+//   "category_id": 2
 // }
-
-
+// ```
+//
+// *(Note: GET /api/seller/attributes has been removed / deprecated. Must use POST with category_id).*
+//
+// **Response (200):**
+// ```json
+// {
+//   "status": 200,
+//   "data": [
+//     {
+//       "id": 1,
+//       "name": "Color",
+//       "slug": "color",
+//       "values": [
+//         {
+//           "id": 1,
+//           "value": "Red"
+//         },
+//         {
+//           "id": 2,
+//           "value": "Blue"
+//         },
+//         {
+//           "id": 3,
+//           "value": "Green"
+//         },
+//         {
+//           "id": 4,
+//           "value": "Black"
+//         },
+//         {
+//           "id": 5,
+//           "value": "White"
+//         },
+//         {
+//           "id": 6,
+//           "value": "Silver"
+//         },
+//         {
+//           "id": 7,
+//           "value": "Gold"
+//         }
+//       ]
+//     },
+//     {
+//       "id": 2,
+//       "name": "Size",
+//       "slug": "size",
+//       "values": [
+//         {
+//           "id": 8,
+//           "value": "XS"
+//         },
+//         {
+//           "id": 9,
+//           "value": "S"
+//         },
+//         {
+//           "id": 10,
+//           "value": "M"
+//         },
+//         {
+//           "id": 11,
+//           "value": "L"
+//         },
+//         {
+//           "id": 12,
+//           "value": "XL"
+//         },
+//         {
+//           "id": 13,
+//           "value": "XXL"
+//         }
+//       ]
+//     }
+//   ]
+// }
+// ```
+//
+// ---
+//
 // User Profile Update :
-//15 POST : {{base_url}}api/user/profile
+// 15 POST : {{base_url}}api/user/profile
 // authorization : bearer_token {seller_token}
 
 // body :
@@ -1382,6 +1596,221 @@
 //         "product_sku_id": 2,
 //         "stock_quantity": 100,
 //         "in_stock": true
+//     }
+// }
+// ```
+//
+// ---
+//
+// ## 31. Add / Map Seller SKUs (POST /api/seller/skus)
+//
+// This versatile endpoint supports 3 distinct seller inventory operations:
+//
+// 1. **Case 1: Existing SKU Add (Catalog Mapping)**:
+//    Map pre-approved SKUs from the master catalog into your store with your own custom price, sale price, stock, and seller SKU.
+//
+// 2. **Case 2: New SKU Add with Single Attribute (e.g. Volume/Weight/Pack Size)**:
+//    Create new product variants based on a single spec (e.g. Attribute ID 11 = Pack Size: 250G, 500G, 1KG, 2KG) with different photos for each pack size (`images[50]`, `images[51]`, etc.).
+//
+// 3. **Case 3: New SKU Add with Multiple Attributes & Photo Differentiator (`image_by`)**:
+//    Create matrix variants (e.g. Color ID 1 + Size ID 2) differentiating photos by color (`image_by: 1`, `images[1]`, `images[2]`).
+//
+// **Endpoint:** `POST /api/seller/skus`
+// **Headers:** `Authorization: Bearer {token}`
+// **Request Format:** `multipart/form-data`
+//
+// ---
+//
+// ### Flow 1: Existing SKU Add Body (Catalog Mapping)
+//
+// Used when an admin or brand has already approved master SKUs and the seller wants to stock and sell them.
+//
+// ```
+// POST : {{base_url}}api/seller/skus
+// Content-Type: multipart/form-data
+//
+// Body:
+// product_id: 3
+// min_stock_alert: 10
+// variants[0][product_sku_id]: 6
+// variants[0][stock_quantity]: 60
+// variants[0][price]: 68
+// variants[0][sale_price]: 63
+// variants[0][seller_sku]: B-MD-250G
+// variants[1][product_sku_id]: 7
+// variants[1][stock_quantity]: 30
+// variants[1][price]: 130
+// variants[1][seller_sku]: B-MD-500G
+// variants[2][product_sku_id]: 8
+// variants[2][stock_quantity]: 25
+// variants[2][price]: 250
+// variants[2][sale_price]: 238
+// variants[2][seller_sku]: B-MD-1KG
+// variants[3][product_sku_id]: 9
+// variants[3][stock_quantity]: 12
+// variants[3][price]: 620
+// variants[3][seller_sku]: B-MD-2KG
+// ```
+//
+// ---
+//
+// ### Flow 2: New SKU Add with Single Attribute & Different Photos (e.g. Pack Size / Volume)
+//
+// Used when a master product has a single attribute (e.g. Attribute ID 11 = Weight/Pack Size) with distinct photos for each size (`images[50]`, `images[51]`, etc.).
+//
+// ```
+// POST : {{base_url}}api/seller/skus
+// Content-Type: multipart/form-data
+//
+// Body:
+// product_id: 3
+// image_by: 11
+// min_stock_alert: 10
+// variants[0][attributes][11]: 50
+// variants[0][stock_quantity]: 100
+// variants[0][price]: 70
+// variants[0][sale_price]: 65
+// variants[0][weight]: 0.5
+// variants[0][seller_sku]: MD-250G
+// variants[1][attributes][11]: 51
+// variants[1][stock_quantity]: 80
+// variants[1][price]: 135
+// variants[1][sale_price]: 125
+// variants[1][weight]: 1
+// variants[1][seller_sku]: MD-500G
+// variants[2][attributes][11]: 52
+// variants[2][stock_quantity]: 40
+// variants[2][price]: 260
+// variants[2][sale_price]: 245
+// variants[2][weight]: 2
+// variants[2][seller_sku]: MD-1KG
+// variants[3][attributes][11]: 53
+// variants[3][stock_quantity]: 20
+// variants[3][price]: 640
+// variants[3][weight]: 5
+// variants[3][seller_sku]: MD-2KG
+// images[50]: [binary file] (e.g. 250G photo)
+// images[51]: [binary file] (e.g. 500G photo)
+// images[52]: [binary file] (e.g. 1KG photo)
+// images[53]: [binary file] (e.g. 2KG photo)
+// ```
+//
+// ---
+//
+// ### Flow 3: New SKU Add with Multiple Attributes & Image Differentiation (`image_by: 1`)
+//
+// Used when creating combinatorial variants (Color ID 1 + Size ID 2). All variants must specify both attributes to match the master product's required attribute schema.
+//
+// ```
+// POST : {{base_url}}api/seller/skus
+// Content-Type: multipart/form-data
+//
+// Body:
+// product_id: 1
+// image_by: 1
+// min_stock_alert: 2
+// variants[0][name]: Floral Dress Red S
+// variants[0][attributes][1]: 1
+// variants[0][attributes][2]: 9
+// variants[0][stock_quantity]: 10
+// variants[0][price]: 1299
+// variants[0][sale_price]: 999
+// variants[0][weight]: 0.40
+// variants[0][length]: 34
+// variants[0][width]: 24
+// variants[0][height]: 4
+// variants[0][seller_sku]: FD-RED-S
+// variants[0][min_stock_alert]: 2
+// variants[1][name]: Floral Dress Red M
+// variants[1][attributes][1]: 1
+// variants[1][attributes][2]: 10
+// variants[1][stock_quantity]: 8
+// variants[1][price]: 1349
+// variants[1][sale_price]: 1049
+// variants[1][weight]: 0.43
+// variants[1][length]: 35
+// variants[1][width]: 25
+// variants[1][height]: 4
+// variants[1][seller_sku]: FD-RED-M
+// variants[1][min_stock_alert]: 2
+// variants[2][name]: Floral Dress Red L
+// variants[2][attributes][1]: 1
+// variants[2][attributes][2]: 11
+// variants[2][stock_quantity]: 5
+// variants[2][price]: 1399
+// variants[2][sale_price]: 1099
+// variants[2][weight]: 0.47
+// variants[2][length]: 36
+// variants[2][width]: 26
+// variants[2][height]: 4
+// variants[2][seller_sku]: FD-RED-L
+// variants[2][min_stock_alert]: 1
+// variants[3][name]: Floral Dress Blue S
+// variants[3][attributes][1]: 2
+// variants[3][attributes][2]: 9
+// variants[3][stock_quantity]: 12
+// variants[3][price]: 1349
+// variants[3][sale_price]: 1049
+// variants[3][weight]: 0.43
+// variants[3][length]: 35
+// variants[3][width]: 25
+// variants[3][height]: 4
+// variants[3][seller_sku]: FD-BLUE-S
+// variants[3][min_stock_alert]: 2
+// variants[4][name]: Floral Dress Blue M
+// variants[4][attributes][1]: 2
+// variants[4][attributes][2]: 10
+// variants[4][stock_quantity]: 6
+// variants[4][price]: 1399
+// variants[4][weight]: 0.47
+// variants[4][length]: 36
+// variants[4][width]: 26
+// variants[4][height]: 4
+// variants[4][seller_sku]: FD-BLUE-M
+// variants[4][min_stock_alert]: 1
+// images[1]: [binary file] (e.g. Red photo)
+// images[2]: [binary file] (e.g. Blue photo)
+// ```
+//
+// ### Response (201 Created):
+//
+// ```json
+// {
+//     "status": 201,
+//     "message": "SKUs submitted. New SKUs will be visible to customers after admin approves them.",
+//     "data": {
+//         "created": [
+//             {
+//                 "variant": "Red S",
+//                 "product_sku_id": 1,
+//                 "seller_product_id": 1,
+//                 "is_new_sku": true
+//             },
+//             {
+//                 "variant": "Red M",
+//                 "product_sku_id": 2,
+//                 "seller_product_id": 2,
+//                 "is_new_sku": true
+//             },
+//             {
+//                 "variant": "Red L",
+//                 "product_sku_id": 3,
+//                 "seller_product_id": 3,
+//                 "is_new_sku": true
+//             },
+//             {
+//                 "variant": "Blue S",
+//                 "product_sku_id": 4,
+//                 "seller_product_id": 4,
+//                 "is_new_sku": true
+//             },
+//             {
+//                 "variant": "Blue M",
+//                 "product_sku_id": 5,
+//                 "seller_product_id": 5,
+//                 "is_new_sku": true
+//             }
+//         ]
 //     }
 // }
 // ```

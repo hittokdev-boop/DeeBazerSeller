@@ -19,17 +19,23 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { launchImageLibrary } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
-import { BASE_URL } from "../../api/auth";
+import { BASE_URL, getSellerCategories } from "../../api/auth";
 
 const CATEGORIES = [
-  "Electronics & Gadgets",
-  "Fashion & Apparel",
+  "Electronics",
+  "Fashion",
   "Home & Kitchen",
-  "Health & Beauty",
-  "Groceries & Gourmet",
+  "Beauty & Personal Care",
+  "Grocery & Gourmet",
   "Sports & Outdoors",
   "Toys & Games",
-  "Handmade Crafts",
+  "Books & Media",
+  "Health & Wellness",
+  "Jewelry & Watches",
+  "Office Products",
+  "Pet Supplies",
+  "Baby Products",
+  "Garden & Outdoors",
 ];
 
 const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
@@ -37,6 +43,25 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [categoriesList, setCategoriesList] = useState(CATEGORIES);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const cats = await getSellerCategories();
+        if (isMounted && Array.isArray(cats) && cats.length > 0) {
+          const names = cats.map((c) => (typeof c === "object" ? c.name : c));
+          setCategoriesList(names);
+        }
+      } catch (e) {
+        // Fallback to default categories
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Custom alert configuration state
   const [alertConfig, setAlertConfig] = useState({
@@ -910,7 +935,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
             </View>
 
             <ScrollView contentContainerStyle={styles.modalScrollContent}>
-              {CATEGORIES.map((item, index) => {
+              {categoriesList.map((item, index) => {
                 const isSelected = form.category === item;
                 return (
                   <TouchableOpacity

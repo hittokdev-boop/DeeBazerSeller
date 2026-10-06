@@ -109,7 +109,7 @@ const EditProduct = ({ route, navigation }) => {
   const fetchCategories = async () => {
     try {
       const res = await getSellerCategories();
-      const cats = res?.data || res?.categories || res;
+      const cats = Array.isArray(res) ? res : (res?.data || res?.categories || res);
       if (Array.isArray(cats) && cats.length > 0) setCategoriesList(cats);
     } catch { }
   };

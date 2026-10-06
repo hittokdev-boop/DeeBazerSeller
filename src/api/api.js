@@ -159,13 +159,15 @@ export const removePassword = async () => {
   }
 };
 
-// Re-export seller SKU and catalog functions
+// Re-export seller SKU, catalog and category functions
 export {
   getSellerSkuDetails,
   getSellerSku,
   showSku,
   getUnmappedApprovedSkus,
   getApprovedProducts,
+  getSellerAttributes,
   addSellerSku,
   updateSkuStock,
+  getSellerCategories,
 } from "./auth";

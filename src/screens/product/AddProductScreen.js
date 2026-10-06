@@ -20,24 +20,12 @@ import { useTheme } from "../../context/ThemeContext";
 import { CustomAlert } from "../../context/AlertContext";
 import { createSellerProduct, getSellerCategories } from "../../api/auth";
 
-const PRESET_CATEGORIES = [
-  { id: 1, name: "Electronics & Gadgets" },
-  { id: 2, name: "Fashion & Apparel" },
-  { id: 3, name: "Grocery & Gourmet" },
-  { id: 4, name: "Health & Beauty" },
-  { id: 5, name: "Home & Kitchen" },
-  { id: 6, name: "Sports & Outdoors" },
-  { id: 7, name: "Toys & Games" },
-  { id: 8, name: "Handmade Crafts" },
-  { id: 9, name: "Automotive" },
-  { id: 10, name: "Books & Stationery" },
-];
-
 const AddProduct = ({ navigation, route }) => {
   const { colors, isDark } = useTheme();
 
-  // Categories list
-  const [categoriesList, setCategoriesList] = useState(PRESET_CATEGORIES);
+  // Dynamic categories list from API
+  const [categoriesList, setCategoriesList] = useState([]);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(false);
 
   // Form State according to API specification
   const [name, setName] = useState("");
@@ -61,22 +49,22 @@ const AddProduct = ({ navigation, route }) => {
   const [submittedProduct, setSubmittedProduct] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchCats = async () => {
-      try {
-        const serverCats = await getSellerCategories();
-        if (isMounted && serverCats && Array.isArray(serverCats) && serverCats.length > 0) {
-          setCategoriesList(serverCats);
-        }
-      } catch (e) {
-        console.warn("[AddProduct] Could not fetch server categories:", e?.message);
+  const fetchCats = async () => {
+    setIsLoadingCategories(true);
+    try {
+      const serverCats = await getSellerCategories();
+      if (Array.isArray(serverCats) && serverCats.length > 0) {
+        setCategoriesList(serverCats);
       }
-    };
+    } catch (e) {
+      console.warn("[AddProduct] Could not fetch server categories:", e?.message);
+    } finally {
+      setIsLoadingCategories(false);
+    }
+  };
+
+  useEffect(() => {
     fetchCats();
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
   useEffect(() => {
@@ -468,12 +456,21 @@ const AddProduct = ({ navigation, route }) => {
                 borderColor: colors.borderLight,
               },
             ]}
-            onPress={() => setShowCategoryModal(true)}
+            onPress={() => {
+              if (categoriesList.length === 0 && !isLoadingCategories) {
+                fetchCats();
+              }
+              setShowCategoryModal(true);
+            }}
           >
             <Text style={[styles.dropdownText, { color: categoryName ? colors.textPrimary : colors.textSecondary }]}>
-              {categoryName || "Select Category..."}
+              {categoryName || (isLoadingCategories ? "Loading categories..." : "Select Category...")}
             </Text>
-            <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
+            {isLoadingCategories ? (
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            ) : (
+              <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
+            )}
           </TouchableOpacity>
         </View>
 
@@ -710,32 +707,60 @@ const AddProduct = ({ navigation, route }) => {
             </View>
 
             <ScrollView style={{ maxHeight: 320 }}>
-              {filteredCategories.map((cat) => {
-                const isSelected = categoryId === cat.id;
-                return (
+              {isLoadingCategories ? (
+                <View style={{ padding: 32, alignItems: "center", justifyContent: "center" }}>
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                  <Text style={{ marginTop: 10, color: colors.textSecondary, fontSize: 13 }}>
+                    Loading categories from server...
+                  </Text>
+                </View>
+              ) : filteredCategories.length === 0 ? (
+                <View style={{ padding: 32, alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="alert-circle-outline" size={32} color={colors.textSecondary} />
+                  <Text style={{ marginTop: 8, color: colors.textSecondary, fontSize: 13 }}>
+                    {categorySearchQuery ? "No matching categories" : "No categories available"}
+                  </Text>
                   <TouchableOpacity
-                    key={cat.id}
-                    style={[styles.categoryItem, { borderBottomColor: colors.borderLight }]}
-                    onPress={() => {
-                      handleSelectCategory(cat);
-                      setCategorySearchQuery("");
+                    style={{
+                      marginTop: 12,
+                      paddingVertical: 8,
+                      paddingHorizontal: 16,
+                      backgroundColor: COLORS.primary,
+                      borderRadius: 6,
                     }}
+                    onPress={fetchCats}
                   >
-                    <Text
-                      style={[
-                        styles.categoryItemText,
-                        {
-                          color: isSelected ? COLORS.primary : colors.textPrimary,
-                          fontWeight: isSelected ? "700" : "500",
-                        },
-                      ]}
-                    >
-                      {cat.name}
-                    </Text>
-                    {isSelected && <Ionicons name="checkmark-circle" size={20} color={COLORS.primary} />}
+                    <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Retry</Text>
                   </TouchableOpacity>
-                );
-              })}
+                </View>
+              ) : (
+                filteredCategories.map((cat) => {
+                  const isSelected = categoryId === cat.id;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[styles.categoryItem, { borderBottomColor: colors.borderLight }]}
+                      onPress={() => {
+                        handleSelectCategory(cat);
+                        setCategorySearchQuery("");
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryItemText,
+                          {
+                            color: isSelected ? COLORS.primary : colors.textPrimary,
+                            fontWeight: isSelected ? "700" : "500",
+                          },
+                        ]}
+                      >
+                        {cat.name}
+                      </Text>
+                      {isSelected && <Ionicons name="checkmark-circle" size={20} color={COLORS.primary} />}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
             </ScrollView>
           </View>
         </View>
