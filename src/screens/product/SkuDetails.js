@@ -61,6 +61,44 @@ const getStatusBadge = (status) => {
   return { bg: COLORS.backgroundAlt, text: COLORS.textSecondary, label: status || "Draft" };
 };
 
+export const formatCleanVariantName = (rawSkuName, prodName, maxTokens = 3, maxChars = 32) => {
+  if (!rawSkuName) return "";
+  let name = String(rawSkuName).trim();
+  const pName = String(prodName || "").trim();
+
+  // Strip redundant product name prefix
+  if (pName && name.toLowerCase().startsWith(pName.toLowerCase())) {
+    name = name.slice(pName.length).trim();
+    name = name.replace(/^[\s\-:_•|/,]+/, "").trim();
+  }
+
+  if (!name) return "";
+
+  // Split tokens by standard separators or spaces
+  let tokens = [];
+  if (name.includes(" • ")) {
+    tokens = name.split(" • ").map((s) => s.trim()).filter(Boolean);
+  } else if (name.includes(" - ")) {
+    tokens = name.split(" - ").map((s) => s.trim()).filter(Boolean);
+  } else if (name.includes(",")) {
+    tokens = name.split(",").map((s) => s.trim()).filter(Boolean);
+  } else if (name.includes("/")) {
+    tokens = name.split("/").map((s) => s.trim()).filter(Boolean);
+  } else {
+    tokens = name.split(/\s+/).filter(Boolean);
+  }
+
+  if (tokens.length > maxTokens) {
+    tokens = tokens.slice(0, maxTokens);
+  }
+
+  let formatted = tokens.join(" • ");
+  if (formatted.length > maxChars) {
+    formatted = formatted.slice(0, maxChars - 3).trim() + "...";
+  }
+  return formatted;
+};
+
 const SkuDetails = () => {
   const navigation = useNavigation();
   const route = useRoute();
@@ -187,6 +225,20 @@ const SkuDetails = () => {
   const product = data?.product || {};
   const sellerProductId = data?.seller_product_id;
 
+  const cleanVariant = useMemo(() => {
+    return formatCleanVariantName(sku?.name, product?.name);
+  }, [sku?.name, product?.name]);
+
+  const headerTitle = useMemo(() => {
+    const pName = (product?.name || "").trim();
+    if (pName && cleanVariant) {
+      return `${pName} (${cleanVariant})`;
+    }
+    if (pName) return pName;
+    if (cleanVariant) return cleanVariant;
+    return sku?.name || "SKU Details";
+  }, [product?.name, cleanVariant, sku?.name]);
+
   const listingBadge = getStatusBadge(listing?.status);
   const skuBadge = getStatusBadge(sku?.approval_status);
 
@@ -301,7 +353,7 @@ const SkuDetails = () => {
 
         <View style={styles.headerTitleWrap}>
           <Text style={[styles.headerTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-            {sku?.name || product?.name || "SKU Details"}
+            {headerTitle}
           </Text>
           <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
             {sku?.sku || sku?.code ? `Master SKU: ${sku.sku || sku.code}` : `ID: #${skuId || sku?.id || "-"}`}
@@ -428,11 +480,15 @@ const SkuDetails = () => {
               {product?.name || "Product"}
             </Text>
 
-            {sku?.name ? (
+            {cleanVariant ? (
               <View style={styles.variantNameRow}>
                 <Ionicons name="pricetag-outline" size={16} color={COLORS.primary} />
-                <Text style={[styles.variantNameText, { color: COLORS.primary }]}>
-                  Variant: {sku.name}
+                <Text
+                  style={[styles.variantNameText, { color: COLORS.primary }]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  Variant: {cleanVariant}
                 </Text>
               </View>
             ) : null}
@@ -961,11 +1017,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 12,
+    flexShrink: 1,
   },
   variantNameText: {
     fontSize: 14,
     fontWeight: "600",
     marginLeft: 6,
+    flexShrink: 1,
   },
   skuCodesCard: {
     flexDirection: "row",

@@ -19,6 +19,7 @@ import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { CustomAlert } from "../../context/AlertContext";
 import { createSellerProduct, getSellerCategories } from "../../api/auth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const AddProduct = ({ navigation, route }) => {
   const { colors, isDark } = useTheme();
@@ -33,6 +34,19 @@ const AddProduct = ({ navigation, route }) => {
   const [categoryName, setCategoryName] = useState("");
   const [shortDescription, setShortDescription] = useState("");
   const [description, setDescription] = useState("");
+
+  // Gender & Design State
+  const [gender, setGender] = useState("");
+  const [hasDesign, setHasDesign] = useState(false);
+  const [showGenderModal, setShowGenderModal] = useState(false);
+
+  const GENDER_OPTIONS = [
+    { value: "men", label: "Men", icon: "man-outline" },
+    { value: "women", label: "Women", icon: "woman-outline" },
+    { value: "unisex", label: "Unisex", icon: "people-outline" },
+    { value: "boys", label: "Boys", icon: "happy-outline" },
+    { value: "girls", label: "Girls", icon: "heart-outline" },
+  ];
 
   // Tags State
   const [tags, setTags] = useState([]);
@@ -212,6 +226,8 @@ const AddProduct = ({ navigation, route }) => {
     setCategoryName("");
     setShortDescription("");
     setDescription("");
+    setGender("");
+    setHasDesign(false);
     setTags([]);
     setCurrentTag("");
     setMainImage(null);
@@ -250,6 +266,14 @@ const AddProduct = ({ navigation, route }) => {
       if (description.trim()) {
         formData.append("description", description.trim());
       }
+
+      // Gender field
+      if (gender) {
+        formData.append("gender", gender);
+      }
+
+      // Has Design flag (1 = has design, 0 = no design)
+      formData.append("has_design", hasDesign ? "1" : "0");
 
       // Tags array: tags[]=cotton&tags[]=mes
       if (tags.length > 0) {
@@ -292,9 +316,12 @@ const AddProduct = ({ navigation, route }) => {
 
       const res = await createSellerProduct(formData);
 
-      const createdProductData = res?.data || {
+      const createdProductData = {
+        ...(res?.data || {}),
         name: name.trim(),
         category: { id: categoryId, name: categoryName },
+        category_id: categoryId,
+        category_name: categoryName,
         short_description: shortDescription.trim(),
         description: description.trim(),
         tags,
@@ -302,6 +329,23 @@ const AddProduct = ({ navigation, route }) => {
         status: "pending",
         approval_status: "pending",
       };
+
+      // Persist exact category selected by seller for this product
+      try {
+        const key = "@seller_saved_product_categories";
+        const storedStr = await AsyncStorage.getItem(key);
+        const storedMap = storedStr ? JSON.parse(storedStr) : {};
+        const pId = res?.data?.id || res?.product_id || createdProductData?.id;
+        if (pId) {
+          storedMap[String(pId)] = { id: categoryId, name: categoryName };
+        }
+        if (name.trim()) {
+          storedMap[name.trim().toLowerCase()] = { id: categoryId, name: categoryName };
+        }
+        await AsyncStorage.setItem(key, JSON.stringify(storedMap));
+      } catch (storageErr) {
+        console.warn("Could not save product category to storage:", storageErr);
+      }
 
       setSubmittedProduct(createdProductData);
       setShowSuccessModal(true);
@@ -472,6 +516,137 @@ const AddProduct = ({ navigation, route }) => {
               <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
             )}
           </TouchableOpacity>
+        </View>
+
+        {/* Section 2b: Gender & Design Config */}
+        <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Additional Settings</Text>
+
+          {/* Gender Selector */}
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Gender</Text>
+          <TouchableOpacity
+            style={[
+              styles.dropdownSelector,
+              {
+                backgroundColor: colors.backgroundAlt,
+                borderColor: colors.borderLight,
+              },
+            ]}
+            onPress={() => setShowGenderModal(true)}
+          >
+            <Text style={[styles.dropdownText, { color: gender ? colors.textPrimary : colors.textSecondary }]}>
+              {gender ? GENDER_OPTIONS.find((g) => g.value === gender)?.label || gender : "Select Gender (optional)"}
+            </Text>
+            <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
+
+          {/* Gender Quick Pills */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 8, gap: 8 }}>
+            {GENDER_OPTIONS.map((g) => (
+              <TouchableOpacity
+                key={g.value}
+                style={[
+                  {
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingHorizontal: 14,
+                    paddingVertical: 8,
+                    borderRadius: 20,
+                    borderWidth: 1.5,
+                    borderColor: gender === g.value ? COLORS.primary : colors.borderLight,
+                    backgroundColor: gender === g.value ? (isDark ? "#1e3a5f" : "#EFF6FF") : colors.backgroundAlt,
+                  },
+                ]}
+                onPress={() => setGender(gender === g.value ? "" : g.value)}
+              >
+                <Ionicons
+                  name={g.icon}
+                  size={16}
+                  color={gender === g.value ? COLORS.primary : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: gender === g.value ? "700" : "500",
+                    color: gender === g.value ? COLORS.primary : colors.textSecondary,
+                  }}
+                >
+                  {g.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Has Design Toggle */}
+          <View style={{ marginTop: 18 }}>
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginBottom: 6 }]}>
+              Has Custom Design?
+            </Text>
+            <TouchableOpacity
+              style={[
+                {
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  paddingHorizontal: 16,
+                  paddingVertical: 14,
+                  borderRadius: 12,
+                  borderWidth: 1.5,
+                  borderColor: hasDesign ? COLORS.primary : colors.borderLight,
+                  backgroundColor: hasDesign ? (isDark ? "#1e3a5f" : "#EFF6FF") : colors.backgroundAlt,
+                },
+              ]}
+              onPress={() => setHasDesign(!hasDesign)}
+              activeOpacity={0.7}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                <Ionicons
+                  name={hasDesign ? "color-palette" : "color-palette-outline"}
+                  size={22}
+                  color={hasDesign ? COLORS.primary : colors.textSecondary}
+                  style={{ marginRight: 12 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: colors.textPrimary }}>
+                    {hasDesign ? "Design Enabled" : "No Custom Design"}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                    {hasDesign
+                      ? "SKU variants will require a design name (e.g. printed, embroidered)"
+                      : "Enable if this product has custom print/design variants"}
+                  </Text>
+                </View>
+              </View>
+              <View
+                style={[
+                  {
+                    width: 46,
+                    height: 26,
+                    borderRadius: 13,
+                    justifyContent: "center",
+                    paddingHorizontal: 2,
+                    backgroundColor: hasDesign ? COLORS.primary : (isDark ? "#475569" : "#CBD5E1"),
+                  },
+                ]}
+              >
+                <View
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 11,
+                    backgroundColor: "#fff",
+                    alignSelf: hasDesign ? "flex-end" : "flex-start",
+                    elevation: 2,
+                    shadowColor: "#000",
+                    shadowOpacity: 0.15,
+                    shadowRadius: 2,
+                    shadowOffset: { width: 0, height: 1 },
+                  }}
+                />
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Section 3: Descriptions */}
@@ -658,9 +833,11 @@ const AddProduct = ({ navigation, route }) => {
             <TouchableOpacity
               style={[styles.addSkuBtn, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: COLORS.primary }]}
               onPress={() => {
+
                 setShowSuccessModal(false);
                 navigation.navigate("AddSku", {
-                  initialTab: "map_sku",
+                  initialTab: "new_variant",
+                  preselectedProduct: submittedProduct,
                   initialProductId: submittedProduct?.id,
                 });
               }}

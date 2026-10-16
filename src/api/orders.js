@@ -3,6 +3,7 @@ import { BASE_URL } from "./auth";
 
 export const getOrders = async () => {
   const token = await AsyncStorage.getItem("token");
+  console.log(token)
   if (!token) {
     const error = new Error("No authentication token found");
     error.status = 401;

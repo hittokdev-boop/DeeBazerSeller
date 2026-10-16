@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
   ScrollView,
+  FlatList,
   TextInput,
   TouchableOpacity,
   Image,
@@ -14,23 +15,67 @@ import {
   PermissionsAndroid,
   RefreshControl,
   KeyboardAvoidingView,
+  BackHandler,
+  Alert,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { launchImageLibrary, launchCamera } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { CustomAlert } from "../../context/AlertContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   getUnmappedApprovedSkus,
   getApprovedProducts,
   getSellerAttributes,
   getSellerCategories,
+  getSellerProductDetails,
+  getSellerProducts,
   addSellerSku,
+  getProductDesignConfig,
 } from "../../api/auth";
 
 const formatCurrency = (amount) => {
   if (amount === undefined || amount === null || isNaN(Number(amount))) return "₹0";
   return `₹${Number(amount).toLocaleString("en-IN")}`;
+};
+
+export const formatCleanVariantName = (rawSkuName, prodName, maxTokens = 3, maxChars = 32) => {
+  if (!rawSkuName) return "";
+  let name = String(rawSkuName).trim();
+  const pName = String(prodName || "").trim();
+
+  // Strip redundant product name prefix
+  if (pName && name.toLowerCase().startsWith(pName.toLowerCase())) {
+    name = name.slice(pName.length).trim();
+    name = name.replace(/^[\s\-:_•|/,]+/, "").trim();
+  }
+
+  if (!name) return "";
+
+  // Split tokens by standard separators or spaces
+  let tokens = [];
+  if (name.includes(" • ")) {
+    tokens = name.split(" • ").map((s) => s.trim()).filter(Boolean);
+  } else if (name.includes(" - ")) {
+    tokens = name.split(" - ").map((s) => s.trim()).filter(Boolean);
+  } else if (name.includes(",")) {
+    tokens = name.split(",").map((s) => s.trim()).filter(Boolean);
+  } else if (name.includes("/")) {
+    tokens = name.split("/").map((s) => s.trim()).filter(Boolean);
+  } else {
+    tokens = name.split(/\s+/).filter(Boolean);
+  }
+
+  if (tokens.length > maxTokens) {
+    tokens = tokens.slice(0, maxTokens);
+  }
+
+  let formatted = tokens.join(" • ");
+  if (formatted.length > maxChars) {
+    formatted = formatted.slice(0, maxChars - 3).trim() + "...";
+  }
+  return formatted;
 };
 
 const getAttributeIcon = (slugOrName = "") => {
@@ -67,101 +112,496 @@ const getColorHex = (valName = "") => {
   return map[(valName || "").toLowerCase()] || null;
 };
 
-// Robust helper to extract category ID from any product object structure
-const extractCategoryId = (prod, categories = [], unmapped = []) => {
-  if (!prod) return null;
-  // 1. Direct category_id fields from product
-  if (prod.category_id !== undefined && prod.category_id !== null && prod.category_id !== "") {
-    return Number(prod.category_id) || prod.category_id;
+// Safely parse a valid positive numeric ID (never allows string names like "Fashion")
+const toValidNumericId = (val) => {
+  if (val === undefined || val === null || val === "") return null;
+  if (typeof val === "number" && !isNaN(val) && val > 0) return val;
+  if (typeof val === "string" && val.trim() !== "") {
+    const num = Number(val.trim());
+    if (!isNaN(num) && num > 0) return num;
   }
-  if (prod.categoryId !== undefined && prod.categoryId !== null && prod.categoryId !== "") {
-    return Number(prod.categoryId) || prod.categoryId;
+  return null;
+};
+
+// Clean helper to safely resolve or match category for a selected product
+const resolveProductCategory = (prod, categories = [], savedCategories = {}, sellerProductsMap = {}) => {
+  if (!prod) return { id: null, name: "" };
+
+  // 1. Direct valid numeric ID on product
+  const rawId =
+    prod.category_id ??
+    prod.categoryId ??
+    prod.cat_id ??
+    (typeof prod.category === "object" ? prod.category?.id : null) ??
+    (typeof prod.category === "number" ? prod.category : null);
+  const numId = toValidNumericId(rawId);
+  if (numId) {
+    const match = categories.find((c) => Number(c.id) === numId);
+    if (match) return { id: Number(match.id), name: match.name };
+    const directName = typeof prod.category === "object" ? prod.category?.name : prod.category_name;
+    return { id: numId, name: directName || `Category #${numId}` };
   }
-  if (prod.cat_id !== undefined && prod.cat_id !== null && prod.cat_id !== "") {
-    return Number(prod.cat_id) || prod.cat_id;
-  }
-  // 2. Object category
-  if (prod.category && typeof prod.category === "object" && prod.category.id) {
-    return Number(prod.category.id) || prod.category.id;
-  }
-  // 3. Numeric category
-  if (typeof prod.category === "number") {
-    return prod.category;
-  }
-  if (typeof prod.category === "string" && prod.category.trim() && !isNaN(Number(prod.category))) {
-    return Number(prod.category);
-  }
-  // 4. Nested product object
-  if (prod.product && typeof prod.product === "object") {
-    const subId = extractCategoryId(prod.product, categories, unmapped);
-    if (subId) return subId;
-  }
-  // 5. Match string category name against loaded categoriesList
-  if (typeof prod.category === "string" && prod.category.trim() && Array.isArray(categories) && categories.length > 0) {
-    const catNameLower = prod.category.trim().toLowerCase();
-    const matched = categories.find(
+
+  // 2. Direct category string on product
+  const rawName =
+    (typeof prod.category === "string" && isNaN(Number(prod.category)) ? prod.category.trim() : null) ||
+    (typeof prod.category_name === "string" ? prod.category_name.trim() : null);
+  if (rawName && Array.isArray(categories) && categories.length > 0) {
+    const match = categories.find(
       (c) =>
-        (c.name || "").trim().toLowerCase() === catNameLower ||
-        (c.slug || "").trim().toLowerCase() === catNameLower
+        (c.name || "").toLowerCase().trim() === rawName.toLowerCase() ||
+        (c.slug || "").toLowerCase().trim() === rawName.toLowerCase()
     );
-    if (matched?.id) return Number(matched.id) || matched.id;
+    if (match) return { id: Number(match.id), name: match.name };
   }
-  // 6. Check unmappedSkus that belong to this product
-  if (Array.isArray(unmapped) && unmapped.length > 0) {
-    const matchedSku = unmapped.find((s) => String(s.product_id) === String(prod.id));
-    if (matchedSku) {
-      const skuCatId =
-        matchedSku.category_id ||
-        matchedSku.categoryId ||
-        (typeof matchedSku.category === "object" ? matchedSku.category?.id : matchedSku.category);
-      if (skuCatId && !isNaN(Number(skuCatId))) return Number(skuCatId);
+
+  // 3. Category from storage (the exact category selected by the seller when creating this product)
+  const prodIdKey = String(prod.id || prod.product_id || "");
+  const prodNameKey = (prod.name || "").toLowerCase().trim();
+  if (savedCategories) {
+    const saved = savedCategories[prodIdKey] || (prodNameKey ? savedCategories[prodNameKey] : null);
+    if (saved && saved.id) {
+      const match = categories.find((c) => Number(c.id) === Number(saved.id));
+      if (match) return { id: Number(match.id), name: match.name };
+      return { id: Number(saved.id), name: saved.name || `Category #${saved.id}` };
     }
   }
 
-  // 7. Keyword matching by product name
-  const pName = (prod.name || "").toLowerCase().trim();
-  if (pName) {
-    if (
-      pName.includes("dal") ||
-      pName.includes("masoor") ||
-      pName.includes("rice") ||
-      pName.includes("oil") ||
-      pName.includes("flour") ||
-      pName.includes("atta") ||
-      pName.includes("grocery") ||
-      pName.includes("sugar") ||
-      pName.includes("salt") ||
-      pName.includes("spice") ||
-      pName.includes("tea")
-    ) {
-      const grocCat = categories.find((c) => (c.slug || c.name || "").toLowerCase().includes("grocery"));
-      return grocCat?.id ? Number(grocCat.id) : 11;
+  // 4. Category from sellerProductsMap (from seller's active catalog)
+  if (sellerProductsMap) {
+    const fromSeller = sellerProductsMap[prodIdKey] || (prodNameKey ? sellerProductsMap[prodNameKey] : null);
+    if (fromSeller) {
+      if (typeof fromSeller === "object" && fromSeller.id) {
+        const match = categories.find((c) => Number(c.id) === Number(fromSeller.id));
+        if (match) return { id: Number(match.id), name: match.name };
+        return { id: Number(fromSeller.id), name: fromSeller.name || `Category #${fromSeller.id}` };
+      }
+      if (typeof fromSeller === "string") {
+        const match = categories.find(
+          (c) =>
+            (c.name || "").toLowerCase().trim() === fromSeller.toLowerCase().trim() ||
+            (c.slug || "").toLowerCase().trim() === fromSeller.toLowerCase().trim()
+        );
+        if (match) return { id: Number(match.id), name: match.name };
+      }
     }
+  }
+
+  // 5. Intelligent catalog keyword fallback
+  const pName = (prod.name || "").toLowerCase().trim();
+  if (pName && Array.isArray(categories) && categories.length > 0) {
     if (
+      pName.includes("laptop") ||
       pName.includes("phone") ||
       pName.includes("samsung") ||
-      pName.includes("laptop") ||
       pName.includes("mobile") ||
       pName.includes("electronics")
     ) {
-      const elecCat = categories.find((c) => (c.slug || c.name || "").toLowerCase().includes("electronics"));
-      return elecCat?.id ? Number(elecCat.id) : 1;
+      const elec = categories.find((c) => (c.slug || c.name || "").toLowerCase().includes("electronics"));
+      if (elec) return { id: Number(elec.id), name: elec.name };
     }
     if (
       pName.includes("dress") ||
       pName.includes("shirt") ||
       pName.includes("pant") ||
-      pName.includes("tshirt") ||
+      pName.includes("tee") ||
+      pName.includes("top") ||
       pName.includes("fashion") ||
-      pName.includes("floral") ||
       pName.includes("clothing")
     ) {
-      const fashCat = categories.find((c) => (c.slug || c.name || "").toLowerCase().includes("fashion"));
-      return fashCat?.id ? Number(fashCat.id) : 2;
+      const fash = categories.find((c) => (c.slug || c.name || "").toLowerCase().includes("fashion"));
+      if (fash) return { id: Number(fash.id), name: fash.name };
+    }
+    if (
+      pName.includes("dal") ||
+      pName.includes("rice") ||
+      pName.includes("oil") ||
+      pName.includes("grocery") ||
+      pName.includes("flour") ||
+      pName.includes("atta")
+    ) {
+      const groc = categories.find((c) => (c.slug || c.name || "").toLowerCase().includes("grocery"));
+      if (groc) return { id: Number(groc.id), name: groc.name };
+    }
+    if (
+      pName.includes("home") ||
+      pName.includes("kitchen") ||
+      pName.includes("cookware") ||
+      pName.includes("pan")
+    ) {
+      const home = categories.find((c) => (c.slug || c.name || "").toLowerCase().includes("home"));
+      if (home) return { id: Number(home.id), name: home.name };
     }
   }
-  return null;
+
+  return { id: null, name: "" };
 };
+
+// Memoized Variant Card to avoid expensive re-renders and destroying/recreating native EditText views
+const VariantItemCard = React.memo(
+  ({ v, idx, colors, isDark, hasDesign, defaultDesignName, onUpdateField, onRemove }) => {
+    return (
+      <View
+        style={[
+          styles.variantItemCard,
+          {
+            backgroundColor: colors.backgroundAlt,
+            borderColor: v.isAlreadyAdded ? (isDark ? "#b45309" : "#FBBF24") : colors.borderLight,
+            borderWidth: v.isAlreadyAdded ? 1.5 : 1,
+          },
+        ]}
+      >
+        {/* Variant Card Header */}
+        <View style={styles.variantItemHeader}>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+              <View style={[styles.variantNumberTag, { backgroundColor: v.isAlreadyAdded ? "#F59E0B" : COLORS.primary }]}>
+                <Text style={styles.variantNumberTagText}>#{idx + 1}</Text>
+              </View>
+              <Text style={[styles.variantItemTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                {v.name}
+              </Text>
+
+              {v.isAlreadyAdded ? (
+                <View style={[styles.alreadyAddedBadge, { backgroundColor: isDark ? "#451a03" : "#FEF3C7", borderColor: isDark ? "#78350f" : "#FDE68A" }]}>
+                  <Ionicons name="lock-closed" size={11} color="#D97706" style={{ marginRight: 3 }} />
+                  <Text style={[styles.alreadyAddedBadgeText, { color: isDark ? "#FCD34D" : "#B45309" }]}>
+                    Already in Catalog
+                  </Text>
+                </View>
+              ) : (
+                <View style={[styles.newVariantBadge, { backgroundColor: isDark ? "#064e3b" : "#DCFCE7", borderColor: isDark ? "#065f46" : "#86EFAC" }]}>
+                  <Ionicons name="sparkles" size={11} color="#16A34A" style={{ marginRight: 3 }} />
+                  <Text style={[styles.newVariantBadgeText, { color: isDark ? "#86EFAC" : "#15803D" }]}>
+                    New Variant
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Labels / Pills */}
+            {Array.isArray(v.labels) && v.labels.length > 0 && (
+              <View style={styles.variantPillsRow}>
+                {v.labels.map((lbl, lIdx) => (
+                  <View
+                    key={lIdx}
+                    style={[styles.variantAttrPill, { backgroundColor: isDark ? "#334155" : "#E2E8F0" }]}
+                  >
+                    <Text style={[styles.variantAttrPillText, { color: colors.textPrimary }]}>
+                      {lbl.attrName}: {lbl.valName}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {v.isAlreadyAdded && (
+              <Text style={[styles.alreadyAddedNote, { color: isDark ? "#FBBF24" : "#B45309" }]}>
+                {hasDesign
+                  ? "⚠️ This combination with current design already exists in catalog. Enter or change the Design Name below to add this variant."
+                  : "⚠️ This combination is already in the product catalog and will be skipped from submission to prevent duplicate errors."}
+              </Text>
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={[styles.variantDeleteBtn, { backgroundColor: isDark ? "#451a1a" : "#FEE2E2" }]}
+            onPress={() => onRemove(v)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="trash-outline" size={16} color={COLORS.error} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Variant Editable Fields */}
+        <View style={{ marginTop: 8 }}>
+          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Variant Title *</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
+            value={v.name}
+            onChangeText={(txt) => onUpdateField(v.id, "name", txt)}
+          />
+
+          <View style={styles.gridRow}>
+            <View style={styles.gridCol}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Price (₹) *</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
+                placeholder="1299"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={String(v.price || "")}
+                onChangeText={(txt) => onUpdateField(v.id, "price", txt)}
+              />
+            </View>
+            <View style={styles.gridCol}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Sale Price (₹)</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
+                placeholder="999"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={String(v.sale_price || "")}
+                onChangeText={(txt) => onUpdateField(v.id, "sale_price", txt)}
+              />
+            </View>
+          </View>
+
+          <View style={styles.gridRow}>
+            <View style={styles.gridCol}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Stock Qty *</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
+                placeholder="10"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={String(v.stock_quantity ?? "")}
+                onChangeText={(txt) => onUpdateField(v.id, "stock_quantity", txt)}
+              />
+            </View>
+            <View style={styles.gridCol}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Min Stock Alert</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
+                placeholder="2"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={String(v.min_stock_alert || "2")}
+                onChangeText={(txt) => onUpdateField(v.id, "min_stock_alert", txt)}
+              />
+            </View>
+          </View>
+
+          <View style={styles.gridRow}>
+            <View style={styles.gridCol}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Weight (kg)</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
+                placeholder="0.40"
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+                value={String(v.weight || "")}
+                onChangeText={(txt) => onUpdateField(v.id, "weight", txt)}
+              />
+            </View>
+            <View style={styles.gridCol}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>L x W x H (cm)</Text>
+              <View style={{ flexDirection: "row", gap: 4 }}>
+                <TextInput
+                  style={[styles.input, { flex: 1, backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight, textAlign: "center", paddingHorizontal: 2 }]}
+                  placeholder="34"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="numeric"
+                  value={String(v.length || "")}
+                  onChangeText={(txt) => onUpdateField(v.id, "length", txt)}
+                />
+                <TextInput
+                  style={[styles.input, { flex: 1, backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight, textAlign: "center", paddingHorizontal: 2 }]}
+                  placeholder="24"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="numeric"
+                  value={String(v.width || "")}
+                  onChangeText={(txt) => onUpdateField(v.id, "width", txt)}
+                />
+                <TextInput
+                  style={[styles.input, { flex: 1, backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight, textAlign: "center", paddingHorizontal: 2 }]}
+                  placeholder="4"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="numeric"
+                  value={String(v.height || "")}
+                  onChangeText={(txt) => onUpdateField(v.id, "height", txt)}
+                />
+              </View>
+            </View>
+          </View>
+
+          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Seller SKU Code</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
+            placeholder="FD-RED-S"
+            placeholderTextColor={colors.textSecondary}
+            value={v.seller_sku}
+            onChangeText={(txt) => onUpdateField(v.id, "seller_sku", txt)}
+          />
+
+          {hasDesign && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Design Name</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
+                placeholder={defaultDesignName || "e.g. Printed, Floral, Embroidered"}
+                placeholderTextColor={colors.textSecondary}
+                value={v.design_name !== undefined ? v.design_name : (v.design || defaultDesignName || "")}
+                onChangeText={(txt) => onUpdateField(v.id, "design_name", txt)}
+              />
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  },
+  (prev, next) => {
+    return (
+      prev.v === next.v &&
+      prev.idx === next.idx &&
+      prev.isDark === next.isDark &&
+      prev.colors === next.colors &&
+      prev.hasDesign === next.hasDesign &&
+      prev.defaultDesignName === next.defaultDesignName &&
+      prev.onUpdateField === next.onUpdateField &&
+      prev.onRemove === next.onRemove
+    );
+  }
+);
+
+// Memoized Individual Sku Item Card for FlatList in Tab 1
+const SkuCardItem = React.memo(({ item, colors, isDark, onNavigate, onOpenMapModal }) => {
+  const skuCode = typeof item.sku === "object" ? item.sku.code || item.sku.sku || item.sku.name : item.sku;
+  const prodTitle = item.product_name || item.name;
+
+  return (
+    <View style={[styles.skuCard, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => onNavigate(item)}
+        style={[styles.thumbnailWrap, { backgroundColor: colors.backgroundAlt }]}
+      >
+        {item.image_url ? (
+          <Image source={{ uri: item.image_url }} style={styles.thumbnail} resizeMode="cover" />
+        ) : (
+          <Ionicons name="image-outline" size={32} color={colors.textSecondary} />
+        )}
+      </TouchableOpacity>
+      <View style={styles.skuCardDetails}>
+        <TouchableOpacity activeOpacity={0.85} onPress={() => onNavigate(item)}>
+          <View style={styles.skuBadgeRow}>
+            <View style={[styles.adminTag, { backgroundColor: isDark ? "#064e3b" : "#DCFCE7" }]}>
+              <Ionicons name="checkmark-circle" size={12} color={COLORS.success} />
+              <Text style={[styles.adminTagText, { color: COLORS.success }]}>Approved</Text>
+            </View>
+            <Text style={[styles.skuCode, { color: colors.textSecondary }]}>
+              {skuCode}
+            </Text>
+          </View>
+          <Text style={[styles.prodTitle, { color: colors.textPrimary }]} numberOfLines={2}>
+            {prodTitle}
+          </Text>
+          {(() => {
+            const cleanVar = formatCleanVariantName(item.name, item.product_name);
+            return cleanVar ? (
+              <Text
+                style={[styles.variantSubtitle, { color: colors.textSecondary }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                Variant: {cleanVar}
+              </Text>
+            ) : null;
+          })()}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.mapActionBtn, { backgroundColor: COLORS.primary }]}
+          onPress={() => onOpenMapModal(item)}
+        >
+          <Ionicons name="add" size={16} color="#fff" />
+          <Text style={styles.mapActionBtnText}>Map to Store</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
+
+// Memoized Product Group Item for FlatList in Tab 1
+const ProductGroupItem = React.memo(({ group, colors, isDark, onOpenBatchMap, onOpenMapModal, onNavigate }) => {
+  return (
+    <View style={styles.productGroupContainer}>
+      {group.skus.length > 1 && (
+        <View
+          style={[
+            styles.productGroupHeader,
+            {
+              backgroundColor: isDark ? "#1e293b" : "#F8FAFC",
+              borderColor: colors.borderLight,
+            },
+          ]}
+        >
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <Text style={[styles.productGroupTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+              {group.productName}
+            </Text>
+            <Text style={[styles.productGroupSub, { color: colors.textSecondary }]}>
+              {group.skus.length} variants available in catalog
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.batchMapBtn, { backgroundColor: COLORS.primary }]}
+            onPress={() => onOpenBatchMap(group)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="flash" size={13} color="#fff" style={{ marginRight: 4 }} />
+            <Text style={styles.batchMapBtnText}>Batch Map ({group.skus.length})</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {group.skus.map((skuItem) => (
+        <SkuCardItem
+          key={skuItem.id}
+          item={skuItem}
+          colors={colors}
+          isDark={isDark}
+          onNavigate={onNavigate}
+          onOpenMapModal={onOpenMapModal}
+        />
+      ))}
+    </View>
+  );
+});
+
+// Memoized Approved Products Chips for Section 1 in Tab 2
+const ApprovedProductChips = React.memo(({ approvedProducts, selectedProductId, colors, onSelectProduct }) => {
+  if (!approvedProducts || approvedProducts.length === 0) return null;
+  return (
+    <View style={styles.otherProductsWrap}>
+      <Text style={[styles.otherProductsLabel, { color: colors.textSecondary }]}>
+        All Approved Products (Tap ID to switch):
+      </Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.prodIdChipsRow}>
+        {approvedProducts.map((p) => {
+          const isCurrent = selectedProductId === p.id;
+          return (
+            <TouchableOpacity
+              key={p.id}
+              onPress={() => onSelectProduct(p)}
+              activeOpacity={0.75}
+              style={[
+                styles.prodIdChip,
+                isCurrent
+                  ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
+                  : { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
+              ]}
+            >
+              <Ionicons
+                name={isCurrent ? "checkmark-circle" : "cube-outline"}
+                size={13}
+                color={isCurrent ? "#fff" : colors.textSecondary}
+                style={{ marginRight: 5 }}
+              />
+              <Text
+                style={[
+                  styles.prodIdChipText,
+                  { color: isCurrent ? "#fff" : colors.textPrimary, fontWeight: isCurrent ? "700" : "500" },
+                ]}
+                numberOfLines={1}
+              >
+                ID #{p.id}: {p.name}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+});
 
 const AddSkuScreen = ({ navigation, route }) => {
   const { colors, isDark } = useTheme();
@@ -199,20 +639,114 @@ const AddSkuScreen = ({ navigation, route }) => {
   const [approvedProducts, setApprovedProducts] = useState([]);
   const [loadingApprovedProducts, setLoadingApprovedProducts] = useState(false);
 
+  // Category state for the approved product (automatically resolved from product creation / catalog)
+  const [selectedCategoryId, setSelectedCategoryId] = useState(null);
+  const [selectedCategoryName, setSelectedCategoryName] = useState("");
+  const [savedProductCategories, setSavedProductCategories] = useState({});
+  const [sellerProductsMap, setSellerProductsMap] = useState({});
+
   // Attributes State (e.g. Color, Size, Storage, RAM, etc.)
   const [attributes, setAttributes] = useState([]);
   const [loadingAttributes, setLoadingAttributes] = useState(false);
   const [selectedAttributes, setSelectedAttributes] = useState({}); // { [attribute_id]: [value_id, ...] }
+
+  // Matrix Generation Mode: "per_color" (Customize sizes per color) | "cartesian" (Combine all options)
+  const [variantMode, setVariantMode] = useState("per_color");
+  // Configuration per primary attribute (e.g. Color): { [primaryValId]: { [secAttrId]: [secValId, ...] } }
+  const [colorVariantsConfig, setColorVariantsConfig] = useState({});
+  // Expanded state for color accordions: { [primaryValId]: boolean }
+  const [expandedColorIds, setExpandedColorIds] = useState({});
+  // Matrix filter by color tab
+  const [matrixFilterColor, setMatrixFilterColor] = useState("all");
 
   // Form fields for new variant
   const [selectedProduct, setSelectedProduct] = useState(
     route?.params?.preselectedProduct || route?.params?.product || null
   );
 
-  // Schema Detection: Attributes required by selectedProduct to prevent "different set of attributes" rejection
-  const [productRequiredAttrIds, setProductRequiredAttrIds] = useState([]);
-  const [productRequiredAttrNames, setProductRequiredAttrNames] = useState([]);
-  const [loadingProductSchema, setLoadingProductSchema] = useState(false);
+  // Log selectedProduct to console
+
+
+  const lastFetchedDetailsIdRef = useRef(null);
+  const [loadingProductDetails, setLoadingProductDetails] = useState(false);
+  const [loadedProductSkus, setLoadedProductSkus] = useState([]);
+
+  // Fetch product's existing SKUs and catalog details with deduplication guard
+  useEffect(() => {
+    const pId = selectedProduct?.id ?? selectedProduct?.product_id;
+    if (!pId) {
+      setLoadedProductSkus([]);
+      return;
+    }
+    if (lastFetchedDetailsIdRef.current === pId) return;
+    lastFetchedDetailsIdRef.current = pId;
+
+    setLoadingProductDetails(true);
+    getSellerProductDetails(pId)
+      .then((res) => {
+        const skus = res?.data?.skus || res?.skus || res?.data?.product_skus || [];
+        setLoadedProductSkus(Array.isArray(skus) ? skus : []);
+      })
+      .catch((err) => {
+        console.warn("Could not load product details/skus:", err?.message);
+        setLoadedProductSkus([]);
+      })
+      .finally(() => {
+        setLoadingProductDetails(false);
+      });
+  }, [selectedProduct?.id, selectedProduct?.product_id]);
+
+  // Product Design Configuration state (GET api/seller/products/{id}/has-design-config)
+  const [designConfig, setDesignConfig] = useState(null); // { product_id, has_design, design_required, designs: [] }
+  const [loadingDesignConfig, setLoadingDesignConfig] = useState(false);
+  const [designName, setDesignName] = useState("");
+  const designNameRef = useRef("");
+  useEffect(() => {
+    designNameRef.current = designName;
+  }, [designName]);
+
+  // Map SKU Modal design state
+  const [mapDesignConfig, setMapDesignConfig] = useState(null);
+  const [loadingMapDesignConfig, setLoadingMapDesignConfig] = useState(false);
+  const [mapDesignName, setMapDesignName] = useState("");
+
+  const lastFetchedDesignProductIdRef = useRef(null);
+  // Fetch product design configuration when selected product changes
+  useEffect(() => {
+    const pId = selectedProduct?.id ?? selectedProduct?.product_id;
+    if (!pId) {
+      setDesignConfig(null);
+      setDesignName("");
+      lastFetchedDesignProductIdRef.current = null;
+      return;
+    }
+    if (lastFetchedDesignProductIdRef.current === pId) return;
+    lastFetchedDesignProductIdRef.current = pId;
+
+    let isMounted = true;
+    setLoadingDesignConfig(true);
+    getProductDesignConfig(pId)
+      .then((res) => {
+        if (!isMounted) return;
+        const configData = res?.data || res || null;
+        setDesignConfig(configData);
+        if (!configData?.has_design) {
+          setDesignName("");
+        }
+      })
+      .catch((err) => {
+        if (!isMounted) return;
+        console.warn("Could not load product design config:", err?.message);
+        setDesignConfig(null);
+      })
+      .finally(() => {
+        if (isMounted) setLoadingDesignConfig(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedProduct?.id, selectedProduct?.product_id]);
 
   // image_by: attribute ID that differentiates images (e.g. 1 for Color, 11 for Pack Size)
   const [imageByAttrId, setImageByAttrId] = useState(null);
@@ -233,6 +767,30 @@ const AddSkuScreen = ({ navigation, route }) => {
   const [bulkWidth, setBulkWidth] = useState("24");
   const [bulkHeight, setBulkHeight] = useState("4");
   const [isBulkOpen, setIsBulkOpen] = useState(true);
+
+  // Ref to hold current bulk values without causing function recreation in generators
+  const bulkValuesRef = useRef({
+    price: bulkPrice,
+    sale_price: bulkSalePrice,
+    stock_quantity: bulkStock,
+    min_stock_alert: bulkMinStock,
+    weight: bulkWeight,
+    length: bulkLength,
+    width: bulkWidth,
+    height: bulkHeight,
+  });
+  useEffect(() => {
+    bulkValuesRef.current = {
+      price: bulkPrice,
+      sale_price: bulkSalePrice,
+      stock_quantity: bulkStock,
+      min_stock_alert: bulkMinStock,
+      weight: bulkWeight,
+      length: bulkLength,
+      width: bulkWidth,
+      height: bulkHeight,
+    };
+  }, [bulkPrice, bulkSalePrice, bulkStock, bulkMinStock, bulkWeight, bulkLength, bulkWidth, bulkHeight]);
 
   const [isSubmittingVariant, setIsSubmittingVariant] = useState(false);
 
@@ -258,6 +816,7 @@ const AddSkuScreen = ({ navigation, route }) => {
     setLoadingApprovedProducts(true);
     try {
       const data = await getApprovedProducts();
+
       const list = Array.isArray(data) ? data : data?.data || [];
       setApprovedProducts(list);
     } catch (err) {
@@ -271,6 +830,7 @@ const AddSkuScreen = ({ navigation, route }) => {
   const [categoriesList, setCategoriesList] = useState([]);
 
   useEffect(() => {
+    // 1. Fetch available server categories
     getSellerCategories()
       .then((cats) => {
         const list = Array.isArray(cats) ? cats : cats?.data || [];
@@ -281,18 +841,47 @@ const AddSkuScreen = ({ navigation, route }) => {
       .catch((e) => {
         console.warn("Could not load categories in AddSkuScreen:", e?.message);
       });
+
+    // 2. Load saved categories from AsyncStorage (categories selected when seller added products)
+    AsyncStorage.getItem("@seller_saved_product_categories")
+      .then((raw) => {
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            setSavedProductCategories(parsed);
+          }
+        }
+      })
+      .catch((e) => {
+        console.warn("Could not load saved product categories in AddSkuScreen:", e?.message);
+      });
   }, []);
 
-  // ---------------- Load Seller Attributes ----------------
+  // ---------------- Load Seller Attributes (with cache deduplication) ----------------
+  const lastFetchedAttrRef = useRef({ catId: undefined, prodId: undefined });
   const fetchAttributes = useCallback(
-    async (catId = null) => {
+    async (catId = null, prodId = null) => {
+      const resolvedCatId = toValidNumericId(catId) ?? toValidNumericId(selectedCategoryId);
+      const resolvedProdId =
+        prodId !== null && prodId !== undefined
+          ? prodId
+          : (selectedProduct?.id ?? selectedProduct?.product_id);
+
+      // Prevent redundant identical fetches
+      if (
+        lastFetchedAttrRef.current.catId === resolvedCatId &&
+        lastFetchedAttrRef.current.prodId === resolvedProdId
+      ) {
+        return;
+      }
+      lastFetchedAttrRef.current = { catId: resolvedCatId, prodId: resolvedProdId };
+
       setLoadingAttributes(true);
       try {
-        const resolvedCatId =
-          catId !== null && catId !== undefined
-            ? catId
-            : extractCategoryId(selectedProduct, categoriesList, unmappedSkus);
-        const data = await getSellerAttributes(resolvedCatId);
+        const data = await getSellerAttributes({
+          category_id: resolvedCatId,
+          product_id: resolvedProdId,
+        });
         const list = Array.isArray(data) ? data : data?.data || data?.attributes || [];
         setAttributes(list);
       } catch (err) {
@@ -301,7 +890,7 @@ const AddSkuScreen = ({ navigation, route }) => {
         setLoadingAttributes(false);
       }
     },
-    [selectedProduct, categoriesList, unmappedSkus]
+    [selectedCategoryId, selectedProduct?.id, selectedProduct?.product_id]
   );
 
   useEffect(() => {
@@ -309,183 +898,185 @@ const AddSkuScreen = ({ navigation, route }) => {
     fetchApprovedProducts();
   }, [fetchUnmappedSkus, fetchApprovedProducts]);
 
-  // Fetch attributes whenever selected product or categories change
+  // Handle switching product: automatically resolves category and resets variant state
+  const handleSelectProduct = useCallback(
+    (prod) => {
+      if (!prod) return;
+      setSelectedProduct(prod);
+      const cat = resolveProductCategory(prod, categoriesList, savedProductCategories, sellerProductsMap);
+      setSelectedCategoryId(cat.id);
+      setSelectedCategoryName(cat.name);
+      setSelectedAttributes({});
+      setColorVariantsConfig({});
+      setExpandedColorIds({});
+      setMatrixFilterColor("all");
+      setVariants([]);
+      setAttributeImages({});
+      setImageByAttrId(null);
+      setDesignName("");
+      setDesignConfig(null);
+      lastFetchedDesignProductIdRef.current = null;
+      if (cat.id) {
+        fetchAttributes(cat.id, prod.id);
+      } else {
+        fetchAttributes(null, prod.id);
+      }
+    },
+    [categoriesList, savedProductCategories, sellerProductsMap, fetchAttributes]
+  );
+
+  // If selectedProduct is present and categories or storage finish loading, resolve category
   useEffect(() => {
-    const catId = extractCategoryId(selectedProduct, categoriesList, unmappedSkus);
-    fetchAttributes(catId);
-  }, [
-    selectedProduct?.id,
-    selectedProduct?.category_id,
-    selectedProduct?.categoryId,
-    selectedProduct?.cat_id,
-    selectedProduct?.category,
-    categoriesList.length,
-    unmappedSkus.length,
-    fetchAttributes,
-  ]);
+    if (selectedProduct && categoriesList.length > 0) {
+      const cat = resolveProductCategory(selectedProduct, categoriesList, savedProductCategories, sellerProductsMap);
+      if (cat.id && (selectedCategoryId !== cat.id || selectedCategoryName !== cat.name)) {
+        setSelectedCategoryId(cat.id);
+        setSelectedCategoryName(cat.name);
+        fetchAttributes(cat.id, selectedProduct.id);
+      } else if (!selectedCategoryId && cat.id) {
+        setSelectedCategoryId(cat.id);
+        setSelectedCategoryName(cat.name);
+        fetchAttributes(cat.id, selectedProduct.id);
+      }
+    }
+  }, [categoriesList, selectedProduct?.id, savedProductCategories, sellerProductsMap, selectedCategoryId, selectedCategoryName]);
 
-  const resolvedCategoryDisplay = useMemo(() => {
-    const catId = extractCategoryId(selectedProduct, categoriesList, unmappedSkus);
-    const catObj = categoriesList.find((c) => String(c.id) === String(catId));
-    const catName =
-      catObj?.name ||
-      (typeof selectedProduct?.category === "object" ? selectedProduct?.category?.name : null) ||
-      (typeof selectedProduct?.category === "string" && isNaN(Number(selectedProduct.category)) ? selectedProduct.category : null) ||
-      selectedProduct?.category_name;
-    if (catName && catId) return `Cat: ${catName} (ID: #${catId})`;
-    if (catName) return `Cat: ${catName}`;
-    if (catId) return `Category ID: #${catId}`;
-    return null;
-  }, [selectedProduct, categoriesList, unmappedSkus]);
-
+  // Initial route params
   useEffect(() => {
     if (route?.params?.preselectedProduct) {
-      setSelectedProduct(route.params.preselectedProduct);
+      handleSelectProduct(route.params.preselectedProduct);
     } else if (route?.params?.product) {
-      setSelectedProduct(route.params.product);
+      handleSelectProduct(route.params.product);
     }
     if (route?.params?.initialTab) {
       setActiveTab(route.params.initialTab);
     }
-  }, [route?.params?.preselectedProduct, route?.params?.product, route?.params?.initialTab]);
+  }, [route?.params?.preselectedProduct, route?.params?.product, route?.params?.initialTab, handleSelectProduct]);
 
+  // If no product selected, select first approved product
   useEffect(() => {
     if (!selectedProduct && approvedProducts.length > 0) {
       const targetId = route?.params?.initialProductId || route?.params?.productId || route?.params?.id;
       if (targetId) {
         const found = approvedProducts.find((p) => String(p.id) === String(targetId));
         if (found) {
-          setSelectedProduct(found);
+          handleSelectProduct(found);
           return;
         }
       }
-      setSelectedProduct(approvedProducts[0]);
+      handleSelectProduct(approvedProducts[0]);
     }
-  }, [approvedProducts, selectedProduct, route?.params]);
+  }, [approvedProducts, selectedProduct, route?.params, handleSelectProduct]);
 
-  // ---------------- Inspect Master Product's Required Attributes Schema ----------------
-  useEffect(() => {
-    if (!selectedProduct?.id) {
-      setProductRequiredAttrIds([]);
-      setProductRequiredAttrNames([]);
-      setLoadingProductSchema(false);
-      return;
-    }
+  // ---------------- Inspect Master Product's Required Attributes Schema (Synchronous useMemo) ----------------
+  const productRequiredAttrIds = useMemo(() => {
+    if (!selectedProduct?.id) return [];
+    const foundAttrIds = new Set();
+    const pIdStr = String(selectedProduct.id);
 
-    setLoadingProductSchema(true);
-    try {
-      const foundAttrIds = new Set();
-
-      // 1. Check unmappedSkus that belong to this product
-      const sameProductSkus = unmappedSkus.filter(
-        (s) => String(s.product_id) === String(selectedProduct.id)
-      );
-
-      sameProductSkus.forEach((s) => {
-        if (Array.isArray(s.attributes)) {
-          s.attributes.forEach((a) => {
-            const aid = a.attribute_id || a.id;
-            if (aid) foundAttrIds.add(Number(aid));
-          });
-        } else if (s.attributes && typeof s.attributes === "object") {
-          Object.keys(s.attributes).forEach((k) => {
-            if (!isNaN(Number(k))) foundAttrIds.add(Number(k));
-          });
-        }
-        if (Array.isArray(s.sku_attributes)) {
-          s.sku_attributes.forEach((a) => {
-            const aid = a.attribute_id || a.id;
-            if (aid) foundAttrIds.add(Number(aid));
-          });
-        }
-      });
-
-      // 2. Check if selectedProduct already contains attributes or skus
-      if (Array.isArray(selectedProduct?.attributes)) {
-        selectedProduct.attributes.forEach((a) => {
-          const aid = a.attribute_id || a.id;
-          if (aid) foundAttrIds.add(Number(aid));
-        });
-      }
-      if (Array.isArray(selectedProduct?.skus)) {
-        selectedProduct.skus.forEach((s) => {
+    // Check unmappedSkus that belong to this product
+    if (Array.isArray(unmappedSkus)) {
+      for (let i = 0; i < unmappedSkus.length; i++) {
+        const s = unmappedSkus[i];
+        if (String(s.product_id) === pIdStr) {
           if (Array.isArray(s.attributes)) {
             s.attributes.forEach((a) => {
               const aid = a.attribute_id || a.id;
               if (aid) foundAttrIds.add(Number(aid));
             });
+          } else if (s.attributes && typeof s.attributes === "object") {
+            Object.keys(s.attributes).forEach((k) => {
+              if (!isNaN(Number(k))) foundAttrIds.add(Number(k));
+            });
           }
-        });
-      }
-
-      // 3. Fallback heuristic from product/sku names if not found
-      if (foundAttrIds.size === 0) {
-        const sampleText = `${selectedProduct.name || ""} ${sameProductSkus.map((s) => s.name || s.sku || "").join(" ")}`.toLowerCase();
-        if (
-          sampleText.includes("dal") ||
-          sampleText.includes("masoor") ||
-          sampleText.includes("rice") ||
-          sampleText.includes("oil") ||
-          sampleText.includes("mustard") ||
-          sampleText.includes("grocery") ||
-          sampleText.includes("flour") ||
-          sampleText.includes("atta") ||
-          sampleText.includes("250g") ||
-          sampleText.includes("500g") ||
-          sampleText.includes("1kg")
-        ) {
-          foundAttrIds.add(11); // Weight
-        } else if (
-          sampleText.includes("floral") ||
-          sampleText.includes("dress") ||
-          sampleText.includes("shirt") ||
-          sampleText.includes("pant") ||
-          sampleText.includes("clothing") ||
-          sampleText.includes("fashion")
-        ) {
-          foundAttrIds.add(1); // Color
-          foundAttrIds.add(2); // Size
-        } else if (
-          sampleText.includes("phone") ||
-          sampleText.includes("samsung") ||
-          sampleText.includes("laptop") ||
-          sampleText.includes("mobile") ||
-          sampleText.includes("electronics")
-        ) {
-          foundAttrIds.add(1); // Color
-          foundAttrIds.add(3); // Storage
-          foundAttrIds.add(4); // RAM
+          if (Array.isArray(s.sku_attributes)) {
+            s.sku_attributes.forEach((a) => {
+              const aid = a.attribute_id || a.id;
+              if (aid) foundAttrIds.add(Number(aid));
+            });
+          }
         }
       }
-
-      const reqIds = Array.from(foundAttrIds);
-      setProductRequiredAttrIds(reqIds);
-
-      // Auto-configure image_by
-      if (reqIds.length === 1) {
-        setImageByAttrId(reqIds[0]);
-      } else if (reqIds.length > 1) {
-        const colorId = reqIds.find((id) => {
-          const a = attributes.find((at) => Number(at.id) === Number(id));
-          return a && ((a.slug || "").toLowerCase().includes("color") || (a.name || "").toLowerCase().includes("color"));
-        });
-        setImageByAttrId(colorId || reqIds[0]);
-      }
-    } catch (err) {
-      console.warn("inspectSchema error:", err?.message);
-    } finally {
-      setLoadingProductSchema(false);
     }
+
+    if (Array.isArray(selectedProduct?.attributes)) {
+      selectedProduct.attributes.forEach((a) => {
+        const aid = a.attribute_id || a.id;
+        if (aid) foundAttrIds.add(Number(aid));
+      });
+    }
+    if (Array.isArray(selectedProduct?.skus)) {
+      selectedProduct.skus.forEach((s) => {
+        if (Array.isArray(s.attributes)) {
+          s.attributes.forEach((a) => {
+            const aid = a.attribute_id || a.id;
+            if (aid) foundAttrIds.add(Number(aid));
+          });
+        }
+      });
+    }
+
+    return Array.from(foundAttrIds);
   }, [selectedProduct?.id, unmappedSkus]);
 
   // Keep productRequiredAttrNames in sync with productRequiredAttrIds and attributes without causing re-render loops
-  useEffect(() => {
-    const reqNames = productRequiredAttrIds.map((id) => {
+  const productRequiredAttrNames = useMemo(() => {
+    return productRequiredAttrIds.map((id) => {
       const matched = attributes.find((a) => Number(a.id) === Number(id));
       return matched?.name || `Attribute #${id}`;
     });
-    setProductRequiredAttrNames(reqNames);
   }, [productRequiredAttrIds, attributes]);
+
+  // Auto-configure image_by
+  useEffect(() => {
+    if (productRequiredAttrIds.length === 1) {
+      setImageByAttrId(productRequiredAttrIds[0]);
+    } else if (productRequiredAttrIds.length > 1) {
+      const colorId = productRequiredAttrIds.find((id) => {
+        const a = attributes.find((at) => Number(at.id) === Number(id));
+        return a && ((a.slug || "").toLowerCase().includes("color") || (a.name || "").toLowerCase().includes("color"));
+      });
+      setImageByAttrId(colorId || productRequiredAttrIds[0]);
+    } else {
+      const colorAttr = attributes.find((a) => (a.slug || a.name || "").toLowerCase().includes("color"));
+      if (colorAttr) {
+        setImageByAttrId(Number(colorAttr.id));
+      }
+    }
+  }, [productRequiredAttrIds, attributes]);
+
+  // Intercept Android hardware / gesture back button to prevent accidental exit during active editing
+  useEffect(() => {
+    const onBackPress = () => {
+      const hasUnsavedWork = variants.length > 0 || Object.keys(selectedAttributes).length > 0;
+      if (hasUnsavedWork) {
+        Alert.alert(
+          "Exit SKU Creator?",
+          "You have uncommitted SKU variants and attribute selections. Are you sure you want to go back?",
+          [
+            { text: "Keep Editing", style: "cancel" },
+            {
+              text: "Discard & Exit",
+              style: "destructive",
+              onPress: () => {
+                if (navigation.canGoBack()) {
+                  navigation.goBack();
+                }
+              },
+            },
+          ]
+        );
+        return true; // Prevents accidental exit from screen
+      }
+      return false;
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      "hardwareBackPress",
+      onBackPress
+    );
+    return () => backHandler.remove();
+  }, [navigation, variants.length, selectedAttributes]);
 
   // ---------------- Filtered Unmapped SKUs ----------------
   const filteredSkus = useMemo(() => {
@@ -517,19 +1108,43 @@ const AddSkuScreen = ({ navigation, route }) => {
     return Array.from(map.values());
   }, [filteredSkus]);
 
+  const handleNavigateSkuDetails = useCallback((item) => {
+    navigation.navigate("SkuDetails", {
+      skuId: item.id,
+      skuData: { sku: item, product: { name: item.product_name } },
+    });
+  }, [navigation]);
+
   // ---------------- Open Single Map Modal ----------------
-  const handleOpenMapModal = (skuItem) => {
+  const handleOpenMapModal = useCallback((skuItem) => {
     setSelectedSkuToMap(skuItem);
     setMapPrice("");
     setMapSalePrice("");
     setMapStock("");
     setMapMinStock("5");
     setMapSellerSku(skuItem.sku ? `SELLER-${skuItem.sku}` : "");
+    setMapDesignName("");
+    setMapDesignConfig(null);
     setShowMapModal(true);
-  };
+
+    const pId = skuItem?.product_id;
+    if (pId) {
+      setLoadingMapDesignConfig(true);
+      getProductDesignConfig(pId)
+        .then((res) => {
+          setMapDesignConfig(res?.data || res || null);
+        })
+        .catch((err) => {
+          console.warn("Could not load map product design config:", err?.message);
+        })
+        .finally(() => {
+          setLoadingMapDesignConfig(false);
+        });
+    }
+  }, []);
 
   // ---------------- Open Batch Map Modal (Flow 1 Existing SKU Batch Add) ----------------
-  const handleOpenBatchMapModal = (group) => {
+  const handleOpenBatchMapModal = useCallback((group) => {
     setBatchMapProductGroup(group);
     setBatchMinStockAlert("10");
     setBatchBulkPrice("");
@@ -549,7 +1164,7 @@ const AddSkuScreen = ({ navigation, route }) => {
     });
     setBatchMapVariants(initialList);
     setShowBatchMapModal(true);
-  };
+  }, []);
 
   const handleApplyBatchBulk = () => {
     setBatchMapVariants((prev) =>
@@ -652,8 +1267,12 @@ const AddSkuScreen = ({ navigation, route }) => {
       CustomAlert.showWarning("Price Mismatch", "Sale price should be less than regular base price.");
       return;
     }
-    if (!mapStock.trim() || isNaN(parseInt(mapStock, 10)) || parseInt(mapStock, 10) < 0) {
+    if (mapStock.trim() === "" || isNaN(parseInt(mapStock, 10)) || parseInt(mapStock, 10) < 0) {
       CustomAlert.showWarning("Stock Required", "Please enter initial stock quantity.");
+      return;
+    }
+    if (mapDesignConfig?.has_design && mapDesignConfig?.design_required && !mapDesignName.trim()) {
+      CustomAlert.showWarning("Design Name Required", "This product requires a design name for its SKU.");
       return;
     }
 
@@ -662,6 +1281,8 @@ const AddSkuScreen = ({ navigation, route }) => {
       const payload = {
         product_id: selectedSkuToMap.product_id,
         min_stock_alert: parseInt(mapMinStock, 10) || 5,
+        design_name: mapDesignName.trim() || undefined,
+        design: mapDesignName.trim() || undefined,
         variants: [
           {
             product_sku_id: selectedSkuToMap.id,
@@ -670,6 +1291,8 @@ const AddSkuScreen = ({ navigation, route }) => {
             sale_price: mapSalePrice.trim() ? Number(mapSalePrice) : undefined,
             seller_sku: mapSellerSku.trim() || undefined,
             min_stock_alert: parseInt(mapMinStock, 10) || 5,
+            design_name: mapDesignName.trim() || undefined,
+            design: mapDesignName.trim() || undefined,
           },
         ],
       };
@@ -755,6 +1378,178 @@ const AddSkuScreen = ({ navigation, route }) => {
     ]);
   };
 
+  // ---------------- Existing SKUs on Selected Product ----------------
+  const existingProductSkus = useMemo(() => {
+    if (!selectedProduct?.id) return [];
+    const list = [];
+    const seenKeys = new Set();
+
+    // 1. From loadedProductSkus (from GET /api/seller/products/{id})
+    if (Array.isArray(loadedProductSkus)) {
+      loadedProductSkus.forEach((s) => {
+        const k = s.product_sku_id || s.id || s.code || s.sku || s.name;
+        if (k && !seenKeys.has(k)) {
+          seenKeys.add(k);
+          list.push(s);
+        }
+      });
+    }
+
+    // 2. From unmappedSkus
+    if (Array.isArray(unmappedSkus)) {
+      unmappedSkus
+        .filter((s) => String(s.product_id) === String(selectedProduct.id))
+        .forEach((s) => {
+          const k = s.id ? `id_${s.id}` : (s.sku || s.name);
+          if (k && !seenKeys.has(k)) {
+            seenKeys.add(k);
+            list.push(s);
+          }
+        });
+    }
+
+    // 3. From selectedProduct.skus / product_skus / variants
+    const pSkus = selectedProduct.skus || selectedProduct.product_skus || selectedProduct.variants;
+    if (Array.isArray(pSkus)) {
+      pSkus.forEach((s) => {
+        const k = s.id ? `id_${s.id}` : (s.sku || s.name);
+        if (k && !seenKeys.has(k)) {
+          seenKeys.add(k);
+          list.push(s);
+        }
+      });
+    }
+
+    return list;
+  }, [selectedProduct, loadedProductSkus, unmappedSkus]);
+
+  // Helper to check if a generated combination matches an existing SKU on this product
+  // If design name is the same -> duplicate (same attribute alada hobe na)
+  // If design name is different -> NOT duplicate (jodi design name alada hoy same attribute add hobe)
+  const checkComboMatchesSku = useCallback((comboLabels, comboAttrMap, sku, currentVariantDesign = "") => {
+    if (!sku) return false;
+
+    // 1. Check if the attribute values match
+    let attrsMatch = false;
+
+    // A. Check exact attribute map if sku.attributes is an object
+    if (sku.attributes && typeof sku.attributes === "object" && !Array.isArray(sku.attributes)) {
+      const keys = Object.keys(comboAttrMap);
+      if (keys.length > 0 && keys.every((k) => String(sku.attributes[k]) === String(comboAttrMap[k]))) {
+        attrsMatch = true;
+      }
+    }
+
+    // B. Check if sku has attributes or sku_attributes array
+    if (!attrsMatch) {
+      const rawSkuAttrs = Array.isArray(sku.attributes)
+        ? sku.attributes
+        : Array.isArray(sku.sku_attributes)
+          ? sku.sku_attributes
+          : null;
+
+      if (rawSkuAttrs && rawSkuAttrs.length > 0) {
+        const skuValIds = new Set();
+        const skuValNames = new Set();
+
+        rawSkuAttrs.forEach((a) => {
+          if (a && typeof a === "object") {
+            const vid = a.attribute_value_id ?? a.value_id ?? a.val_id ?? a.id;
+            if (vid) skuValIds.add(String(vid));
+            const vname = a.value ?? a.name ?? a.val;
+            if (vname) skuValNames.add(String(vname).toLowerCase().trim());
+          } else if (a) {
+            skuValIds.add(String(a));
+          }
+        });
+
+        const allIdsMatch = comboLabels.length > 0 && comboLabels.every((lbl) => skuValIds.has(String(lbl.valId)));
+        if (allIdsMatch) attrsMatch = true;
+
+        if (!attrsMatch) {
+          const allNamesMatch = comboLabels.length > 0 && comboLabels.every((lbl) => skuValNames.has(String(lbl.valName).toLowerCase().trim()));
+          if (allNamesMatch) attrsMatch = true;
+        }
+      }
+    }
+
+    // C. Fallback: match combo value names in SKU name or sku code
+    if (!attrsMatch) {
+      const skuText = `${sku.name || ""} ${sku.sku || ""} ${sku.code || ""}`.toLowerCase();
+      const allWordsInText = comboLabels.length > 0 && comboLabels.every((lbl) =>
+        skuText.includes(String(lbl.valName).toLowerCase().trim())
+      );
+      if (allWordsInText) attrsMatch = true;
+    }
+
+    // If attributes don't match, this SKU is not a duplicate
+    if (!attrsMatch) return false;
+
+    // 2. Attributes MATCH! Now compare Design Name:
+    // If design name is the same -> Duplicate (Already in Catalog)
+    // If design name is different -> NOT a Duplicate (Can be added as new variant)
+    const curDesign = (currentVariantDesign || designNameRef.current || "").trim().toLowerCase();
+
+    // Extract existing SKU's design name from known fields
+    let existingDesign = "";
+    if (typeof sku.design_name === "string") {
+      existingDesign = sku.design_name.trim().toLowerCase();
+    } else if (typeof sku.design === "string") {
+      existingDesign = sku.design.trim().toLowerCase();
+    } else if (sku.design && typeof sku.design === "object") {
+      existingDesign = String(sku.design.name || sku.design.title || "").trim().toLowerCase();
+    } else if (sku.design_config && typeof sku.design_config === "object") {
+      existingDesign = String(sku.design_config.design_name || sku.design_config.name || "").trim().toLowerCase();
+    }
+
+    // If existing SKU has an explicit design name:
+    if (existingDesign) {
+      if (curDesign === existingDesign) {
+        return true; // Same design name -> duplicate
+      }
+      return false; // Different design name -> can add same attributes
+    }
+
+    // If existing SKU does not have an explicit design name field:
+    if (curDesign) {
+      // Check if existing SKU name or sku text explicitly mentions this design
+      const skuFullName = `${sku.name || ""} ${sku.sku || ""}`.toLowerCase();
+      if (skuFullName.includes(curDesign)) {
+        return true; // Matches the design mentioned in sku name
+      }
+      // Different design (existing has no design or different design) -> can add same attributes
+      return false;
+    }
+
+    // Neither has a design name -> duplicate combination
+    return true;
+  }, []);
+
+  // Pre-calculate existing SKU attribute values for instant O(1) lookup
+  const existingSkuValIdSet = useMemo(() => {
+    const set = new Set();
+    existingProductSkus.forEach((sku) => {
+      const rawAttrs = Array.isArray(sku.attributes)
+        ? sku.attributes
+        : Array.isArray(sku.sku_attributes)
+        ? sku.sku_attributes
+        : [];
+      rawAttrs.forEach((a) => {
+        if (a && typeof a === "object") {
+          const vid = a.attribute_value_id ?? a.value_id ?? a.val_id ?? a.id;
+          if (vid) set.add(String(vid));
+          const vname = a.value ?? a.name ?? a.val;
+          if (vname) set.add(String(vname).toLowerCase().trim());
+        } else if (a) {
+          set.add(String(a));
+        }
+      });
+      const sText = `${sku.name || ""} ${sku.sku || ""} ${sku.code || ""}`.toLowerCase();
+      set.add(sText);
+    });
+    return set;
+  }, [existingProductSkus]);
+
   // ---------------- Cartesian Combinations Generator ----------------
   const generateCombos = useCallback(
     (attrsMap, prod, prevVariants = []) => {
@@ -807,37 +1602,57 @@ const AddSkuScreen = ({ navigation, route }) => {
           return vKey === key;
         });
 
+        const curVarDesign = (existing?.design_name !== undefined ? existing.design_name : (designNameRef.current || "")).trim();
+        // Check if this variant combination already exists in product catalog with same design
+        const existingSku = existingProductSkus.find((sku) =>
+          checkComboMatchesSku(combo, comboAttrMap, sku, curVarDesign)
+        );
+        const isAlreadyAdded = Boolean(existingSku);
+
         if (existing) {
-          return existing;
+          return {
+            ...existing,
+            isAlreadyAdded,
+            existingSkuCode: existingSku?.sku || existingSku?.name || null,
+            includeInSubmission: !isAlreadyAdded,
+          };
         }
 
         const prodName = prod?.name || "Product";
-        const fullName = `${prodName} ${comboNames.join(" ")}`.trim();
+        const shortComboNames = comboNames.length > 3 ? comboNames.slice(0, 3) : comboNames;
+        const fullName = `${prodName} ${shortComboNames.join(" ")}`.trim();
         const acronym = prodName
           .split(/\s+/)
           .map((w) => w[0] || "")
           .join("")
           .toUpperCase() || "SKU";
-        const skuCode = `${acronym}-${comboNames.map((n) => n.replace(/\s+/g, "").toUpperCase()).join("-")}`;
+        const skuCode = `${acronym}-${shortComboNames.map((n) => n.replace(/\s+/g, "").toUpperCase()).join("-")}`;
+
+        const bv = bulkValuesRef.current;
 
         return {
-          id: `var_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+          id: existing?.id || `var_${key}`,
           name: fullName,
           attributes: comboAttrMap,
           labels: combo,
-          price: bulkPrice || "1299",
-          sale_price: bulkSalePrice || "999",
-          stock_quantity: bulkStock || "10",
-          min_stock_alert: bulkMinStock || "2",
-          weight: bulkWeight || "0.40",
-          length: bulkLength || "34",
-          width: bulkWidth || "24",
-          height: bulkHeight || "4",
+          price: bv.price || "1299",
+          sale_price: bv.sale_price || "999",
+          stock_quantity: bv.stock_quantity || "10",
+          min_stock_alert: bv.min_stock_alert || "2",
+          weight: bv.weight || "0.40",
+          length: bv.length || "34",
+          width: bv.width || "24",
+          height: bv.height || "4",
           seller_sku: skuCode,
+          design_name: existing?.design_name || designNameRef.current || "",
+          design: existing?.design || designNameRef.current || "",
+          isAlreadyAdded,
+          existingSkuCode: existingSku?.sku || existingSku?.name || null,
+          includeInSubmission: !isAlreadyAdded,
         };
       });
     },
-    [attributes, bulkPrice, bulkSalePrice, bulkStock, bulkMinStock, bulkWeight, bulkLength, bulkWidth, bulkHeight]
+    [attributes, existingProductSkus, checkComboMatchesSku]
   );
 
   // Display ONLY required attributes for the selected product, hiding all unrelated attributes
@@ -849,49 +1664,482 @@ const AddSkuScreen = ({ navigation, route }) => {
     return attributes;
   }, [attributes, productRequiredAttrIds]);
 
-  // ---------------- Toggle Attribute Value (Multi-select) ----------------
-  const handleToggleAttributeValue = (attributeId, valueId) => {
-    setSelectedAttributes((prev) => {
-      const current = Array.isArray(prev[attributeId]) ? prev[attributeId] : [];
-      let updated;
-      if (current.includes(valueId)) {
-        updated = current.filter((id) => id !== valueId);
-      } else {
-        updated = [...current, valueId];
-      }
-      const newMap = { ...prev };
-      if (updated.length === 0) {
-        delete newMap[attributeId];
-      } else {
-        newMap[attributeId] = updated;
+  // Primary grouping attribute (typically Color, or imageByAttrId, or first sorted attribute)
+  const primaryAttribute = useMemo(() => {
+    const colorAttr = sortedAttributes.find((a) => {
+      const s = (a.slug || a.name || "").toLowerCase();
+      return s.includes("color");
+    });
+    if (colorAttr) return colorAttr;
+    if (imageByAttrId) {
+      const found = sortedAttributes.find((a) => Number(a.id) === Number(imageByAttrId));
+      if (found) return found;
+    }
+    return sortedAttributes[0] || null;
+  }, [sortedAttributes, imageByAttrId]);
+
+  // Secondary attributes (e.g. Size, Storage, RAM) configured per primary option
+  const secondaryAttributes = useMemo(() => {
+    if (!primaryAttribute) return [];
+    return sortedAttributes.filter((a) => Number(a.id) !== Number(primaryAttribute.id));
+  }, [sortedAttributes, primaryAttribute]);
+
+  // ---------------- Per-Color Variant Combinations Generator ----------------
+  const generatePerColorVariants = useCallback(
+    (cfg, selectedPrimaryIds, prod, prevVariants = []) => {
+      if (!primaryAttribute || !Array.isArray(selectedPrimaryIds) || selectedPrimaryIds.length === 0) {
+        return [];
       }
 
-      // Auto-assign image_by if not set or invalid
-      const activeIds = Object.keys(newMap).filter((id) => newMap[id]?.length > 0);
-      if (activeIds.length > 0) {
-        if (!imageByAttrId || !activeIds.includes(String(imageByAttrId))) {
-          const colorAttr = attributes.find(
-            (a) =>
-              activeIds.includes(String(a.id)) &&
-              ((a.slug || "").toLowerCase().includes("color") || (a.name || "").toLowerCase().includes("color"))
+      const bv = bulkValuesRef.current;
+      const prodName = prod?.name || "Product";
+      const acronym =
+        prodName
+          .split(/\s+/)
+          .map((w) => w[0] || "")
+          .join("")
+          .toUpperCase() || "SKU";
+
+      const list = [];
+      let idx = 0;
+
+      selectedPrimaryIds.forEach((pValId) => {
+        const pVal = (primaryAttribute.values || []).find((v) => Number(v.id) === Number(pValId));
+        if (!pVal) return;
+
+        const pConfig = cfg[pValId] || {};
+
+        if (secondaryAttributes.length > 0) {
+          const activeSecEntries = secondaryAttributes
+            .map((sAttr) => {
+              const selIds = pConfig[sAttr.id] || [];
+              const vals = (sAttr.values || []).filter((v) => selIds.includes(v.id));
+              return { attrId: Number(sAttr.id), attrName: sAttr.name || "Spec", vals };
+            })
+            .filter((entry) => entry.vals.length > 0);
+
+          if (activeSecEntries.length === 0) {
+            return;
+          }
+
+          let subCombos = [[]];
+          for (const entry of activeSecEntries) {
+            const next = [];
+            for (const combo of subCombos) {
+              for (const val of entry.vals) {
+                next.push([
+                  ...combo,
+                  { attrId: entry.attrId, attrName: entry.attrName, valId: val.id, valName: val.value },
+                ]);
+              }
+            }
+            subCombos = next;
+          }
+
+          subCombos.forEach((subCombo) => {
+            const fullCombo = [
+              {
+                attrId: Number(primaryAttribute.id),
+                attrName: primaryAttribute.name || "Color",
+                valId: pVal.id,
+                valName: pVal.value,
+              },
+              ...subCombo,
+            ];
+
+            const comboAttrMap = {};
+            const comboNames = [];
+            fullCombo.forEach((c) => {
+              comboAttrMap[c.attrId] = c.valId;
+              comboNames.push(c.valName);
+            });
+
+            const key = Object.entries(comboAttrMap)
+              .map(([a, v]) => `${a}:${v}`)
+              .sort()
+              .join("_");
+
+            const existing = prevVariants.find((v) => {
+              if (!v.attributes) return false;
+              const vKey = Object.entries(v.attributes)
+                .map(([a, val]) => `${a}:${val}`)
+                .sort()
+                .join("_");
+              return vKey === key;
+            });
+
+            const curVarDesign = (existing?.design_name !== undefined ? existing.design_name : (designNameRef.current || "")).trim();
+            const existingSku = existingProductSkus.find((sku) =>
+              checkComboMatchesSku(fullCombo, comboAttrMap, sku, curVarDesign)
+            );
+            const isAlreadyAdded = Boolean(existingSku);
+
+            if (existing) {
+              list.push({
+                ...existing,
+                labels: fullCombo,
+                isAlreadyAdded,
+                existingSkuCode: existingSku?.sku || existingSku?.name || null,
+                includeInSubmission: !isAlreadyAdded,
+              });
+            } else {
+              const shortComboNames = comboNames.length > 3 ? comboNames.slice(0, 3) : comboNames;
+              const fullName = `${prodName} ${shortComboNames.join(" ")}`.trim();
+              const skuCode = `${acronym}-${shortComboNames.map((n) => n.replace(/\s+/g, "").toUpperCase()).join("-")}`;
+
+              list.push({
+                id: existing?.id || `var_${key}`,
+                name: fullName,
+                attributes: comboAttrMap,
+                labels: fullCombo,
+                price: bv.price || "1299",
+                sale_price: bv.sale_price || "999",
+                stock_quantity: bv.stock_quantity || "10",
+                min_stock_alert: bv.min_stock_alert || "2",
+                weight: bv.weight || "0.40",
+                length: bv.length || "34",
+                width: bv.width || "24",
+                height: bv.height || "4",
+                seller_sku: skuCode,
+                design_name: existing?.design_name || designNameRef.current || "",
+                design: existing?.design || designNameRef.current || "",
+                isAlreadyAdded,
+                existingSkuCode: existingSku?.sku || existingSku?.name || null,
+                includeInSubmission: !isAlreadyAdded,
+              });
+            }
+          });
+        } else {
+          // Single attribute (only Color or only Size)
+          const fullCombo = [
+            {
+              attrId: Number(primaryAttribute.id),
+              attrName: primaryAttribute.name || "Spec",
+              valId: pVal.id,
+              valName: pVal.value,
+            },
+          ];
+          const comboAttrMap = { [primaryAttribute.id]: pVal.id };
+          const key = `${primaryAttribute.id}:${pVal.id}`;
+
+          const existing = prevVariants.find((v) => {
+            if (!v.attributes) return false;
+            const vKey = Object.entries(v.attributes)
+              .map(([a, val]) => `${a}:${val}`)
+              .sort()
+              .join("_");
+            return vKey === key;
+          });
+
+          const curVarDesign = (existing?.design_name !== undefined ? existing.design_name : (designNameRef.current || "")).trim();
+          const existingSku = existingProductSkus.find((sku) =>
+            checkComboMatchesSku(fullCombo, comboAttrMap, sku, curVarDesign)
           );
-          if (colorAttr) {
-            setImageByAttrId(colorAttr.id);
+          const isAlreadyAdded = Boolean(existingSku);
+
+          if (existing) {
+            list.push({
+              ...existing,
+              labels: fullCombo,
+              isAlreadyAdded,
+              existingSkuCode: existingSku?.sku || existingSku?.name || null,
+              includeInSubmission: !isAlreadyAdded,
+            });
           } else {
-            setImageByAttrId(Number(activeIds[0]));
+            const fullName = `${prodName} ${pVal.value}`.trim();
+            const skuCode = `${acronym}-${pVal.value.replace(/\s+/g, "").toUpperCase()}`;
+
+            list.push({
+              id: existing?.id || `var_${key}`,
+              name: fullName,
+              attributes: comboAttrMap,
+              labels: fullCombo,
+              price: bv.price || "1299",
+              sale_price: bv.sale_price || "999",
+              stock_quantity: bv.stock_quantity || "10",
+              min_stock_alert: bv.min_stock_alert || "2",
+              weight: bv.weight || "0.40",
+              length: bv.length || "34",
+              width: bv.width || "24",
+              height: bv.height || "4",
+              seller_sku: skuCode,
+              design_name: existing?.design_name || designNameRef.current || "",
+              design: existing?.design || designNameRef.current || "",
+              isAlreadyAdded,
+              existingSkuCode: existingSku?.sku || existingSku?.name || null,
+              includeInSubmission: !isAlreadyAdded,
+            });
           }
         }
+      });
+
+      return list;
+    },
+    [primaryAttribute, secondaryAttributes, existingProductSkus, checkComboMatchesSku]
+  );
+
+  // ---------------- Toggle Primary Attribute (e.g. Color) ----------------
+  const handleTogglePrimaryValue = useCallback((valId) => {
+    if (!primaryAttribute) return;
+    const pAttrId = primaryAttribute.id;
+    const currentPrimary = Array.isArray(selectedAttributes[pAttrId]) ? selectedAttributes[pAttrId] : [];
+    const isRemoving = currentPrimary.includes(valId);
+    const nextPrimary = isRemoving
+      ? currentPrimary.filter((id) => id !== valId)
+      : [...currentPrimary, valId];
+
+    const nextCfg = { ...colorVariantsConfig };
+    if (isRemoving) {
+      delete nextCfg[valId];
+    } else if (!nextCfg[valId]) {
+      nextCfg[valId] = {};
+    }
+    setColorVariantsConfig(nextCfg);
+
+    // Automatically expand the new color accordion
+    if (!isRemoving) {
+      setExpandedColorIds((prev) => ({ ...prev, [valId]: true }));
+    }
+
+    // Sync selectedAttributes
+    const nextSelectedAttrs = { ...selectedAttributes };
+    if (nextPrimary.length === 0) {
+      delete nextSelectedAttrs[pAttrId];
+    } else {
+      nextSelectedAttrs[pAttrId] = nextPrimary;
+    }
+
+    secondaryAttributes.forEach((sAttr) => {
+      const unionIds = new Set();
+      nextPrimary.forEach((pId) => {
+        (nextCfg[pId]?.[sAttr.id] || []).forEach((vId) => unionIds.add(vId));
+      });
+      const arr = Array.from(unionIds);
+      if (arr.length > 0) {
+        nextSelectedAttrs[sAttr.id] = arr;
       } else {
-        setImageByAttrId(null);
+        delete nextSelectedAttrs[sAttr.id];
       }
-
-      // Re-generate variant combinations
-      setTimeout(() => {
-        setVariants((prevVars) => generateCombos(newMap, selectedProduct, prevVars));
-      }, 0);
-
-      return newMap;
     });
+
+    setSelectedAttributes(nextSelectedAttrs);
+
+    if (!imageByAttrId && nextPrimary.length > 0) {
+      setImageByAttrId(Number(pAttrId));
+    }
+
+    setVariants((prev) =>
+      generatePerColorVariants(nextCfg, nextPrimary, selectedProduct, prev)
+    );
+  }, [primaryAttribute, selectedAttributes, colorVariantsConfig, secondaryAttributes, imageByAttrId, generatePerColorVariants, selectedProduct]);
+
+  // ---------------- Toggle Secondary Value for a Specific Color ----------------
+  const handleToggleSecondaryValueForColor = useCallback((pValId, sAttrId, sValId) => {
+    const nextCfg = { ...colorVariantsConfig };
+    const curP = nextCfg[pValId] ? { ...nextCfg[pValId] } : {};
+    const curVals = Array.isArray(curP[sAttrId]) ? [...curP[sAttrId]] : [];
+
+    let updatedVals;
+    if (curVals.includes(sValId)) {
+      updatedVals = curVals.filter((id) => id !== sValId);
+    } else {
+      updatedVals = [...curVals, sValId];
+    }
+
+    if (updatedVals.length === 0) {
+      delete curP[sAttrId];
+    } else {
+      curP[sAttrId] = updatedVals;
+    }
+    nextCfg[pValId] = curP;
+    setColorVariantsConfig(nextCfg);
+
+    const curPrimary = Array.isArray(selectedAttributes[primaryAttribute?.id])
+      ? selectedAttributes[primaryAttribute.id]
+      : [];
+
+    const nextSelectedAttrs = { ...selectedAttributes };
+    secondaryAttributes.forEach((sAttr) => {
+      const unionIds = new Set();
+      curPrimary.forEach((pId) => {
+        (nextCfg[pId]?.[sAttr.id] || []).forEach((vId) => unionIds.add(vId));
+      });
+      const arr = Array.from(unionIds);
+      if (arr.length > 0) {
+        nextSelectedAttrs[sAttr.id] = arr;
+      } else {
+        delete nextSelectedAttrs[sAttr.id];
+      }
+    });
+    setSelectedAttributes(nextSelectedAttrs);
+
+    setVariants((prev) =>
+      generatePerColorVariants(nextCfg, curPrimary, selectedProduct, prev)
+    );
+  }, [colorVariantsConfig, selectedAttributes, primaryAttribute, secondaryAttributes, generatePerColorVariants, selectedProduct]);
+
+  // ---------------- Select All Secondary Values for a Color ----------------
+  const handleSelectAllSecondaryForColor = useCallback((pValId, sAttrId) => {
+    const sAttr = attributes.find((a) => Number(a.id) === Number(sAttrId));
+    if (!sAttr || !Array.isArray(sAttr.values)) return;
+    const allValIds = sAttr.values.map((v) => v.id);
+
+    const nextCfg = { ...colorVariantsConfig };
+    const curP = nextCfg[pValId] ? { ...nextCfg[pValId] } : {};
+    curP[sAttrId] = allValIds;
+    nextCfg[pValId] = curP;
+    setColorVariantsConfig(nextCfg);
+
+    const curPrimary = Array.isArray(selectedAttributes[primaryAttribute?.id])
+      ? selectedAttributes[primaryAttribute.id]
+      : [];
+
+    const nextSelectedAttrs = { ...selectedAttributes };
+    secondaryAttributes.forEach((attrItem) => {
+      const unionIds = new Set();
+      curPrimary.forEach((pId) => {
+        (nextCfg[pId]?.[attrItem.id] || []).forEach((vId) => unionIds.add(vId));
+      });
+      const arr = Array.from(unionIds);
+      if (arr.length > 0) {
+        nextSelectedAttrs[attrItem.id] = arr;
+      } else {
+        delete nextSelectedAttrs[attrItem.id];
+      }
+    });
+    setSelectedAttributes(nextSelectedAttrs);
+
+    setVariants((prev) =>
+      generatePerColorVariants(nextCfg, curPrimary, selectedProduct, prev)
+    );
+  }, [attributes, colorVariantsConfig, selectedAttributes, primaryAttribute, secondaryAttributes, generatePerColorVariants, selectedProduct]);
+
+  // ---------------- Clear Secondary Values for a Color ----------------
+  const handleClearSecondaryForColor = useCallback((pValId, sAttrId) => {
+    const nextCfg = { ...colorVariantsConfig };
+    const curP = nextCfg[pValId] ? { ...nextCfg[pValId] } : {};
+    delete curP[sAttrId];
+    nextCfg[pValId] = curP;
+    setColorVariantsConfig(nextCfg);
+
+    const curPrimary = Array.isArray(selectedAttributes[primaryAttribute?.id])
+      ? selectedAttributes[primaryAttribute.id]
+      : [];
+
+    const nextSelectedAttrs = { ...selectedAttributes };
+    secondaryAttributes.forEach((attrItem) => {
+      const unionIds = new Set();
+      curPrimary.forEach((pId) => {
+        (nextCfg[pId]?.[attrItem.id] || []).forEach((vId) => unionIds.add(vId));
+      });
+      const arr = Array.from(unionIds);
+      if (arr.length > 0) {
+        nextSelectedAttrs[attrItem.id] = arr;
+      } else {
+        delete nextSelectedAttrs[attrItem.id];
+      }
+    });
+    setSelectedAttributes(nextSelectedAttrs);
+
+    setVariants((prev) =>
+      generatePerColorVariants(nextCfg, curPrimary, selectedProduct, prev)
+    );
+  }, [colorVariantsConfig, selectedAttributes, primaryAttribute, secondaryAttributes, generatePerColorVariants, selectedProduct]);
+
+  // ---------------- Copy Options from one Color to All Other Colors ----------------
+  const handleCopySecondaryToAllColors = useCallback((sourcePValId) => {
+    const curPrimary = Array.isArray(selectedAttributes[primaryAttribute?.id])
+      ? selectedAttributes[primaryAttribute.id]
+      : [];
+    if (curPrimary.length <= 1) return;
+
+    const sourceConfig = colorVariantsConfig[sourcePValId] || {};
+    const nextCfg = { ...colorVariantsConfig };
+
+    curPrimary.forEach((pId) => {
+      if (Number(pId) !== Number(sourcePValId)) {
+        nextCfg[pId] = JSON.parse(JSON.stringify(sourceConfig));
+      }
+    });
+    setColorVariantsConfig(nextCfg);
+
+    const nextSelectedAttrs = { ...selectedAttributes };
+    secondaryAttributes.forEach((attrItem) => {
+      const unionIds = new Set();
+      curPrimary.forEach((pId) => {
+        (nextCfg[pId]?.[attrItem.id] || []).forEach((vId) => unionIds.add(vId));
+      });
+      const arr = Array.from(unionIds);
+      if (arr.length > 0) {
+        nextSelectedAttrs[attrItem.id] = arr;
+      } else {
+        delete nextSelectedAttrs[attrItem.id];
+      }
+    });
+    setSelectedAttributes(nextSelectedAttrs);
+
+    setVariants((prev) =>
+      generatePerColorVariants(nextCfg, curPrimary, selectedProduct, prev)
+    );
+
+    const sourceVal = (primaryAttribute?.values || []).find((v) => Number(v.id) === Number(sourcePValId));
+    CustomAlert.showSuccess(
+      "Sizes Copied",
+      `Copied options from ${sourceVal?.value || "color"} to all other selected colors.`
+    );
+  }, [selectedAttributes, primaryAttribute, colorVariantsConfig, secondaryAttributes, generatePerColorVariants, selectedProduct]);
+
+  const toggleColorAccordion = useCallback((pValId) => {
+    setExpandedColorIds((prev) => ({
+      ...prev,
+      [pValId]: prev[pValId] === undefined ? false : !prev[pValId],
+    }));
+  }, []);
+
+  // ---------------- Toggle Attribute Value (Multi-select, Cartesian fallback) ----------------
+  const handleToggleAttributeValue = (attributeId, valueId) => {
+    // If in per_color mode and this is primary attribute, route to primary handler
+    if (variantMode === "per_color" && primaryAttribute && Number(attributeId) === Number(primaryAttribute.id)) {
+      handleTogglePrimaryValue(valueId);
+      return;
+    }
+
+    // Attributes are ALWAYS toggleable and selectable - never blocked or disabled
+    const current = Array.isArray(selectedAttributes[attributeId]) ? selectedAttributes[attributeId] : [];
+    let updated;
+    if (current.includes(valueId)) {
+      updated = current.filter((id) => id !== valueId);
+    } else {
+      updated = [...current, valueId];
+    }
+    const newMap = { ...selectedAttributes };
+    if (updated.length === 0) {
+      delete newMap[attributeId];
+    } else {
+      newMap[attributeId] = updated;
+    }
+
+    // Auto-assign image_by if not set or invalid
+    const activeIds = Object.keys(newMap).filter((id) => newMap[id]?.length > 0);
+    if (activeIds.length > 0) {
+      if (!imageByAttrId || !activeIds.includes(String(imageByAttrId))) {
+        const colorAttr = attributes.find(
+          (a) =>
+            activeIds.includes(String(a.id)) &&
+            ((a.slug || "").toLowerCase().includes("color") || (a.name || "").toLowerCase().includes("color"))
+        );
+        if (colorAttr) {
+          setImageByAttrId(colorAttr.id);
+        } else {
+          setImageByAttrId(Number(activeIds[0]));
+        }
+      }
+    } else {
+      setImageByAttrId(null);
+    }
+
+    setSelectedAttributes(newMap);
+    setVariants((prevVars) => generateCombos(newMap, selectedProduct, prevVars));
   };
 
   // ---------------- Pick Photo for Attribute Value (images[valId]) ----------------
@@ -980,15 +2228,111 @@ const AddSkuScreen = ({ navigation, route }) => {
   };
 
   // ---------------- Update & Remove Variant ----------------
-  const handleUpdateVariantField = (varId, field, val) => {
-    setVariants((prev) =>
-      prev.map((v) => (v.id === varId ? { ...v, [field]: val } : v))
-    );
-  };
+  const handleUpdateVariantField = useCallback(
+    (varId, field, val) => {
+      setVariants((prev) =>
+        prev.map((v) => {
+          if (v.id !== varId) return v;
+          const updated = { ...v, [field]: val };
+          if (field === "design_name") {
+            updated.design = val;
+            const curVarDesign = (val || "").trim();
+            const existingSku = existingProductSkus.find((sku) =>
+              checkComboMatchesSku(v.labels || [], v.attributes || {}, sku, curVarDesign)
+            );
+            updated.isAlreadyAdded = Boolean(existingSku);
+            updated.existingSkuCode = existingSku?.sku || existingSku?.name || null;
+            updated.includeInSubmission = !updated.isAlreadyAdded;
+          }
+          return updated;
+        })
+      );
+    },
+    [existingProductSkus, checkComboMatchesSku]
+  );
 
-  const handleRemoveVariant = (varId) => {
-    setVariants((prev) => prev.filter((v) => v.id !== varId));
-  };
+  // When top-level designName changes, dynamically re-evaluate isAlreadyAdded and includeInSubmission for all variants
+  useEffect(() => {
+    setVariants((prev) => {
+      if (!prev || prev.length === 0) return prev;
+      const vDesign = (designName || "").trim();
+      return prev.map((v) => {
+        const curVarDesign = (v.design_name !== undefined && v.design_name !== "" ? v.design_name : vDesign).trim();
+        const existingSku = existingProductSkus.find((sku) =>
+          checkComboMatchesSku(v.labels || [], v.attributes || {}, sku, curVarDesign)
+        );
+        const isAlreadyAdded = Boolean(existingSku);
+        return {
+          ...v,
+          design_name: v.design_name !== undefined ? v.design_name : vDesign,
+          design: v.design !== undefined ? v.design : vDesign,
+          isAlreadyAdded,
+          existingSkuCode: existingSku?.sku || existingSku?.name || null,
+          includeInSubmission: !isAlreadyAdded,
+        };
+      });
+    });
+  }, [designName, existingProductSkus, checkComboMatchesSku]);
+
+  const handleRemoveVariant = useCallback(
+    (vToRemove) => {
+      if (!vToRemove) return;
+      const varId = typeof vToRemove === "object" ? vToRemove.id : vToRemove;
+
+      if (variantMode === "per_color" && primaryAttribute && secondaryAttributes.length > 0) {
+        const vAttrs = typeof vToRemove === "object" ? vToRemove.attributes : null;
+        const pValId = vAttrs && primaryAttribute ? vAttrs[primaryAttribute.id] : null;
+        if (pValId) {
+          setColorVariantsConfig((prevCfg) => {
+            const nextCfg = { ...prevCfg };
+            const curP = nextCfg[pValId] ? { ...nextCfg[pValId] } : {};
+            secondaryAttributes.forEach((sAttr) => {
+              const sValId = vAttrs ? vAttrs[sAttr.id] : null;
+              if (sValId && Array.isArray(curP[sAttr.id])) {
+                const updated = curP[sAttr.id].filter((id) => Number(id) !== Number(sValId));
+                if (updated.length === 0) {
+                  delete curP[sAttr.id];
+                } else {
+                  curP[sAttr.id] = updated;
+                }
+              }
+            });
+            nextCfg[pValId] = curP;
+
+            // Sync secondary attributes union in selectedAttributes
+            setSelectedAttributes((prevSel) => {
+              const curPrimary = primaryAttribute ? (prevSel[primaryAttribute.id] || []) : [];
+              const nextSel = { ...prevSel };
+              secondaryAttributes.forEach((sAttr) => {
+                const unionIds = new Set();
+                curPrimary.forEach((pId) => {
+                  (nextCfg[pId]?.[sAttr.id] || []).forEach((vId) => unionIds.add(vId));
+                });
+                const arr = Array.from(unionIds);
+                if (arr.length > 0) {
+                  nextSel[sAttr.id] = arr;
+                } else {
+                  delete nextSel[sAttr.id];
+                }
+              });
+              return nextSel;
+            });
+
+            return nextCfg;
+          });
+        }
+      }
+
+      setVariants((prev) => prev.filter((item) => item.id !== varId));
+    },
+    [variantMode, primaryAttribute, secondaryAttributes]
+  );
+
+  // Filtered variants displayed in Section 5
+  const displayedVariants = useMemo(() => {
+    if (matrixFilterColor === "all" || !primaryAttribute) return variants;
+    return variants.filter((v) => Number(v.attributes?.[primaryAttribute.id]) === Number(matrixFilterColor));
+  }, [variants, matrixFilterColor, primaryAttribute]);
 
   const handleAddCustomVariant = () => {
     const prodName = selectedProduct?.name || "Product";
@@ -1009,6 +2353,8 @@ const AddSkuScreen = ({ navigation, route }) => {
         width: bulkWidth || "24",
         height: bulkHeight || "4",
         seller_sku: `CUSTOM-SKU-${newIdx}`,
+        design_name: designName || "",
+        design: designName || "",
       },
     ]);
   };
@@ -1042,9 +2388,20 @@ const AddSkuScreen = ({ navigation, route }) => {
       }
     }
 
-    // Validate each variant
-    for (let i = 0; i < variants.length; i++) {
-      const v = variants[i];
+    // Filter to only submit new variants (or ones specifically included)
+    const variantsToSubmit = variants.filter((v) => !v.isAlreadyAdded || v.includeInSubmission);
+
+    if (variantsToSubmit.length === 0) {
+      CustomAlert.showInfo(
+        "Variants Already Exist",
+        "All the selected variant combinations already exist in the product catalog. Please select different attribute values (e.g. Blue + XL) to create new variants."
+      );
+      return;
+    }
+
+    // Validate each variant to be submitted
+    for (let i = 0; i < variantsToSubmit.length; i++) {
+      const v = variantsToSubmit[i];
       if (!v.name || !v.name.trim()) {
         CustomAlert.showWarning("Variant Name Required", `Variant #${i + 1} has an empty name.`);
         return;
@@ -1089,6 +2446,19 @@ const AddSkuScreen = ({ navigation, route }) => {
       }
     }
 
+    // Validate design name if required by product
+    if (designConfig?.has_design && designConfig?.design_required) {
+      const isMissingGlobal = !designName || !designName.trim();
+      const hasMissingVariantDesign = variantsToSubmit.some((v) => !(v.design_name || designName || "").trim());
+      if (isMissingGlobal && hasMissingVariantDesign) {
+        CustomAlert.showWarning(
+          "Design Name Required",
+          `"${selectedProduct.name || "This product"}" requires a design name for SKU variants.\n\nPlease enter a design name (e.g. Printed, Floral, Embroidered).`
+        );
+        return;
+      }
+    }
+
     setIsSubmittingVariant(true);
     try {
       const formData = new FormData();
@@ -1097,9 +2467,18 @@ const AddSkuScreen = ({ navigation, route }) => {
         formData.append("image_by", String(imageByAttrId));
       }
       formData.append("min_stock_alert", String(parseInt(bulkMinStock, 10) || 2));
+      if (designConfig?.has_design && designName.trim()) {
+        formData.append("design_name", designName.trim());
+        formData.append("design", designName.trim());
+      }
 
-      variants.forEach((v, idx) => {
+      variantsToSubmit.forEach((v, idx) => {
         formData.append(`variants[${idx}][name]`, v.name.trim());
+        const vDesign = (v.design_name || designName || "").trim();
+        if (vDesign) {
+          formData.append(`variants[${idx}][design_name]`, vDesign);
+          formData.append(`variants[${idx}][design]`, vDesign);
+        }
         if (v.attributes && typeof v.attributes === "object") {
           Object.entries(v.attributes).forEach(([attrId, valId]) => {
             if (valId !== undefined && valId !== null && valId !== "") {
@@ -1145,10 +2524,10 @@ const AddSkuScreen = ({ navigation, route }) => {
 
       const res = await addSellerSku(formData);
 
-      const createdCount = res?.data?.created?.length || variants.length;
+      const createdCount = res?.data?.created?.length || variantsToSubmit.length;
       CustomAlert.showSuccess(
         "SKUs Submitted Successfully!",
-        res?.message || `${createdCount} SKU variants submitted. New SKUs will be visible to customers after admin approves them.`,
+        res?.message || `${createdCount} new SKU variant(s) submitted. New SKUs will be visible to customers after admin approves them.`,
         () => {
           if (navigation.canGoBack()) {
             navigation.goBack();
@@ -1161,6 +2540,7 @@ const AddSkuScreen = ({ navigation, route }) => {
       setVariants([]);
       setAttributeImages({});
       setImageByAttrId(null);
+      setDesignName("");
     } catch (err) {
       const errMsg = err?.message || "";
       if (errMsg.toLowerCase().includes("different set of attributes")) {
@@ -1285,13 +2665,28 @@ const AddSkuScreen = ({ navigation, route }) => {
               <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading approved SKUs...</Text>
             </View>
           ) : (
-            <ScrollView
+            <FlatList
+              data={groupedUnmappedByProduct}
+              keyExtractor={(item) => String(item.productId)}
+              renderItem={({ item }) => (
+                <ProductGroupItem
+                  group={item}
+                  colors={colors}
+                  isDark={isDark}
+                  onOpenBatchMap={handleOpenBatchMapModal}
+                  onOpenMapModal={handleOpenMapModal}
+                  onNavigate={handleNavigateSkuDetails}
+                />
+              )}
+              initialNumToRender={5}
+              maxToRenderPerBatch={5}
+              windowSize={5}
+              removeClippedSubviews={Platform.OS === "android"}
               contentContainerStyle={styles.listContent}
               refreshControl={
                 <RefreshControl refreshing={refreshingSkus} onRefresh={() => fetchUnmappedSkus(true)} />
               }
-            >
-              {filteredSkus.length === 0 ? (
+              ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <View style={[styles.emptyIconCircle, { backgroundColor: isDark ? "#1e293b" : "#F1F5F9" }]}>
                     <Ionicons name="cube-outline" size={48} color={colors.textSecondary} />
@@ -1308,107 +2703,8 @@ const AddSkuScreen = ({ navigation, route }) => {
                     <Text style={styles.emptyActionBtnText}>Create New SKU Variant</Text>
                   </TouchableOpacity>
                 </View>
-              ) : (
-                groupedUnmappedByProduct.map((group) => (
-                  <View key={String(group.productId)} style={styles.productGroupContainer}>
-                    {group.skus.length > 1 && (
-                      <View
-                        style={[
-                          styles.productGroupHeader,
-                          {
-                            backgroundColor: isDark ? "#1e293b" : "#F8FAFC",
-                            borderColor: colors.borderLight,
-                          },
-                        ]}
-                      >
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                          <Text style={[styles.productGroupTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                            {group.productName}
-                          </Text>
-                          <Text style={[styles.productGroupSub, { color: colors.textSecondary }]}>
-                            {group.skus.length} variants available in catalog
-                          </Text>
-                        </View>
-                        <TouchableOpacity
-                          style={[styles.batchMapBtn, { backgroundColor: COLORS.primary }]}
-                          onPress={() => handleOpenBatchMapModal(group)}
-                          activeOpacity={0.8}
-                        >
-                          <Ionicons name="flash" size={13} color="#fff" style={{ marginRight: 4 }} />
-                          <Text style={styles.batchMapBtnText}>Batch Map ({group.skus.length})</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {group.skus.map((item) => (
-                      <View
-                        key={item.id}
-                        style={[styles.skuCard, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}
-                      >
-                        {/* Thumbnail */}
-                        <TouchableOpacity
-                          activeOpacity={0.85}
-                          onPress={() =>
-                            navigation.navigate("SkuDetails", {
-                              skuId: item.id,
-                              skuData: { sku: item, product: { name: item.product_name } },
-                            })
-                          }
-                          style={[styles.thumbnailWrap, { backgroundColor: colors.backgroundAlt }]}
-                        >
-                          {item.image_url ? (
-                            <Image source={{ uri: item.image_url }} style={styles.thumbnail} resizeMode="cover" />
-                          ) : (
-                            <Ionicons name="image-outline" size={32} color={colors.textSecondary} />
-                          )}
-                        </TouchableOpacity>
-
-                        {/* Details */}
-                        <View style={styles.skuCardDetails}>
-                          <TouchableOpacity
-                            activeOpacity={0.85}
-                            onPress={() =>
-                              navigation.navigate("SkuDetails", {
-                                skuId: item.id,
-                                skuData: { sku: item, product: { name: item.product_name } },
-                              })
-                            }
-                          >
-                            <View style={styles.skuBadgeRow}>
-                              <View style={[styles.adminTag, { backgroundColor: isDark ? "#064e3b" : "#DCFCE7" }]}>
-                                <Ionicons name="checkmark-circle" size={12} color={COLORS.success} />
-                                <Text style={[styles.adminTagText, { color: COLORS.success }]}>Approved</Text>
-                              </View>
-                              <Text style={[styles.skuCode, { color: colors.textSecondary }]}>
-                                {typeof item.sku === "object" ? item.sku.code || item.sku.sku || item.sku.name : item.sku}
-                              </Text>
-                            </View>
-
-                            <Text style={[styles.prodTitle, { color: colors.textPrimary }]} numberOfLines={2}>
-                              {item.product_name || item.name}
-                            </Text>
-
-                            {item.name && item.product_name && item.name !== item.product_name && (
-                              <Text style={[styles.variantSubtitle, { color: colors.textSecondary }]}>
-                                Variant: {item.name}
-                              </Text>
-                            )}
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={[styles.mapActionBtn, { backgroundColor: COLORS.primary }]}
-                            onPress={() => handleOpenMapModal(item)}
-                          >
-                            <Ionicons name="add" size={16} color="#fff" />
-                            <Text style={styles.mapActionBtnText}>Map to Store</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                ))
-              )}
-            </ScrollView>
+              }
+            />
           )}
         </View>
       )}
@@ -1458,56 +2754,268 @@ const AddSkuScreen = ({ navigation, route }) => {
                   <View style={styles.productValueMetaRow}>
                     <Text style={[styles.productValueMeta, { color: colors.textSecondary }]}>
                       Product ID: #{selectedProduct.id}
-                      {resolvedCategoryDisplay ? ` • ${resolvedCategoryDisplay}` : ""}
+                      {selectedCategoryId
+                        ? ` • Cat: ${selectedCategoryName || "Category"} (ID: #${selectedCategoryId})`
+                        : " • No Category Selected"}
                     </Text>
                   </View>
                 ) : null}
               </View>
             </View>
 
-            {/* Other Available Approved Products list/chips */}
-            {approvedProducts.length > 0 && (
-              <View style={styles.otherProductsWrap}>
-                <Text style={[styles.otherProductsLabel, { color: colors.textSecondary }]}>
-                  All Approved Products (Tap ID to switch):
+            {/* Read-Only Product Category (Auto-assigned from product catalog/creation) */}
+            <View style={{ marginTop: 12 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginBottom: 0 }]}>
+                  Product Category
                 </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.prodIdChipsRow}>
-                  {approvedProducts.map((p) => {
-                    const isCurrent = selectedProduct?.id === p.id;
-                    return (
-                      <TouchableOpacity
-                        key={p.id}
-                        onPress={() => setSelectedProduct(p)}
-                        activeOpacity={0.75}
-                        style={[
-                          styles.prodIdChip,
-                          isCurrent
-                            ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
-                            : { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
-                        ]}
-                      >
-                        <Ionicons
-                          name={isCurrent ? "checkmark-circle" : "cube-outline"}
-                          size={13}
-                          color={isCurrent ? "#fff" : colors.textSecondary}
-                          style={{ marginRight: 5 }}
-                        />
-                        <Text
-                          style={[
-                            styles.prodIdChipText,
-                            { color: isCurrent ? "#fff" : colors.textPrimary, fontWeight: isCurrent ? "700" : "500" },
-                          ]}
-                          numberOfLines={1}
-                        >
-                          ID #{p.id}: {p.name}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                {selectedCategoryId ? (
+                  <View style={[styles.catBadgePill, { backgroundColor: isDark ? "#064e3b" : "#DCFCE7", borderColor: COLORS.success }]}>
+                    <Ionicons name="checkmark-circle" size={11} color={COLORS.success} style={{ marginRight: 3 }} />
+                    <Text style={[styles.catBadgePillText, { color: COLORS.success }]}>
+                      Cat ID: #{selectedCategoryId}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
-            )}
+
+              <View
+                style={[
+                  styles.categoryDisplayContainer,
+                  {
+                    backgroundColor: colors.backgroundAlt,
+                    borderColor: colors.borderLight,
+                  },
+                ]}
+              >
+                <View style={[styles.catIconWrap, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF" }]}>
+                  <Ionicons
+                    name="pricetag"
+                    size={16}
+                    color={COLORS.primary}
+                  />
+                </View>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text
+                    style={[
+                      styles.categoryDisplayText,
+                      { color: selectedCategoryName ? colors.textPrimary : colors.textSecondary },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {selectedCategoryName || "Assigned Category"}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 1 }}>
+                    {selectedCategoryId ? `Category ID: #${selectedCategoryId}` : "From Product Details"}
+                  </Text>
+                </View>
+
+                <View style={[styles.autoAssignedBadge, { backgroundColor: isDark ? "#0f2f23" : "#ECFDF5", borderColor: COLORS.success }]}>
+                  <Ionicons name="lock-closed-outline" size={11} color={COLORS.success} style={{ marginRight: 3 }} />
+                  <Text style={[styles.autoAssignedBadgeText, { color: COLORS.success }]}>Auto-Assigned</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Other Available Approved Products list/chips */}
+            <ApprovedProductChips
+              approvedProducts={approvedProducts}
+              selectedProductId={selectedProduct?.id}
+              colors={colors}
+              onSelectProduct={handleSelectProduct}
+            />
           </View>
+
+          {/* Section 1b: Product Design Configuration (GET api/seller/products/{id}/has-design-config) */}
+          {loadingDesignConfig ? (
+            <View
+              style={[
+                styles.designLoadingCard,
+                { backgroundColor: colors.cardBg, borderColor: colors.borderLight },
+              ]}
+            >
+              <ActivityIndicator size="small" color={COLORS.primary} style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                Checking product design configuration...
+              </Text>
+            </View>
+          ) : designConfig?.has_design ? (
+            <View
+              style={[
+                styles.formCard,
+                {
+                  backgroundColor: colors.cardBg,
+                  borderColor: designConfig.design_required
+                    ? (isDark ? "#b45309" : "#F59E0B")
+                    : colors.borderLight,
+                },
+              ]}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 6,
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons
+                    name="color-palette-outline"
+                    size={18}
+                    color={COLORS.primary}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={[styles.formCardTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                    Product Design {designConfig.design_required ? "*" : "(Optional)"}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.designBadge,
+                    {
+                      backgroundColor: designConfig.design_required
+                        ? (isDark ? "#451a03" : "#FEF3C7")
+                        : (isDark ? "#1e3a5f" : "#EFF6FF"),
+                      borderColor: designConfig.design_required
+                        ? (isDark ? "#78350f" : "#FDE68A")
+                        : COLORS.primaryLight,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={designConfig.design_required ? "alert-circle" : "sparkles"}
+                    size={12}
+                    color={designConfig.design_required ? "#D97706" : COLORS.primary}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.designBadgeText,
+                      {
+                        color: designConfig.design_required
+                          ? (isDark ? "#FCD34D" : "#B45309")
+                          : COLORS.primary,
+                      },
+                    ]}
+                  >
+                    {designConfig.design_required ? "Design Required" : "Design Enabled"}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+                {designConfig.design_required
+                  ? "This product requires a design name for creating SKU variants (e.g. Printed, Floral, Embroidered)."
+                  : "This product supports custom design variants. Enter the design name below if applicable."}
+              </Text>
+
+              {/* Predefined / Suggested Designs Chips if available in designs array */}
+              {Array.isArray(designConfig.designs) && designConfig.designs.length > 0 && (
+                <View style={{ marginBottom: 10 }}>
+                  <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 6 }]}>
+                    Select Existing / Suggested Design:
+                  </Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: 8, paddingVertical: 2 }}
+                  >
+                    {designConfig.designs.map((d, dIdx) => {
+                      const dName =
+                        typeof d === "object"
+                          ? d.name || d.title || d.design_name || `Design #${d.id}`
+                          : String(d);
+                      const isSelected = designName.trim().toLowerCase() === dName.trim().toLowerCase();
+                      return (
+                        <TouchableOpacity
+                          key={dIdx}
+                          onPress={() => setDesignName(dName)}
+                          activeOpacity={0.75}
+                          style={[
+                            styles.designChip,
+                            {
+                              backgroundColor: isSelected ? COLORS.primary : colors.backgroundAlt,
+                              borderColor: isSelected ? COLORS.primary : colors.borderLight,
+                            },
+                          ]}
+                        >
+                          <Ionicons
+                            name={isSelected ? "checkmark-circle" : "color-palette-outline"}
+                            size={14}
+                            color={isSelected ? "#fff" : colors.textSecondary}
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text
+                            style={[
+                              styles.designChipText,
+                              {
+                                color: isSelected ? "#fff" : colors.textPrimary,
+                                fontWeight: isSelected ? "700" : "500",
+                              },
+                            ]}
+                          >
+                            {dName}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Design Name Input */}
+              <View style={{ marginTop: 4 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 4,
+                  }}
+                >
+                  <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 0 }]}>
+                    Design Name {designConfig.design_required ? "*" : ""}
+                  </Text>
+                  {designConfig.design_required && !designName.trim() && (
+                    <Text style={{ fontSize: 11, color: COLORS.error, fontWeight: "600" }}>
+                      Required field
+                    </Text>
+                  )}
+                </View>
+                <View
+                  style={[
+                    styles.designInputWrap,
+                    {
+                      backgroundColor: colors.backgroundAlt,
+                      borderColor: designConfig.design_required && !designName.trim()
+                        ? COLORS.error
+                        : colors.borderLight,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="brush-outline"
+                    size={18}
+                    color={COLORS.primary}
+                    style={{ marginLeft: 12, marginRight: 8 }}
+                  />
+                  <TextInput
+                    style={[styles.designTextInput, { color: colors.textPrimary }]}
+                    placeholder="Enter design name (e.g. Printed, Floral 01, Embroidered)"
+                    placeholderTextColor={colors.textSecondary}
+                    value={designName}
+                    onChangeText={setDesignName}
+                  />
+                  {designName.length > 0 && (
+                    <TouchableOpacity onPress={() => setDesignName("")} style={{ padding: 8 }}>
+                      <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            </View>
+          ) : null}
 
           {/* Section 2: Variant Attributes (Multi-Select) */}
           <View style={[styles.formCard, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
@@ -1522,6 +3030,9 @@ const AddSkuScreen = ({ navigation, route }) => {
                 <TouchableOpacity
                   onPress={() => {
                     setSelectedAttributes({});
+                    setColorVariantsConfig({});
+                    setExpandedColorIds({});
+                    setMatrixFilterColor("all");
                     setVariants([]);
                     setAttributeImages({});
                     setImageByAttrId(null);
@@ -1535,7 +3046,7 @@ const AddSkuScreen = ({ navigation, route }) => {
             </View>
 
             <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
-              Select one or more values for each attribute (e.g. Colors: Red, Blue; Sizes: S, M, L).
+              Select one or more values for each attribute. Values marked with "In SKU" already exist on this product.
             </Text>
 
             {/* Master Product Schema Guidance Banner */}
@@ -1568,19 +3079,61 @@ const AddSkuScreen = ({ navigation, route }) => {
               </View>
             )}
 
-            {loadingAttributes || loadingProductSchema ? (
+            {/* Existing Catalog SKUs Banner */}
+            {existingProductSkus.length > 0 && (
+              <View
+                style={[
+                  styles.existingSkusBanner,
+                  {
+                    backgroundColor: isDark ? "rgba(30, 41, 59, 0.7)" : "#F0FDF4",
+                    borderColor: isDark ? "#334155" : "#BBF7D0",
+                  },
+                ]}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
+                  <Ionicons name="cube" size={15} color="#16A34A" style={{ marginRight: 6 }} />
+                  <Text style={[styles.existingSkusBannerTitle, { color: isDark ? "#4ADE80" : "#15803D" }]}>
+                    Existing SKUs in Catalog ({existingProductSkus.length})
+                  </Text>
+                </View>
+                <Text style={[styles.existingSkusBannerSub, { color: isDark ? "#94A3B8" : "#166534" }]}>
+                  Select attributes below to add new combinations. Existing ones will be highlighted and skipped automatically.
+                </Text>
+                <View style={styles.existingSkusChipsRow}>
+                  {existingProductSkus.map((s, idx) => (
+                    <View
+                      key={s.id || idx}
+                      style={[
+                        styles.existingSkuBadge,
+                        {
+                          backgroundColor: isDark ? "#0f172a" : "#DCFCE7",
+                          borderColor: isDark ? "#334155" : "#86EFAC",
+                        },
+                      ]}
+                    >
+                      <Ionicons name="checkmark-done" size={11} color="#16A34A" style={{ marginRight: 4 }} />
+                      <Text style={[styles.existingSkuBadgeText, { color: isDark ? "#E2E8F0" : "#14532D" }]}>
+                        {s.name || s.sku || `SKU #${s.id}`}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {loadingAttributes || loadingProductDetails ? (
               <View style={{ paddingVertical: 18, alignItems: "center" }}>
                 <ActivityIndicator size="small" color={COLORS.primary} />
                 <Text style={{ fontSize: 12, marginTop: 6, color: colors.textSecondary }}>
-                  Loading attributes & product schema...
+                  Loading attributes & product details...
                 </Text>
               </View>
             ) : sortedAttributes.length === 0 ? (
               <View style={{ paddingVertical: 14, alignItems: "center" }}>
                 <Text style={[styles.emptyAttrText, { color: colors.textSecondary }]}>
-                  {extractCategoryId(selectedProduct, categoriesList, unmappedSkus)
-                    ? `No attributes found for category #${extractCategoryId(selectedProduct, categoriesList, unmappedSkus)}. You can retry or add custom variants below.`
-                    : "No attributes found for this category. You can retry or add custom variants below."}
+                  {selectedCategoryId
+                    ? `No attributes found for ${selectedCategoryName || "category"} (ID: #${selectedCategoryId}). You can retry, switch category above, or add custom variants below.`
+                    : "No category selected. Please select a category above to load attributes."}
                 </Text>
                 <TouchableOpacity
                   style={{
@@ -1591,8 +3144,7 @@ const AddSkuScreen = ({ navigation, route }) => {
                     borderRadius: 6,
                   }}
                   onPress={() => {
-                    const catId = extractCategoryId(selectedProduct, categoriesList, unmappedSkus);
-                    fetchAttributes(catId);
+                    fetchAttributes(selectedCategoryId, selectedProduct?.id);
                   }}
                 >
                   <Text style={{ color: "#fff", fontSize: 12, fontWeight: "600" }}>Retry Attributes</Text>
@@ -1600,120 +3152,534 @@ const AddSkuScreen = ({ navigation, route }) => {
               </View>
             ) : (
               <View style={styles.attributesListContainer}>
-                {sortedAttributes.map((attr) => {
-                  const selectedValIds = selectedAttributes[attr.id] || [];
-                  const countSelected = selectedValIds.length;
-                  const attrIcon = getAttributeIcon(attr.slug || attr.name);
-                  const isRequired = productRequiredAttrIds.includes(Number(attr.id));
-
-                  return (
-                    <View
-                      key={attr.id}
+                {secondaryAttributes.length > 0 && (
+                  <View style={[styles.modeSwitchWrap, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight }]}>
+                    <TouchableOpacity
                       style={[
-                        styles.attributeGroup,
-                        isRequired && {
-                          borderColor: isDark ? "#1e3a8a" : "#BFDBFE",
-                          borderWidth: 1,
-                          borderRadius: 10,
-                          padding: 10,
-                          backgroundColor: isDark ? "rgba(30, 58, 138, 0.15)" : "rgba(239, 246, 255, 0.5)",
-                        },
+                        styles.modeSwitchBtn,
+                        variantMode === "per_color" && { backgroundColor: COLORS.primary },
                       ]}
+                      onPress={() => {
+                        setVariantMode("per_color");
+                        const nextVars = generatePerColorVariants(
+                          colorVariantsConfig,
+                          selectedAttributes[primaryAttribute?.id] || [],
+                          selectedProduct,
+                          variants
+                        );
+                        setVariants(nextVars);
+                      }}
+                      activeOpacity={0.8}
                     >
-                      <View style={styles.attributeGroupHeader}>
-                        <Ionicons
-                          name={attrIcon}
-                          size={15}
-                          color={countSelected > 0 || isRequired ? COLORS.primary : colors.textSecondary}
-                        />
-                        <Text style={[styles.attributeGroupName, { color: colors.textPrimary }]}>
-                          {attr.name}
+                      <Ionicons
+                        name="color-palette-outline"
+                        size={14}
+                        color={variantMode === "per_color" ? "#fff" : colors.textSecondary}
+                        style={{ marginRight: 5 }}
+                      />
+                      <Text
+                        style={[
+                          styles.modeSwitchBtnText,
+                          {
+                            color: variantMode === "per_color" ? "#fff" : colors.textPrimary,
+                            fontWeight: variantMode === "per_color" ? "700" : "500",
+                          },
+                        ]}
+                      >
+                        Customize per {primaryAttribute?.name || "Color"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.modeSwitchBtn,
+                        variantMode === "cartesian" && { backgroundColor: COLORS.primary },
+                      ]}
+                      onPress={() => {
+                        setVariantMode("cartesian");
+                        const nextVars = generateCombos(selectedAttributes, selectedProduct, variants);
+                        setVariants(nextVars);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons
+                        name="apps-outline"
+                        size={14}
+                        color={variantMode === "cartesian" ? "#fff" : colors.textSecondary}
+                        style={{ marginRight: 5 }}
+                      />
+                      <Text
+                        style={[
+                          styles.modeSwitchBtnText,
+                          {
+                            color: variantMode === "cartesian" ? "#fff" : colors.textPrimary,
+                            fontWeight: variantMode === "cartesian" ? "700" : "500",
+                          },
+                        ]}
+                      >
+                        All Combinations
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {variantMode === "per_color" && secondaryAttributes.length > 0 ? (
+                  <View>
+                    {/* Step 1: Select Primary Attribute (e.g. Color) */}
+                    {primaryAttribute && (
+                      <View
+                        style={[
+                          styles.attributeGroup,
+                          productRequiredAttrIds.includes(Number(primaryAttribute.id)) && {
+                            borderColor: isDark ? "#1e3a8a" : "#BFDBFE",
+                            borderWidth: 1,
+                            borderRadius: 10,
+                            padding: 10,
+                            backgroundColor: isDark ? "rgba(30, 58, 138, 0.15)" : "rgba(239, 246, 255, 0.5)",
+                          },
+                        ]}
+                      >
+                        <View style={styles.attributeGroupHeader}>
+                          <Ionicons
+                            name={getAttributeIcon(primaryAttribute.slug || primaryAttribute.name)}
+                            size={16}
+                            color={COLORS.primary}
+                          />
+                          <Text style={[styles.attributeGroupName, { color: colors.textPrimary }]}>
+                            Step 1: Select {primaryAttribute.name}s
+                          </Text>
+                          {productRequiredAttrIds.includes(Number(primaryAttribute.id)) && (
+                            <View
+                              style={[
+                                styles.requiredAttrPill,
+                                { backgroundColor: isDark ? "#451a03" : "#FEF3C7" },
+                              ]}
+                            >
+                              <Ionicons name="alert-circle" size={11} color="#D97706" style={{ marginRight: 3 }} />
+                              <Text style={styles.requiredAttrPillText}>Required</Text>
+                            </View>
+                          )}
+                          {(selectedAttributes[primaryAttribute.id] || []).length > 0 && (
+                            <View style={[styles.attrSelectedBadge, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF" }]}>
+                              <Text style={[styles.attrSelectedBadgeText, { color: COLORS.primary }]}>
+                                {(selectedAttributes[primaryAttribute.id] || []).length} selected
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+
+                        <Text style={[styles.stepSubHint, { color: colors.textSecondary }]}>
+                          Select all the {primaryAttribute.name.toLowerCase()} options you have in stock.
                         </Text>
-                        {isRequired && (
-                          <View
-                            style={[
-                              styles.requiredAttrPill,
-                              { backgroundColor: isDark ? "#451a03" : "#FEF3C7" },
-                            ]}
-                          >
-                            <Ionicons name="alert-circle" size={11} color="#D97706" style={{ marginRight: 3 }} />
-                            <Text style={styles.requiredAttrPillText}>Required</Text>
-                          </View>
-                        )}
-                        {countSelected > 0 && (
-                          <View style={[styles.attrSelectedBadge, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF" }]}>
-                            <Text style={[styles.attrSelectedBadgeText, { color: COLORS.primary }]}>
-                              {countSelected} selected
-                            </Text>
-                          </View>
-                        )}
-                      </View>
 
-                      {isRequired && countSelected === 0 && (
-                        <Text style={styles.requiredMissingHint}>
-                          ⚠️ Select at least one {attr.name} value to complete variant schema
-                        </Text>
-                      )}
+                        <View style={styles.attrChipsWrap}>
+                          {Array.isArray(primaryAttribute.values) &&
+                            primaryAttribute.values.map((val) => {
+                              const isSelected = (selectedAttributes[primaryAttribute.id] || []).includes(val.id);
+                              const colorDot =
+                                primaryAttribute.slug === "color" || primaryAttribute.name.toLowerCase().includes("color")
+                                  ? getColorHex(val.value)
+                                  : null;
 
-                      <View style={styles.attrChipsWrap}>
-                        {Array.isArray(attr.values) &&
-                          attr.values.map((val) => {
-                            const isSelected = selectedValIds.includes(val.id);
-                            const colorDot =
-                              attr.slug === "color" || attr.name.toLowerCase().includes("color")
-                                ? getColorHex(val.value)
-                                : null;
+                              const isInExistingSku =
+                                val.selected === true ||
+                                Boolean(val.is_selected) ||
+                                existingSkuValIdSet.has(String(val.id)) ||
+                                existingSkuValIdSet.has(String(val.value).toLowerCase().trim());
 
-                            return (
-                              <TouchableOpacity
-                                key={val.id}
-                                onPress={() => handleToggleAttributeValue(attr.id, val.id)}
-                                activeOpacity={0.7}
-                                style={[
-                                  styles.attrValueChip,
-                                  isSelected
-                                    ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
-                                    : { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
-                                ]}
-                              >
-                                {colorDot && (
-                                  <View
-                                    style={[
-                                      styles.colorDotIndicator,
-                                      {
-                                        backgroundColor: colorDot,
-                                        borderColor: isSelected ? "#fff" : colors.borderLight,
-                                        borderWidth: 1,
-                                      },
-                                    ]}
-                                  />
-                                )}
-                                <Text
+                              return (
+                                <TouchableOpacity
+                                  key={val.id}
+                                  onPress={() => handleTogglePrimaryValue(val.id)}
+                                  activeOpacity={0.7}
                                   style={[
-                                    styles.attrValueChipText,
-                                    {
-                                      color: isSelected ? "#fff" : colors.textPrimary,
-                                      fontWeight: isSelected ? "700" : "500",
-                                    },
+                                    styles.attrValueChip,
+                                    isSelected
+                                      ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
+                                      : { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
                                   ]}
                                 >
-                                  {val.value}
-                                </Text>
-                                {isSelected && (
-                                  <Ionicons
-                                    name="checkmark-circle"
-                                    size={13}
-                                    color="#fff"
-                                    style={{ marginLeft: 4 }}
-                                  />
-                                )}
-                              </TouchableOpacity>
-                            );
-                          })}
+                                  {colorDot && (
+                                    <View
+                                      style={[
+                                        styles.colorDotIndicator,
+                                        {
+                                          backgroundColor: colorDot,
+                                          borderColor: isSelected ? "#fff" : colors.borderLight,
+                                          borderWidth: 1,
+                                        },
+                                      ]}
+                                    />
+                                  )}
+                                  <Text
+                                    style={[
+                                      styles.attrValueChipText,
+                                      {
+                                        color: isSelected ? "#fff" : colors.textPrimary,
+                                        fontWeight: isSelected ? "700" : "500",
+                                      },
+                                    ]}
+                                  >
+                                    {val.value}
+                                  </Text>
+                                  {isSelected ? (
+                                    <Ionicons
+                                      name="checkmark-circle"
+                                      size={13}
+                                      color="#fff"
+                                      style={{ marginLeft: 4 }}
+                                    />
+                                  ) : isInExistingSku ? (
+                                    <View
+                                      style={[
+                                        styles.usedBadge,
+                                        { backgroundColor: isDark ? "rgba(100, 116, 139, 0.25)" : "#E2E8F0" },
+                                      ]}
+                                    >
+                                      <Text style={[styles.usedBadgeText, { color: isDark ? "#94a3b8" : "#64748b" }]}>
+                                        In SKU
+                                      </Text>
+                                    </View>
+                                  ) : null}
+                                </TouchableOpacity>
+                              );
+                            })}
+                        </View>
                       </View>
+                    )}
+
+                    {/* Step 2: Configure Secondary Attributes (e.g. Sizes) per Color */}
+                    <View style={{ marginTop: 14 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                        <Ionicons name="resize-outline" size={16} color={COLORS.primary} style={{ marginRight: 6 }} />
+                        <Text style={[styles.stepSectionTitle, { color: colors.textPrimary }]}>
+                          Step 2: Choose Sizes for Each Selected {primaryAttribute?.name || "Color"}
+                        </Text>
+                      </View>
+                      <Text style={[styles.sectionSubtitle, { color: colors.textSecondary, marginBottom: 10 }]}>
+                        Pick specific sizes for each color (e.g. Red has L, XL, M; Black has XXL, M, S; White has L, S, XL).
+                      </Text>
+
+                      {(!selectedAttributes[primaryAttribute?.id] || selectedAttributes[primaryAttribute.id].length === 0) ? (
+                        <View style={[styles.emptyPromptBox, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight }]}>
+                          <Ionicons name="color-palette-outline" size={24} color={colors.textSecondary} />
+                          <Text style={[styles.emptyPromptText, { color: colors.textSecondary }]}>
+                            👆 Please select at least one {primaryAttribute?.name || "color"} in Step 1 above to configure its sizes.
+                          </Text>
+                        </View>
+                      ) : (
+                        selectedAttributes[primaryAttribute.id].map((pValId) => {
+                          const pVal = (primaryAttribute?.values || []).find((v) => Number(v.id) === Number(pValId));
+                          if (!pVal) return null;
+                          const colorDot = getColorHex(pVal.value);
+                          const isExpanded = expandedColorIds[pVal.id] !== false;
+                          const pCfg = colorVariantsConfig[pVal.id] || {};
+
+                          let totalSelectedForThisColor = 0;
+                          secondaryAttributes.forEach((sAttr) => {
+                            totalSelectedForThisColor += (pCfg[sAttr.id] || []).length;
+                          });
+
+                          return (
+                            <View
+                              key={pVal.id}
+                              style={[
+                                styles.colorAccordionCard,
+                                {
+                                  backgroundColor: colors.backgroundAlt,
+                                  borderColor: isExpanded ? COLORS.primary : colors.borderLight,
+                                  borderWidth: isExpanded ? 1.5 : 1,
+                                },
+                              ]}
+                            >
+                              {/* Accordion Header */}
+                              <TouchableOpacity
+                                style={styles.colorAccordionHeader}
+                                onPress={() => toggleColorAccordion(pVal.id)}
+                                activeOpacity={0.7}
+                              >
+                                <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                                  {colorDot && (
+                                    <View
+                                      style={[
+                                        styles.colorDotIndicator,
+                                        {
+                                          backgroundColor: colorDot,
+                                          width: 14,
+                                          height: 14,
+                                          borderRadius: 7,
+                                          borderWidth: 1.5,
+                                          borderColor: colors.borderLight,
+                                          marginRight: 8,
+                                        },
+                                      ]}
+                                    />
+                                  )}
+                                  <Text style={[styles.colorAccordionTitle, { color: colors.textPrimary }]}>
+                                    {pVal.value}
+                                  </Text>
+                                  <View
+                                    style={[
+                                      styles.colorAccordionBadge,
+                                      {
+                                        backgroundColor:
+                                          totalSelectedForThisColor > 0
+                                            ? isDark ? "#064e3b" : "#DCFCE7"
+                                            : isDark ? "#334155" : "#E2E8F0",
+                                      },
+                                    ]}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.colorAccordionBadgeText,
+                                        {
+                                          color: totalSelectedForThisColor > 0 ? COLORS.success : colors.textSecondary,
+                                        },
+                                      ]}
+                                    >
+                                      {totalSelectedForThisColor > 0
+                                        ? `${totalSelectedForThisColor} size(s) chosen`
+                                        : "No size chosen yet"}
+                                    </Text>
+                                  </View>
+                                </View>
+
+                                <Ionicons
+                                  name={isExpanded ? "chevron-up" : "chevron-down"}
+                                  size={18}
+                                  color={colors.textSecondary}
+                                />
+                              </TouchableOpacity>
+
+                              {/* Accordion Body */}
+                              {isExpanded && (
+                                <View style={styles.colorAccordionBody}>
+                                  {secondaryAttributes.map((sAttr) => {
+                                    const selectedSecValIds = pCfg[sAttr.id] || [];
+                                    return (
+                                      <View key={sAttr.id} style={{ marginTop: 2, marginBottom: 6 }}>
+                                        <View style={styles.colorAccordionActions}>
+                                          <Text style={[styles.colorSecAttrLabel, { color: colors.textSecondary }]}>
+                                            Choose {sAttr.name} for {pVal.value}:
+                                          </Text>
+
+                                          <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                                            <TouchableOpacity
+                                              style={[styles.colorActionSmallBtn, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF" }]}
+                                              onPress={() => handleSelectAllSecondaryForColor(pVal.id, sAttr.id)}
+                                              activeOpacity={0.7}
+                                            >
+                                              <Text style={[styles.colorActionSmallBtnText, { color: COLORS.primary }]}>Select All</Text>
+                                            </TouchableOpacity>
+
+                                            {selectedSecValIds.length > 0 && (
+                                              <TouchableOpacity
+                                                style={[styles.colorActionSmallBtn, { backgroundColor: isDark ? "#451a1a" : "#FEE2E2" }]}
+                                                onPress={() => handleClearSecondaryForColor(pVal.id, sAttr.id)}
+                                                activeOpacity={0.7}
+                                              >
+                                                <Text style={[styles.colorActionSmallBtnText, { color: COLORS.error }]}>Clear</Text>
+                                              </TouchableOpacity>
+                                            )}
+
+                                            {selectedAttributes[primaryAttribute.id].length > 1 && (
+                                              <TouchableOpacity
+                                                style={[styles.colorActionSmallBtn, { backgroundColor: isDark ? "#1e293b" : "#F1F5F9" }]}
+                                                onPress={() => handleCopySecondaryToAllColors(pVal.id)}
+                                                activeOpacity={0.7}
+                                              >
+                                                <Ionicons name="copy-outline" size={11} color={colors.textPrimary} style={{ marginRight: 3 }} />
+                                                <Text style={[styles.colorActionSmallBtnText, { color: colors.textPrimary }]}>Copy to other colors</Text>
+                                              </TouchableOpacity>
+                                            )}
+                                          </View>
+                                        </View>
+
+                                        <View style={styles.attrChipsWrap}>
+                                          {Array.isArray(sAttr.values) &&
+                                            sAttr.values.map((sVal) => {
+                                              const isSecSelected = selectedSecValIds.includes(sVal.id);
+                                              return (
+                                                <TouchableOpacity
+                                                  key={sVal.id}
+                                                  onPress={() =>
+                                                    handleToggleSecondaryValueForColor(pVal.id, sAttr.id, sVal.id)
+                                                  }
+                                                  activeOpacity={0.7}
+                                                  style={[
+                                                    styles.attrValueChip,
+                                                    isSecSelected
+                                                      ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
+                                                      : { backgroundColor: colors.cardBg, borderColor: colors.borderLight },
+                                                  ]}
+                                                >
+                                                  <Text
+                                                    style={[
+                                                      styles.attrValueChipText,
+                                                      {
+                                                        color: isSecSelected ? "#fff" : colors.textPrimary,
+                                                        fontWeight: isSecSelected ? "700" : "500",
+                                                      },
+                                                    ]}
+                                                  >
+                                                    {sVal.value}
+                                                  </Text>
+                                                  {isSecSelected && (
+                                                    <Ionicons
+                                                      name="checkmark-circle"
+                                                      size={13}
+                                                      color="#fff"
+                                                      style={{ marginLeft: 4 }}
+                                                    />
+                                                  )}
+                                                </TouchableOpacity>
+                                              );
+                                            })}
+                                        </View>
+                                      </View>
+                                    );
+                                  })}
+                                </View>
+                              )}
+                            </View>
+                          );
+                        })
+                      )}
                     </View>
-                  );
-                })}
+                  </View>
+                ) : (
+                  sortedAttributes.map((attr) => {
+                    const selectedValIds = selectedAttributes[attr.id] || [];
+                    const countSelected = selectedValIds.length;
+                    const attrIcon = getAttributeIcon(attr.slug || attr.name);
+                    const isRequired = productRequiredAttrIds.includes(Number(attr.id));
+
+                    return (
+                      <View
+                        key={attr.id}
+                        style={[
+                          styles.attributeGroup,
+                          isRequired && {
+                            borderColor: isDark ? "#1e3a8a" : "#BFDBFE",
+                            borderWidth: 1,
+                            borderRadius: 10,
+                            padding: 10,
+                            backgroundColor: isDark ? "rgba(30, 58, 138, 0.15)" : "rgba(239, 246, 255, 0.5)",
+                          },
+                        ]}
+                      >
+                        <View style={styles.attributeGroupHeader}>
+                          <Ionicons
+                            name={attrIcon}
+                            size={15}
+                            color={countSelected > 0 || isRequired ? COLORS.primary : colors.textSecondary}
+                          />
+                          <Text style={[styles.attributeGroupName, { color: colors.textPrimary }]}>
+                            {attr.name}
+                          </Text>
+                          {isRequired && (
+                            <View
+                              style={[
+                                styles.requiredAttrPill,
+                                { backgroundColor: isDark ? "#451a03" : "#FEF3C7" },
+                              ]}
+                            >
+                              <Ionicons name="alert-circle" size={11} color="#D97706" style={{ marginRight: 3 }} />
+                              <Text style={styles.requiredAttrPillText}>Required</Text>
+                            </View>
+                          )}
+                          {countSelected > 0 && (
+                            <View style={[styles.attrSelectedBadge, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF" }]}>
+                              <Text style={[styles.attrSelectedBadgeText, { color: COLORS.primary }]}>
+                                {countSelected} selected
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+
+                        {isRequired && countSelected === 0 && (
+                          <Text style={styles.requiredMissingHint}>
+                            ⚠️ Select at least one {attr.name} value to complete variant schema
+                          </Text>
+                        )}
+
+                        <View style={styles.attrChipsWrap}>
+                          {Array.isArray(attr.values) &&
+                            attr.values.map((val) => {
+                              const isSelected = selectedValIds.includes(val.id);
+                              const colorDot =
+                                attr.slug === "color" || attr.name.toLowerCase().includes("color")
+                                  ? getColorHex(val.value)
+                                  : null;
+
+                              const isInExistingSku =
+                                val.selected === true ||
+                                Boolean(val.is_selected) ||
+                                existingSkuValIdSet.has(String(val.id)) ||
+                                existingSkuValIdSet.has(String(val.value).toLowerCase().trim());
+
+                              return (
+                                <TouchableOpacity
+                                  key={val.id}
+                                  onPress={() => handleToggleAttributeValue(attr.id, val.id)}
+                                  activeOpacity={0.7}
+                                  style={[
+                                    styles.attrValueChip,
+                                    isSelected
+                                      ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
+                                      : { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
+                                  ]}
+                                >
+                                  {colorDot && (
+                                    <View
+                                      style={[
+                                        styles.colorDotIndicator,
+                                        {
+                                          backgroundColor: colorDot,
+                                          borderColor: isSelected ? "#fff" : colors.borderLight,
+                                          borderWidth: 1,
+                                        },
+                                      ]}
+                                    />
+                                  )}
+                                  <Text
+                                    style={[
+                                      styles.attrValueChipText,
+                                      {
+                                        color: isSelected ? "#fff" : colors.textPrimary,
+                                        fontWeight: isSelected ? "700" : "500",
+                                      },
+                                    ]}
+                                  >
+                                    {val.value}
+                                  </Text>
+                                  {isSelected ? (
+                                    <Ionicons
+                                      name="checkmark-circle"
+                                      size={13}
+                                      color="#fff"
+                                      style={{ marginLeft: 4 }}
+                                    />
+                                  ) : isInExistingSku ? (
+                                    <View
+                                      style={[
+                                        styles.usedBadge,
+                                        { backgroundColor: isDark ? "rgba(100, 116, 139, 0.25)" : "#E2E8F0" },
+                                      ]}
+                                    >
+                                      <Text style={[styles.usedBadgeText, { color: isDark ? "#94a3b8" : "#64748b" }]}>
+                                        In SKU
+                                      </Text>
+                                    </View>
+                                  ) : null}
+                                </TouchableOpacity>
+                              );
+                            })}
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
               </View>
             )}
           </View>
@@ -2089,166 +4055,104 @@ const AddSkuScreen = ({ navigation, route }) => {
                 </TouchableOpacity>
               </View>
             ) : (
-              <View style={styles.variantsCardList}>
-                {variants.map((v, idx) => (
-                  <View
-                    key={v.id || idx}
-                    style={[
-                      styles.variantItemCard,
-                      { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
-                    ]}
-                  >
-                    {/* Variant Card Header */}
-                    <View style={styles.variantItemHeader}>
-                      <View style={{ flex: 1, marginRight: 8 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center" }}>
-                          <View style={[styles.variantNumberTag, { backgroundColor: COLORS.primary }]}>
-                            <Text style={styles.variantNumberTagText}>#{idx + 1}</Text>
-                          </View>
-                          <Text style={[styles.variantItemTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                            {v.name}
-                          </Text>
-                        </View>
-
-                        {/* Labels / Pills */}
-                        {Array.isArray(v.labels) && v.labels.length > 0 && (
-                          <View style={styles.variantPillsRow}>
-                            {v.labels.map((lbl, lIdx) => (
-                              <View
-                                key={lIdx}
-                                style={[styles.variantAttrPill, { backgroundColor: isDark ? "#334155" : "#E2E8F0" }]}
-                              >
-                                <Text style={[styles.variantAttrPillText, { color: colors.textPrimary }]}>
-                                  {lbl.attrName}: {lbl.valName}
-                                </Text>
-                              </View>
-                            ))}
-                          </View>
-                        )}
-                      </View>
-
+              <View>
+                {/* Color Filter Tabs */}
+                {primaryAttribute && (selectedAttributes[primaryAttribute.id] || []).length > 1 && (
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={[styles.filterRowLabel, { color: colors.textSecondary }]}>
+                      Filter by {primaryAttribute.name}:
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.matrixFilterRow}>
                       <TouchableOpacity
-                        style={[styles.variantDeleteBtn, { backgroundColor: isDark ? "#451a1a" : "#FEE2E2" }]}
-                        onPress={() => handleRemoveVariant(v.id)}
-                        activeOpacity={0.7}
+                        style={[
+                          styles.matrixFilterChip,
+                          matrixFilterColor === "all"
+                            ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
+                            : { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
+                        ]}
+                        onPress={() => setMatrixFilterColor("all")}
+                        activeOpacity={0.75}
                       >
-                        <Ionicons name="trash-outline" size={16} color={COLORS.error} />
+                        <Text
+                          style={[
+                            styles.matrixFilterChipText,
+                            {
+                              color: matrixFilterColor === "all" ? "#fff" : colors.textPrimary,
+                              fontWeight: matrixFilterColor === "all" ? "700" : "500",
+                            },
+                          ]}
+                        >
+                          All ({variants.length})
+                        </Text>
                       </TouchableOpacity>
-                    </View>
 
-                    {/* Variant Editable Fields */}
-                    <View style={{ marginTop: 8 }}>
-                      <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Variant Title *</Text>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                        value={v.name}
-                        onChangeText={(txt) => handleUpdateVariantField(v.id, "name", txt)}
-                      />
+                      {(selectedAttributes[primaryAttribute.id] || []).map((pId) => {
+                        const pVal = (primaryAttribute.values || []).find((v) => Number(v.id) === Number(pId));
+                        const pName = pVal?.value || `Option #${pId}`;
+                        const pDot = getColorHex(pName);
+                        const isCur = String(matrixFilterColor) === String(pId);
+                        const count = variants.filter((v) => Number(v.attributes?.[primaryAttribute.id]) === Number(pId)).length;
 
-                      <View style={styles.gridRow}>
-                        <View style={styles.gridCol}>
-                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Price (₹) *</Text>
-                          <TextInput
-                            style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                            placeholder="1299"
-                            placeholderTextColor={colors.textSecondary}
-                            keyboardType="numeric"
-                            value={String(v.price || "")}
-                            onChangeText={(txt) => handleUpdateVariantField(v.id, "price", txt)}
-                          />
-                        </View>
-                        <View style={styles.gridCol}>
-                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Sale Price (₹)</Text>
-                          <TextInput
-                            style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                            placeholder="999"
-                            placeholderTextColor={colors.textSecondary}
-                            keyboardType="numeric"
-                            value={String(v.sale_price || "")}
-                            onChangeText={(txt) => handleUpdateVariantField(v.id, "sale_price", txt)}
-                          />
-                        </View>
-                      </View>
-
-                      <View style={styles.gridRow}>
-                        <View style={styles.gridCol}>
-                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Stock Qty *</Text>
-                          <TextInput
-                            style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                            placeholder="10"
-                            placeholderTextColor={colors.textSecondary}
-                            keyboardType="numeric"
-                            value={String(v.stock_quantity ?? "")}
-                            onChangeText={(txt) => handleUpdateVariantField(v.id, "stock_quantity", txt)}
-                          />
-                        </View>
-                        <View style={styles.gridCol}>
-                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Min Stock Alert</Text>
-                          <TextInput
-                            style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                            placeholder="2"
-                            placeholderTextColor={colors.textSecondary}
-                            keyboardType="numeric"
-                            value={String(v.min_stock_alert || "2")}
-                            onChangeText={(txt) => handleUpdateVariantField(v.id, "min_stock_alert", txt)}
-                          />
-                        </View>
-                      </View>
-
-                      <View style={styles.gridRow}>
-                        <View style={styles.gridCol}>
-                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Weight (kg)</Text>
-                          <TextInput
-                            style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                            placeholder="0.40"
-                            placeholderTextColor={colors.textSecondary}
-                            keyboardType="numeric"
-                            value={String(v.weight || "")}
-                            onChangeText={(txt) => handleUpdateVariantField(v.id, "weight", txt)}
-                          />
-                        </View>
-                        <View style={styles.gridCol}>
-                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>L x W x H (cm)</Text>
-                          <View style={{ flexDirection: "row", gap: 4 }}>
-                            <TextInput
-                              style={[styles.input, { flex: 1, backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight, textAlign: "center", paddingHorizontal: 2 }]}
-                              placeholder="34"
-                              placeholderTextColor={colors.textSecondary}
-                              keyboardType="numeric"
-                              value={String(v.length || "")}
-                              onChangeText={(txt) => handleUpdateVariantField(v.id, "length", txt)}
-                            />
-                            <TextInput
-                              style={[styles.input, { flex: 1, backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight, textAlign: "center", paddingHorizontal: 2 }]}
-                              placeholder="24"
-                              placeholderTextColor={colors.textSecondary}
-                              keyboardType="numeric"
-                              value={String(v.width || "")}
-                              onChangeText={(txt) => handleUpdateVariantField(v.id, "width", txt)}
-                            />
-                            <TextInput
-                              style={[styles.input, { flex: 1, backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight, textAlign: "center", paddingHorizontal: 2 }]}
-                              placeholder="4"
-                              placeholderTextColor={colors.textSecondary}
-                              keyboardType="numeric"
-                              value={String(v.height || "")}
-                              onChangeText={(txt) => handleUpdateVariantField(v.id, "height", txt)}
-                            />
-                          </View>
-                        </View>
-                      </View>
-
-                      <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Seller SKU Code</Text>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.cardBg, color: colors.textPrimary, borderColor: colors.borderLight }]}
-                        placeholder="FD-RED-S"
-                        placeholderTextColor={colors.textSecondary}
-                        value={v.seller_sku}
-                        onChangeText={(txt) => handleUpdateVariantField(v.id, "seller_sku", txt)}
-                      />
-                    </View>
+                        return (
+                          <TouchableOpacity
+                            key={pId}
+                            style={[
+                              styles.matrixFilterChip,
+                              isCur
+                                ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary }
+                                : { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight },
+                            ]}
+                            onPress={() => setMatrixFilterColor(pId)}
+                            activeOpacity={0.75}
+                          >
+                            {pDot && (
+                              <View
+                                style={[
+                                  styles.colorDotIndicator,
+                                  {
+                                    backgroundColor: pDot,
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: 5,
+                                    marginRight: 6,
+                                    borderWidth: 1,
+                                    borderColor: isCur ? "#fff" : colors.borderLight,
+                                  },
+                                ]}
+                              />
+                            )}
+                            <Text
+                              style={[
+                                styles.matrixFilterChipText,
+                                {
+                                  color: isCur ? "#fff" : colors.textPrimary,
+                                  fontWeight: isCur ? "700" : "500",
+                                },
+                              ]}
+                            >
+                              {pName} ({count})
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
                   </View>
-                ))}
+                )}
+
+                <View style={styles.variantsCardList}>
+                  {displayedVariants.map((v, idx) => (
+                    <VariantItemCard
+                      key={v.id || idx}
+                      v={v}
+                      idx={idx}
+                      colors={colors}
+                      isDark={isDark}
+                      hasDesign={Boolean(designConfig?.has_design)}
+                      defaultDesignName={designName}
+                      onUpdateField={handleUpdateVariantField}
+                      onRemove={handleRemoveVariant}
+                    />
+                  ))}
 
                 <TouchableOpacity
                   style={[styles.addMoreVariantRowBtn, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: COLORS.primaryLight }]}
@@ -2261,33 +4165,45 @@ const AddSkuScreen = ({ navigation, route }) => {
                   </Text>
                 </TouchableOpacity>
               </View>
-            )}
-          </View>
+            </View>
+          )}
+        </View>
 
           {/* Submit Button */}
-          <TouchableOpacity
-            style={[
-              styles.submitBtn,
-              { backgroundColor: COLORS.primary },
-              variants.length === 0 && { opacity: 0.6 },
-            ]}
-            onPress={handleSubmitNewVariant}
-            disabled={isSubmittingVariant || variants.length === 0}
-            activeOpacity={0.85}
-          >
-            {isSubmittingVariant ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="paper-plane" size={18} color="#fff" style={{ marginRight: 8 }} />
-                <Text style={styles.submitBtnText}>
-                  {variants.length > 1
-                    ? `Submit ${variants.length} SKU Variants for Approval`
-                    : "Submit SKU Variant for Approval"}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {(() => {
+            const newCount = variants.filter((v) => !v.isAlreadyAdded || v.includeInSubmission).length;
+            const existingCount = variants.filter((v) => v.isAlreadyAdded).length;
+
+            return (
+              <TouchableOpacity
+                style={[
+                  styles.submitBtn,
+                  { backgroundColor: COLORS.primary },
+                  (variants.length === 0 || newCount === 0) && { opacity: 0.6 },
+                ]}
+                onPress={handleSubmitNewVariant}
+                disabled={isSubmittingVariant || variants.length === 0 || newCount === 0}
+                activeOpacity={0.85}
+              >
+                {isSubmittingVariant ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="paper-plane" size={18} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.submitBtnText}>
+                      {variants.length === 0
+                        ? "Select Attributes to Generate Variants"
+                        : newCount === 0
+                          ? `All ${existingCount} Variant(s) Already in Catalog`
+                          : newCount > 1
+                            ? `Submit ${newCount} New Variant(s) for Approval`
+                            : `Submit ${newCount} New Variant for Approval`}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            );
+          })()}
           <View style={{ height: 40 }} />
         </ScrollView>
       )}
@@ -2631,6 +4547,38 @@ const AddSkuScreen = ({ navigation, route }) => {
                   </View>
                 </View>
 
+                {loadingMapDesignConfig ? (
+                  <View style={{ flexDirection: "row", alignItems: "center", marginVertical: 6 }}>
+                    <ActivityIndicator size="small" color={COLORS.primary} style={{ marginRight: 6 }} />
+                    <Text style={{ fontSize: 12, color: colors.textSecondary }}>Checking product design settings...</Text>
+                  </View>
+                ) : mapDesignConfig?.has_design ? (
+                  <View style={{ marginTop: 4, marginBottom: 8 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 0 }]}>
+                        Design Name {mapDesignConfig.design_required ? "*" : "(Optional)"}
+                      </Text>
+                      {mapDesignConfig.design_required && (
+                        <Text style={{ fontSize: 11, color: COLORS.error, fontWeight: "600" }}>Required</Text>
+                      )}
+                    </View>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        {
+                          backgroundColor: colors.backgroundAlt,
+                          color: colors.textPrimary,
+                          borderColor: mapDesignConfig.design_required && !mapDesignName.trim() ? COLORS.error : colors.borderLight,
+                        },
+                      ]}
+                      placeholder="e.g. Printed, Floral 01, Embroidered"
+                      placeholderTextColor={colors.textSecondary}
+                      value={mapDesignName}
+                      onChangeText={setMapDesignName}
+                    />
+                  </View>
+                ) : null}
+
                 <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Seller Custom SKU (Optional)</Text>
                 <TextInput
                   style={[styles.input, { backgroundColor: colors.backgroundAlt, color: colors.textPrimary, borderColor: colors.borderLight }]}
@@ -2659,6 +4607,9 @@ const AddSkuScreen = ({ navigation, route }) => {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+
+
     </View>
   );
 };
@@ -2939,6 +4890,38 @@ const styles = StyleSheet.create({
   selectedIdBadgeText: {
     fontSize: 11,
     fontWeight: "700",
+  },
+  categoryDisplayContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  catIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  categoryDisplayText: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  autoAssignedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  autoAssignedBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
   },
   otherProductsWrap: {
     marginTop: 12,
@@ -3276,6 +5259,78 @@ const styles = StyleSheet.create({
   attrSelectedBadgeText: {
     fontSize: 11,
     fontWeight: "700",
+  },
+  existingSkusBanner: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  existingSkusBannerTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  existingSkusBannerSub: {
+    fontSize: 11,
+    lineHeight: 15,
+    marginBottom: 8,
+  },
+  existingSkusChipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  existingSkuBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  existingSkuBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  usedBadge: {
+    marginLeft: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+  },
+  usedBadgeText: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  alreadyAddedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  alreadyAddedBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  newVariantBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  newVariantBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  alreadyAddedNote: {
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 4,
+    fontWeight: "500",
   },
   attrChipsWrap: {
     flexDirection: "row",
@@ -3715,6 +5770,170 @@ const styles = StyleSheet.create({
   modalSub: {
     fontSize: 12,
     marginTop: 2,
+  },
+  modeSwitchWrap: {
+    flexDirection: "row",
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 3,
+    marginBottom: 14,
+  },
+  modeSwitchBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  modeSwitchBtnText: {
+    fontSize: 12,
+  },
+  stepSectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  stepSubHint: {
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  emptyPromptBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    marginTop: 6,
+    marginBottom: 12,
+  },
+  emptyPromptText: {
+    fontSize: 12,
+    marginLeft: 10,
+    flex: 1,
+    lineHeight: 17,
+  },
+  colorAccordionCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 10,
+    overflow: "hidden",
+  },
+  colorAccordionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  colorAccordionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    marginRight: 8,
+  },
+  colorAccordionBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  colorAccordionBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  colorAccordionBody: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(150, 150, 150, 0.12)",
+  },
+  colorAccordionActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginVertical: 8,
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  colorSecAttrLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  colorActionSmallBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  colorActionSmallBtnText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  filterRowLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 6,
+  },
+  matrixFilterRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingBottom: 4,
+  },
+  matrixFilterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 18,
+    borderWidth: 1,
+  },
+  matrixFilterChipText: {
+    fontSize: 12,
+  },
+  designLoadingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  designBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  designBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  designChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  designChipText: {
+    fontSize: 12,
+  },
+  designInputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 1,
+    minHeight: 46,
+  },
+  designTextInput: {
+    flex: 1,
+    fontSize: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
   },
 });
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   Image,
   StatusBar,
   PermissionsAndroid,
+  Keyboard,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -32,6 +33,7 @@ const BUSINESS_TYPES = [
 
 const StoreInfo = ({ navigation }) => {
   const { colors, isDarkMode } = useTheme();
+  const scrollViewRef = useRef(null);
 
   // Store Basic Fields
   const [storeName, setStoreName] = useState("");
@@ -48,6 +50,9 @@ const StoreInfo = ({ navigation }) => {
   const [postalCode, setPostalCode] = useState("");
   const [country, setCountry] = useState("India");
   const [deliveryRadiusKm, setDeliveryRadiusKm] = useState("15");
+  const [latitude, setLatitude] = useState(null);
+  const [longitude, setLongitude] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
 
   // Media (Logo & Banner)
   const [logoUri, setLogoUri] = useState("");
@@ -61,6 +66,8 @@ const StoreInfo = ({ navigation }) => {
   const [isVerified, setIsVerified] = useState(true);
   const [rating, setRating] = useState(4.5);
   const [totalRatings, setTotalRatings] = useState(0);
+  const [shiprocketPickupName, setShiprocketPickupName] = useState(null);
+  const [shiprocketWarning, setShiprocketWarning] = useState(null);
 
   // UI State
   const [isLoading, setIsLoading] = useState(false);
@@ -71,6 +78,42 @@ const StoreInfo = ({ navigation }) => {
   const [showPhotoPickerModal, setShowPhotoPickerModal] = useState(false);
   const [errors, setErrors] = useState({});
   const [activeField, setActiveField] = useState(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      (e) => {
+        setKeyboardHeight(e?.endCoordinates ? e.endCoordinates.height : 280);
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const handleInputFocus = (fieldKey, yOffset) => {
+    setActiveField(fieldKey);
+    setTimeout(() => {
+      if (scrollViewRef.current) {
+        scrollViewRef.current.scrollTo({ y: yOffset, animated: true });
+      }
+    }, 150);
+  };
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    if (scrollViewRef.current) {
+      scrollViewRef.current.scrollTo({ y: 0, animated: false });
+    }
+  };
 
   // Custom Alert State
   const [alertConfig, setAlertConfig] = useState({
@@ -180,6 +223,21 @@ const StoreInfo = ({ navigation }) => {
     setIsVerified(data.is_verified ?? true);
     setRating(data.rating || 4.5);
     setTotalRatings(data.total_ratings || 0);
+    if (data.latitude) setLatitude(String(data.latitude));
+    if (data.longitude) setLongitude(String(data.longitude));
+    const pName =
+      data.shiprocket_pickup_name ||
+      data.pickup_location ||
+      data.pickup_name ||
+      data.shipping_settings?.shiprocket_pickup_name ||
+      data.shipping_settings?.pickup_location ||
+      (data.id ? `DB-${data.id}` : null);
+    if (pName) {
+      setShiprocketPickupName(pName);
+    }
+    if (data.shiprocket_warning !== undefined) {
+      setShiprocketWarning(data.shiprocket_warning);
+    }
   };
 
   useEffect(() => {
@@ -190,6 +248,36 @@ const StoreInfo = ({ navigation }) => {
         const res = await getSellerProfile();
         if (res?.data) {
           populateData(res.data);
+        }
+
+        let detectedPickup =
+          res?.shiprocket_pickup_name ||
+          res?.pickup_location ||
+          res?.pickup_name ||
+          res?.data?.shiprocket_pickup_name ||
+          res?.data?.pickup_location ||
+          res?.data?.pickup_name ||
+          res?.data?.shipping_settings?.shiprocket_pickup_name ||
+          res?.data?.shipping_settings?.pickup_location ||
+          null;
+
+        if (!detectedPickup) {
+          const cached = await AsyncStorage.getItem("shiprocket_pickup_name");
+          if (cached) {
+            detectedPickup = cached;
+          } else if (res?.data?.id) {
+            detectedPickup = `DB-${res.data.id}`;
+          }
+        }
+
+        if (detectedPickup) {
+          setShiprocketPickupName(detectedPickup);
+          await AsyncStorage.setItem("shiprocket_pickup_name", detectedPickup);
+        }
+
+        const warning = res?.shiprocket_warning || res?.data?.shiprocket_warning || null;
+        if (warning !== null && warning !== undefined) {
+          setShiprocketWarning(warning);
         }
       } catch (err) {
         console.error("Error loading store info", err);
@@ -204,6 +292,120 @@ const StoreInfo = ({ navigation }) => {
   const handleOpenPhotoPicker = (target) => {
     setActiveMediaTarget(target);
     setShowPhotoPickerModal(true);
+  };
+
+  const handleFetchLiveLocation = async () => {
+    setIsLocating(true);
+    try {
+      let lat = null;
+      let lng = null;
+
+      // 1. Live Network/IP Geolocation (zero native dependency, works instantly without rebuilding APK)
+      try {
+        const ipRes = await fetch("https://ipwho.is/", {
+          headers: { Accept: "application/json" },
+        });
+        const ipData = await ipRes.json();
+        if (ipData && ipData.success) {
+          lat = ipData.latitude;
+          lng = ipData.longitude;
+          if (ipData.city) setCity(ipData.city);
+          if (ipData.region) setStateName(ipData.region);
+          if (ipData.postal) setPostalCode(ipData.postal);
+          if (ipData.country) setCountry(ipData.country);
+        }
+      } catch (ipErr) {
+        console.warn("Primary live location lookup error:", ipErr);
+      }
+
+      // 2. Secondary fallback
+      if (!lat || !lng) {
+        try {
+          const fallbackRes = await fetch("https://freeipapi.com/api/json");
+          const fallbackData = await fallbackRes.json();
+          if (fallbackData && fallbackData.latitude) {
+            lat = fallbackData.latitude;
+            lng = fallbackData.longitude;
+            if (fallbackData.cityName) setCity(fallbackData.cityName);
+            if (fallbackData.regionName) setStateName(fallbackData.regionName);
+            if (fallbackData.zipCode) setPostalCode(fallbackData.zipCode);
+            if (fallbackData.countryName) setCountry(fallbackData.countryName);
+          }
+        } catch (fbErr) {
+          console.warn("Secondary live location error:", fbErr);
+        }
+      }
+
+      if (!lat || !lng) {
+        showAlert({
+          type: "error",
+          title: "Location Unavailable",
+          message:
+            "Could not determine your current location. Please verify your internet connection or GPS settings.",
+          buttonText: "Okay",
+        });
+        setIsLocating(false);
+        return;
+      }
+
+      setLatitude(String(lat));
+      setLongitude(String(lng));
+
+      // 3. Reverse geocode via OpenStreetMap Nominatim for street/area details
+      try {
+        const geoRes = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`,
+          {
+            headers: {
+              "User-Agent": "DeeBazarSellerApp/1.0",
+            },
+          }
+        );
+        const data = await geoRes.json();
+        if (data && data.address) {
+          const addr = data.address;
+          const road = addr.road || addr.street || addr.suburb || addr.neighbourhood || "";
+          const area = addr.suburb || addr.village || addr.city_district || "";
+          const fullStreet = [road, area].filter(Boolean).join(", ");
+          if (fullStreet) {
+            setAddress(fullStreet);
+          } else if (data.display_name) {
+            setAddress(data.display_name.split(",").slice(0, 3).join(","));
+          }
+
+          const detectedCity = addr.city || addr.town || addr.village || addr.county || "";
+          if (detectedCity) setCity(detectedCity);
+
+          const detectedState = addr.state || "";
+          if (detectedState) setStateName(detectedState);
+
+          const detectedPostcode = addr.postcode || "";
+          if (detectedPostcode) setPostalCode(detectedPostcode);
+
+          const detectedCountry = addr.country || "India";
+          if (detectedCountry) setCountry(detectedCountry);
+        }
+      } catch (revErr) {
+        console.warn("Reverse geocode warning:", revErr);
+      }
+
+      showAlert({
+        type: "success",
+        title: "Live Location Detected!",
+        message: `Your store coordinates (Lat: ${Number(lat).toFixed(5)}, Lng: ${Number(lng).toFixed(5)}) and address details have been detected successfully.`,
+        buttonText: "Done",
+      });
+    } catch (err) {
+      console.error("Live location error:", err);
+      showAlert({
+        type: "error",
+        title: "Error",
+        message: err.message || "Failed to detect live location. Please try again.",
+        buttonText: "Okay",
+      });
+    } finally {
+      setIsLocating(false);
+    }
   };
 
   const handleChooseGallery = async () => {
@@ -330,6 +532,8 @@ const StoreInfo = ({ navigation }) => {
         if (deliveryRadiusKm.trim()) {
           formData.append("delivery_radius_km", String(parseInt(deliveryRadiusKm, 10)));
         }
+        if (latitude) formData.append("latitude", String(latitude));
+        if (longitude) formData.append("longitude", String(longitude));
 
         if (selectedLogo && selectedLogo.uri) {
           formData.append("logo", {
@@ -370,6 +574,8 @@ const StoreInfo = ({ navigation }) => {
           postal_code: postalCode.trim(),
           country: country.trim(),
           delivery_radius_km: parseInt(deliveryRadiusKm || "15", 10),
+          ...(latitude ? { latitude: parseFloat(latitude) } : {}),
+          ...(longitude ? { longitude: parseFloat(longitude) } : {}),
         };
       }
 
@@ -378,16 +584,50 @@ const StoreInfo = ({ navigation }) => {
         populateData(response.data);
       }
 
+      const updatedPickup =
+        response?.shiprocket_pickup_name ||
+        response?.pickup_location ||
+        response?.data?.shiprocket_pickup_name ||
+        response?.data?.pickup_location ||
+        (response?.shiprocket_pickup_name === null ? null : (response?.data?.id ? `DB-${response.data.id}` : null));
+
       setSelectedLogo(null);
       setSelectedBanner(null);
 
-      showAlert({
-        type: "success",
-        title: "Store Profile Updated!",
-        message: response?.message || "Your store details have been successfully saved.",
-        buttonText: "Done",
-        onConfirm: () => navigation.goBack(),
-      });
+      if (response && response.shiprocket_pickup_name === null) {
+        setShiprocketPickupName(null);
+        await AsyncStorage.removeItem("shiprocket_pickup_name");
+        setShiprocketWarning(response?.shiprocket_warning || "Pickup location not created");
+        const warningDetail = response?.shiprocket_warning
+          ? `\n\nReason: ${response.shiprocket_warning}`
+          : "";
+        showAlert({
+          type: "warning",
+          title: "Pickup Location Warning",
+          message: `Store profile updated, but delivery partner cannot pick up orders because pickup location could not be registered. Please check and provide your complete address correctly.${warningDetail}`,
+          buttonText: "Review Address",
+          onConfirm: () => {
+            setActiveTab("address");
+          },
+        });
+      } else {
+        if (updatedPickup) {
+          setShiprocketPickupName(updatedPickup);
+          await AsyncStorage.setItem("shiprocket_pickup_name", updatedPickup);
+        }
+        setShiprocketWarning(null);
+
+        const pickupDetail = updatedPickup
+          ? `\nPickup Location ID: ${updatedPickup}`
+          : "";
+        showAlert({
+          type: "success",
+          title: "Store Profile Updated!",
+          message: `${response?.message || "Your store details have been successfully saved."}${pickupDetail}`,
+          buttonText: "Done",
+          onConfirm: () => navigation.goBack(),
+        });
+      }
     } catch (err) {
       console.error("Error saving store info", err);
       if (err?.data?.errors) {
@@ -422,6 +662,7 @@ const StoreInfo = ({ navigation }) => {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
         style={styles.keyboardContainer}
       >
         {/* Header */}
@@ -460,7 +701,7 @@ const StoreInfo = ({ navigation }) => {
                   ? { backgroundColor: colors.primary }
                   : { backgroundColor: isDarkMode ? "rgba(255,255,255,0.08)" : "#F1F5F9" },
               ]}
-              onPress={() => setActiveTab("basic")}
+              onPress={() => handleTabChange("basic")}
             >
               <Ionicons
                 name="storefront-outline"
@@ -485,7 +726,7 @@ const StoreInfo = ({ navigation }) => {
                   ? { backgroundColor: colors.primary }
                   : { backgroundColor: isDarkMode ? "rgba(255,255,255,0.08)" : "#F1F5F9" },
               ]}
-              onPress={() => setActiveTab("address")}
+              onPress={() => handleTabChange("address")}
             >
               <Ionicons
                 name="location-outline"
@@ -510,7 +751,7 @@ const StoreInfo = ({ navigation }) => {
                   ? { backgroundColor: colors.primary }
                   : { backgroundColor: isDarkMode ? "rgba(255,255,255,0.08)" : "#F1F5F9" },
               ]}
-              onPress={() => setActiveTab("media")}
+              onPress={() => handleTabChange("media")}
             >
               <Ionicons
                 name="images-outline"
@@ -530,10 +771,15 @@ const StoreInfo = ({ navigation }) => {
         </View>
 
         <ScrollView
+          ref={scrollViewRef}
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 120 : 40 },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           {/* Store Banner & Logo Preview Bar */}
           <View style={styles.brandingHeader}>
@@ -628,7 +874,7 @@ const StoreInfo = ({ navigation }) => {
                       setStoreName(val);
                       if (errors.storeName) setErrors((prev) => ({ ...prev, storeName: null }));
                     }}
-                    onFocus={() => setActiveField("storeName")}
+                    onFocus={() => handleInputFocus("storeName", 100)}
                     onBlur={() => setActiveField(null)}
                   />
                 </View>
@@ -681,7 +927,7 @@ const StoreInfo = ({ navigation }) => {
                       setPhone(val.replace(/[^0-9]/g, ""));
                       if (errors.phone) setErrors((prev) => ({ ...prev, phone: null }));
                     }}
-                    onFocus={() => setActiveField("phone")}
+                    onFocus={() => handleInputFocus("phone", 180)}
                     onBlur={() => setActiveField(null)}
                   />
                 </View>
@@ -713,7 +959,7 @@ const StoreInfo = ({ navigation }) => {
                       setEmail(val);
                       if (errors.email) setErrors((prev) => ({ ...prev, email: null }));
                     }}
-                    onFocus={() => setActiveField("email")}
+                    onFocus={() => handleInputFocus("email", 260)}
                     onBlur={() => setActiveField(null)}
                   />
                 </View>
@@ -740,7 +986,7 @@ const StoreInfo = ({ navigation }) => {
                     autoCapitalize="characters"
                     value={taxNumber}
                     onChangeText={setTaxNumber}
-                    onFocus={() => setActiveField("taxNumber")}
+                    onFocus={() => handleInputFocus("taxNumber", 340)}
                     onBlur={() => setActiveField(null)}
                   />
                 </View>
@@ -773,7 +1019,7 @@ const StoreInfo = ({ navigation }) => {
                     numberOfLines={4}
                     value={description}
                     onChangeText={setDescription}
-                    onFocus={() => setActiveField("description")}
+                    onFocus={() => handleInputFocus("description", 420)}
                     onBlur={() => setActiveField(null)}
                   />
                 </View>
@@ -784,6 +1030,104 @@ const StoreInfo = ({ navigation }) => {
           {/* TAB 2: ADDRESS & DELIVERY */}
           {activeTab === "address" && (
             <View style={styles.formContainer}>
+              {/* Shiprocket Pickup Status Banner */}
+              {shiprocketPickupName ? (
+                <View
+                  style={[
+                    styles.pickupStatusCard,
+                    styles.pickupStatusCardSuccess,
+                    { borderColor: "rgba(16, 185, 129, 0.3)" },
+                  ]}
+                >
+                  <Ionicons name="checkmark-circle" size={24} color="#10B981" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pickupStatusTitle, { color: "#059669" }]}>
+                      Pickup Location Active ({shiprocketPickupName})
+                    </Text>
+                    <Text style={[styles.pickupStatusDesc, { color: colors.textSecondary }]}>
+                      Delivery partner pickup is verified and ready for this store.
+                    </Text>
+                  </View>
+                </View>
+              ) : shiprocketWarning ? (
+                <View
+                  style={[
+                    styles.pickupStatusCard,
+                    styles.pickupStatusCardWarning,
+                    { borderColor: "rgba(245, 158, 11, 0.3)" },
+                  ]}
+                >
+                  <Ionicons name="warning-outline" size={24} color="#D97706" style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pickupStatusTitle, { color: "#B45309" }]}>
+                      Pickup Location Not Configured
+                    </Text>
+                    <Text style={[styles.pickupStatusDesc, { color: colors.textSecondary }]}>
+                      Delivery partners cannot pick up orders from this store. Please provide a complete and accurate street address, city, state, and pincode.
+                    </Text>
+                    <Text style={[styles.pickupStatusNote, { color: "#D97706" }]}>
+                      Notice: {shiprocketWarning}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Live Location Fetch Button */}
+              <TouchableOpacity
+                style={[
+                  styles.liveLocationBtn,
+                  {
+                    backgroundColor: isDarkMode ? "rgba(59, 130, 246, 0.15)" : "#EFF6FF",
+                    borderColor: isDarkMode ? "#3B82F6" : "#BFDBFE",
+                  },
+                ]}
+                activeOpacity={0.8}
+                onPress={handleFetchLiveLocation}
+                disabled={isLocating}
+              >
+                {isLocating ? (
+                  <ActivityIndicator size="small" color="#2563EB" style={{ marginRight: 10 }} />
+                ) : (
+                  <Ionicons name="navigate" size={20} color="#2563EB" style={{ marginRight: 10 }} />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.liveLocationBtnText, { color: "#1D4ED8" }]}>
+                    {isLocating ? "Detecting GPS Location..." : "Use Current Live Location"}
+                  </Text>
+                  <Text style={[styles.liveLocationBtnSub, { color: colors.textSecondary }]}>
+                    Auto-fill address, city, state & pincode from GPS
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#2563EB" />
+              </TouchableOpacity>
+
+              {/* Coordinates Chip if detected */}
+              {latitude && longitude ? (
+                <View
+                  style={[
+                    styles.coordsCard,
+                    { backgroundColor: colors.cardBg, borderColor: colors.borderLight },
+                  ]}
+                >
+                  <Ionicons name="location" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                  <Text style={[styles.coordsText, { color: colors.textSecondary }]}>
+                    GPS:{" "}
+                    <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>
+                      {parseFloat(latitude).toFixed(5)}, {parseFloat(longitude).toFixed(5)}
+                    </Text>
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.coordsClearBtn}
+                    onPress={() => {
+                      setLatitude(null);
+                      setLongitude(null);
+                    }}
+                  >
+                    <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
               {/* Pickup / Store Address */}
               <View style={styles.inputWrapper}>
                 <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
@@ -815,7 +1159,7 @@ const StoreInfo = ({ navigation }) => {
                       setAddress(val);
                       if (errors.address) setErrors((prev) => ({ ...prev, address: null }));
                     }}
-                    onFocus={() => setActiveField("address")}
+                    onFocus={() => handleInputFocus("address", 100)}
                     onBlur={() => setActiveField(null)}
                   />
                 </View>
@@ -839,7 +1183,7 @@ const StoreInfo = ({ navigation }) => {
                       placeholderTextColor={colors.textGrayPlaceholder || "#94A3B8"}
                       value={city}
                       onChangeText={setCity}
-                      onFocus={() => setActiveField("city")}
+                      onFocus={() => handleInputFocus("city", 180)}
                       onBlur={() => setActiveField(null)}
                     />
                   </View>
@@ -860,7 +1204,7 @@ const StoreInfo = ({ navigation }) => {
                       placeholderTextColor={colors.textGrayPlaceholder || "#94A3B8"}
                       value={stateName}
                       onChangeText={setStateName}
-                      onFocus={() => setActiveField("state")}
+                      onFocus={() => handleInputFocus("state", 180)}
                       onBlur={() => setActiveField(null)}
                     />
                   </View>
@@ -886,7 +1230,7 @@ const StoreInfo = ({ navigation }) => {
                       maxLength={6}
                       value={postalCode}
                       onChangeText={setPostalCode}
-                      onFocus={() => setActiveField("postalCode")}
+                      onFocus={() => handleInputFocus("postalCode", 260)}
                       onBlur={() => setActiveField(null)}
                     />
                   </View>
@@ -907,7 +1251,7 @@ const StoreInfo = ({ navigation }) => {
                       placeholderTextColor={colors.textGrayPlaceholder || "#94A3B8"}
                       value={country}
                       onChangeText={setCountry}
-                      onFocus={() => setActiveField("country")}
+                      onFocus={() => handleInputFocus("country", 260)}
                       onBlur={() => setActiveField(null)}
                     />
                   </View>
@@ -939,7 +1283,7 @@ const StoreInfo = ({ navigation }) => {
                       setDeliveryRadiusKm(val.replace(/[^0-9]/g, ""));
                       if (errors.deliveryRadiusKm) setErrors((prev) => ({ ...prev, deliveryRadiusKm: null }));
                     }}
-                    onFocus={() => setActiveField("deliveryRadiusKm")}
+                    onFocus={() => handleInputFocus("deliveryRadiusKm", 340)}
                     onBlur={() => setActiveField(null)}
                   />
                   <Text style={[styles.inputUnitText, { color: colors.textSecondary }]}>KM</Text>
@@ -1207,6 +1551,8 @@ const StoreInfo = ({ navigation }) => {
                   styles.alertIconWrapper,
                   alertConfig.type === "success"
                     ? styles.alertIconWrapperSuccess
+                    : alertConfig.type === "warning"
+                    ? styles.alertIconWrapperWarning
                     : styles.alertIconWrapperError,
                 ]}
               >
@@ -1215,11 +1561,19 @@ const StoreInfo = ({ navigation }) => {
                     styles.alertIconInner,
                     alertConfig.type === "success"
                       ? styles.alertIconInnerSuccess
+                      : alertConfig.type === "warning"
+                      ? styles.alertIconInnerWarning
                       : styles.alertIconInnerError,
                   ]}
                 >
                   <Ionicons
-                    name={alertConfig.type === "success" ? "checkmark" : "alert"}
+                    name={
+                      alertConfig.type === "success"
+                        ? "checkmark"
+                        : alertConfig.type === "warning"
+                        ? "warning-outline"
+                        : "alert"
+                    }
                     size={26}
                     color="#FFFFFF"
                   />
@@ -1239,6 +1593,8 @@ const StoreInfo = ({ navigation }) => {
                   styles.alertBtn,
                   alertConfig.type === "success"
                     ? { backgroundColor: colors.primary }
+                    : alertConfig.type === "warning"
+                    ? { backgroundColor: "#F59E0B" }
                     : { backgroundColor: "#EF4444" },
                 ]}
                 activeOpacity={0.88}
@@ -1246,7 +1602,13 @@ const StoreInfo = ({ navigation }) => {
               >
                 <Text style={styles.alertBtnText}>{alertConfig.buttonText || "Okay"}</Text>
                 <Ionicons
-                  name={alertConfig.type === "success" ? "arrow-forward" : "refresh-outline"}
+                  name={
+                    alertConfig.type === "success"
+                      ? "arrow-forward"
+                      : alertConfig.type === "warning"
+                      ? "location-outline"
+                      : "refresh-outline"
+                  }
                   size={18}
                   color="#FFFFFF"
                   style={styles.alertBtnIcon}
@@ -1759,6 +2121,9 @@ const styles = StyleSheet.create({
   alertIconWrapperSuccess: {
     backgroundColor: "rgba(34, 197, 94, 0.15)",
   },
+  alertIconWrapperWarning: {
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+  },
   alertIconWrapperError: {
     backgroundColor: "rgba(239, 68, 68, 0.15)",
   },
@@ -1772,8 +2137,71 @@ const styles = StyleSheet.create({
   alertIconInnerSuccess: {
     backgroundColor: "#10B981",
   },
+  alertIconInnerWarning: {
+    backgroundColor: "#F59E0B",
+  },
   alertIconInnerError: {
     backgroundColor: "#EF4444",
+  },
+  pickupStatusCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  pickupStatusCardWarning: {
+    backgroundColor: "rgba(245, 158, 11, 0.08)",
+  },
+  pickupStatusCardSuccess: {
+    backgroundColor: "rgba(16, 185, 129, 0.08)",
+  },
+  pickupStatusTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  pickupStatusDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  pickupStatusNote: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  liveLocationBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  liveLocationBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  liveLocationBtnSub: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  coordsCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  coordsText: {
+    fontSize: 12,
+    flex: 1,
+  },
+  coordsClearBtn: {
+    padding: 2,
   },
   alertTitle: {
     fontSize: 20,

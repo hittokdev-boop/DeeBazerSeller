@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
   Platform,
   StatusBar,
   Modal,
+  Switch,
+  Keyboard,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -21,10 +23,14 @@ import { getShippingSettings, updateShippingSettings, getSellerProfile } from ".
 
 const ShippingSettings = ({ navigation }) => {
   const { colors, isDarkMode } = useTheme();
+  const scrollViewRef = useRef(null);
 
-  const [freeShippingAbove, setFreeShippingAbove] = useState("");
-  const [standardRate, setStandardRate] = useState("");
-  const [expressRate, setExpressRate] = useState("");
+  const [isPickupEnabled, setIsPickupEnabled] = useState(true);
+  const [isSellerDeliveryEnabled, setIsSellerDeliveryEnabled] = useState(true);
+  const [freeShippingAbove, setFreeShippingAbove] = useState("999");
+  const [deliveryRadiusKm, setDeliveryRadiusKm] = useState("5");
+  const [standardRate, setStandardRate] = useState("40");
+  const [expressRate, setExpressRate] = useState("90");
   const [processingDays, setProcessingDays] = useState("2");
   const [shipsFrom, setShipsFrom] = useState("");
 
@@ -32,6 +38,26 @@ const ShippingSettings = ({ navigation }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [activeField, setActiveField] = useState(null);
   const [errors, setErrors] = useState({});
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      (e) => {
+        setKeyboardHeight(e?.endCoordinates ? e.endCoordinates.height : 280);
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Custom Alert Modal State
   const [alertConfig, setAlertConfig] = useState({
@@ -78,9 +104,29 @@ const ShippingSettings = ({ navigation }) => {
         const res = await getShippingSettings();
         const data = res?.data || res;
         if (data) {
+          if (data.is_pickup_enabled !== undefined && data.is_pickup_enabled !== null) {
+            setIsPickupEnabled(
+              data.is_pickup_enabled === true ||
+              data.is_pickup_enabled === 1 ||
+              data.is_pickup_enabled === "1" ||
+              data.is_pickup_enabled === "true"
+            );
+          }
+          if (data.is_seller_delivery_enabled !== undefined && data.is_seller_delivery_enabled !== null) {
+            setIsSellerDeliveryEnabled(
+              data.is_seller_delivery_enabled === true ||
+              data.is_seller_delivery_enabled === 1 ||
+              data.is_seller_delivery_enabled === "1" ||
+              data.is_seller_delivery_enabled === "true"
+            );
+          }
           if (data.free_shipping_above !== undefined && data.free_shipping_above !== null) {
             const val = parseFloat(data.free_shipping_above);
             setFreeShippingAbove(!isNaN(val) ? String(val) : String(data.free_shipping_above));
+          }
+          if (data.delivery_radius_km !== undefined && data.delivery_radius_km !== null) {
+            const val = parseInt(data.delivery_radius_km, 10);
+            setDeliveryRadiusKm(!isNaN(val) ? String(val) : String(data.delivery_radius_km));
           }
           if (data.standard_delivery_rate !== undefined && data.standard_delivery_rate !== null) {
             const val = parseFloat(data.standard_delivery_rate);
@@ -114,8 +160,15 @@ const ShippingSettings = ({ navigation }) => {
 
   const validate = () => {
     let tempErrors = {};
+    if (!isPickupEnabled && !isSellerDeliveryEnabled) {
+      tempErrors.deliveryMethods = "Please enable at least one fulfillment method (Store Pickup or Seller Delivery)";
+    }
     if (freeShippingAbove.trim() === "" || isNaN(Number(freeShippingAbove))) {
       tempErrors.freeShippingAbove = "Enter valid free shipping threshold";
+    }
+    const radiusNum = parseInt(deliveryRadiusKm, 10);
+    if (deliveryRadiusKm.trim() === "" || isNaN(radiusNum) || radiusNum < 1 || radiusNum > 500) {
+      tempErrors.deliveryRadiusKm = "Delivery radius must be between 1 and 500 km";
     }
     if (standardRate.trim() === "" || isNaN(Number(standardRate))) {
       tempErrors.standardRate = "Enter valid standard delivery rate";
@@ -138,7 +191,10 @@ const ShippingSettings = ({ navigation }) => {
     setIsSaving(true);
     try {
       const payload = {
+        is_pickup_enabled: Boolean(isPickupEnabled),
+        is_seller_delivery_enabled: Boolean(isSellerDeliveryEnabled),
         free_shipping_above: Number(freeShippingAbove) || 0,
+        delivery_radius_km: parseInt(deliveryRadiusKm || "5", 10),
         standard_delivery_rate: Number(standardRate) || 0,
         express_delivery_rate: Number(expressRate) || 0,
         order_processing_time: parseInt(processingDays || "1", 10),
@@ -155,6 +211,18 @@ const ShippingSettings = ({ navigation }) => {
       });
     } catch (err) {
       console.warn("Error updating shipping settings:", err?.message || err);
+
+      if (err?.data?.errors) {
+        const fieldErrors = {};
+        if (err.data.errors.delivery_radius_km) fieldErrors.deliveryRadiusKm = err.data.errors.delivery_radius_km[0];
+        if (err.data.errors.free_shipping_above) fieldErrors.freeShippingAbove = err.data.errors.free_shipping_above[0];
+        if (err.data.errors.standard_delivery_rate) fieldErrors.standardRate = err.data.errors.standard_delivery_rate[0];
+        if (err.data.errors.express_delivery_rate) fieldErrors.expressRate = err.data.errors.express_delivery_rate[0];
+        if (err.data.errors.order_processing_time) fieldErrors.processingDays = err.data.errors.order_processing_time[0];
+        if (Object.keys(fieldErrors).length > 0) {
+          setErrors(fieldErrors);
+        }
+      }
 
       showAlert({
         type: "error",
@@ -188,6 +256,7 @@ const ShippingSettings = ({ navigation }) => {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
         style={styles.keyboardContainer}
       >
         {/* Header */}
@@ -205,10 +274,15 @@ const ShippingSettings = ({ navigation }) => {
         </View>
 
         <ScrollView
+          ref={scrollViewRef}
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 100 : 40 },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           {/* Information Card */}
           <View
@@ -229,6 +303,132 @@ const ShippingSettings = ({ navigation }) => {
                 Configure delivery rates shown to buyers at checkout, free shipping limits, and fulfillment speed.
               </Text>
             </View>
+          </View>
+
+          {/* Fulfillment Methods (Store Pickup & Seller Delivery) */}
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: colors.cardBg, borderColor: colors.borderLight },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <View style={[styles.iconBox, { backgroundColor: "rgba(99, 102, 241, 0.12)" }]}>
+                <Ionicons name="cube-outline" size={20} color="#6366F1" />
+              </View>
+              <View style={styles.cardTitleBox}>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+                  Fulfillment Methods
+                </Text>
+                <Text style={[styles.cardSub, { color: colors.textSecondary }]}>
+                  Choose fulfillment and delivery options available to buyers
+                </Text>
+              </View>
+            </View>
+
+            {/* Store Pickup Toggle */}
+            <View style={[styles.switchRow, { borderBottomColor: colors.borderLight }]}>
+              <View style={[styles.switchIconBox, { backgroundColor: "rgba(16, 185, 129, 0.12)" }]}>
+                <Ionicons name="storefront-outline" size={20} color="#10B981" />
+              </View>
+              <View style={styles.switchTextBox}>
+                <Text style={[styles.switchTitle, { color: colors.textPrimary }]}>
+                  Store Pickup
+                </Text>
+                <Text style={[styles.switchSub, { color: colors.textSecondary }]}>
+                  Allow customers to pick up orders directly from your physical hub
+                </Text>
+              </View>
+              <Switch
+                value={isPickupEnabled}
+                onValueChange={(val) => {
+                  setIsPickupEnabled(val);
+                  if (errors.deliveryMethods) setErrors((prev) => ({ ...prev, deliveryMethods: null }));
+                }}
+                trackColor={{ false: isDarkMode ? "#475569" : "#CBD5E1", true: colors.primary }}
+                thumbColor={isPickupEnabled ? "#ffffff" : "#f4f3f4"}
+              />
+            </View>
+
+            {/* Seller Delivery Toggle */}
+            <View style={[styles.switchRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+              <View style={[styles.switchIconBox, { backgroundColor: "rgba(59, 130, 246, 0.12)" }]}>
+                <Ionicons name="bicycle-outline" size={20} color="#3B82F6" />
+              </View>
+              <View style={styles.switchTextBox}>
+                <Text style={[styles.switchTitle, { color: colors.textPrimary }]}>
+                  Seller Delivery
+                </Text>
+                <Text style={[styles.switchSub, { color: colors.textSecondary }]}>
+                  Deliver orders to buyer address with standard or express shipping
+                </Text>
+              </View>
+              <Switch
+                value={isSellerDeliveryEnabled}
+                onValueChange={(val) => {
+                  setIsSellerDeliveryEnabled(val);
+                  if (errors.deliveryMethods) setErrors((prev) => ({ ...prev, deliveryMethods: null }));
+                }}
+                trackColor={{ false: isDarkMode ? "#475569" : "#CBD5E1", true: colors.primary }}
+                thumbColor={isSellerDeliveryEnabled ? "#ffffff" : "#f4f3f4"}
+              />
+            </View>
+
+            {errors.deliveryMethods && (
+              <Text style={styles.errorText}>{errors.deliveryMethods}</Text>
+            )}
+          </View>
+
+          {/* Section: Delivery Coverage Radius */}
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: colors.cardBg, borderColor: colors.borderLight },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <View style={[styles.iconBox, { backgroundColor: "rgba(249, 115, 22, 0.12)" }]}>
+                <Ionicons name="navigate-circle-outline" size={20} color="#EA580C" />
+              </View>
+              <View style={styles.cardTitleBox}>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+                  Delivery Coverage Radius (KM)
+                </Text>
+                <Text style={[styles.cardSub, { color: colors.textSecondary }]}>
+                  Maximum delivery distance covered from your store hub
+                </Text>
+              </View>
+            </View>
+
+            <View
+              style={[
+                styles.inputFieldContainer,
+                { backgroundColor: colors.backgroundAlt, borderColor: colors.borderMedium || "#CBD5E1" },
+                activeField === "deliveryRadiusKm" && { borderColor: colors.primary },
+                errors.deliveryRadiusKm && styles.inputFieldError,
+              ]}
+            >
+              <Ionicons name="location-outline" size={18} color={colors.textSecondary} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.textInput, { color: colors.textPrimary }]}
+                placeholder="5"
+                placeholderTextColor={colors.textGrayPlaceholder || "#94A3B8"}
+                keyboardType="numeric"
+                maxLength={4}
+                value={deliveryRadiusKm}
+                onChangeText={(val) => {
+                  setDeliveryRadiusKm(val.replace(/[^0-9]/g, ""));
+                  if (errors.deliveryRadiusKm) setErrors((prev) => ({ ...prev, deliveryRadiusKm: null }));
+                }}
+                onFocus={() => setActiveField("deliveryRadiusKm")}
+                onBlur={() => setActiveField(null)}
+              />
+              <Text style={[styles.unitSuffix, { color: colors.textSecondary }]}>KM</Text>
+            </View>
+            {errors.deliveryRadiusKm && <Text style={styles.errorText}>{errors.deliveryRadiusKm}</Text>}
+            <Text style={[styles.helperText, { color: colors.textSecondary, marginTop: 8 }]}>
+              Orders placed within this radius will be eligible for delivery (1 to 500 km).
+            </Text>
           </View>
 
           {/* Section 1: Free Shipping Threshold */}
@@ -263,7 +463,7 @@ const ShippingSettings = ({ navigation }) => {
               <Text style={[styles.currencyPrefix, { color: colors.primary }]}>₹</Text>
               <TextInput
                 style={[styles.textInput, { color: colors.textPrimary }]}
-                placeholder="499"
+                placeholder="999"
                 placeholderTextColor={colors.textGrayPlaceholder || "#94A3B8"}
                 keyboardType="numeric"
                 value={freeShippingAbove}
@@ -314,7 +514,7 @@ const ShippingSettings = ({ navigation }) => {
                   <Text style={[styles.currencyPrefix, { color: colors.textSecondary }]}>₹</Text>
                   <TextInput
                     style={[styles.textInput, { color: colors.textPrimary }]}
-                    placeholder="49"
+                    placeholder="40"
                     placeholderTextColor={colors.textGrayPlaceholder || "#94A3B8"}
                     keyboardType="numeric"
                     value={standardRate}
@@ -343,7 +543,7 @@ const ShippingSettings = ({ navigation }) => {
                   <Text style={[styles.currencyPrefix, { color: colors.textSecondary }]}>₹</Text>
                   <TextInput
                     style={[styles.textInput, { color: colors.textPrimary }]}
-                    placeholder="99"
+                    placeholder="90"
                     placeholderTextColor={colors.textGrayPlaceholder || "#94A3B8"}
                     keyboardType="numeric"
                     value={expressRate}
@@ -461,7 +661,21 @@ const ShippingSettings = ({ navigation }) => {
               </Text>
             </View>
             <Text style={[styles.previewLine, { color: colors.textSecondary }]}>
+              • Fulfillment: <Text style={{ fontWeight: "700", color: colors.textPrimary }}>
+                {isPickupEnabled && isSellerDeliveryEnabled
+                  ? "Store Pickup & Seller Delivery"
+                  : isPickupEnabled
+                  ? "Store Pickup Only"
+                  : isSellerDeliveryEnabled
+                  ? "Seller Delivery Only"
+                  : "None"}
+              </Text>
+            </Text>
+            <Text style={[styles.previewLine, { color: colors.textSecondary }]}>
               • Standard Delivery: <Text style={{ fontWeight: "700", color: colors.textPrimary }}>₹{standardRate || "0"}</Text> (Free above ₹{freeShippingAbove || "0"})
+            </Text>
+            <Text style={[styles.previewLine, { color: colors.textSecondary }]}>
+              • Delivery Radius: <Text style={{ fontWeight: "700", color: colors.textPrimary }}>{deliveryRadiusKm || "0"} km</Text>
             </Text>
             <Text style={[styles.previewLine, { color: colors.textSecondary }]}>
               • Express Delivery: <Text style={{ fontWeight: "700", color: colors.textPrimary }}>₹{expressRate || "0"}</Text>
@@ -700,6 +914,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginRight: 6,
   },
+  unitSuffix: {
+    fontSize: 13,
+    fontWeight: "700",
+    marginLeft: 6,
+  },
   inputIcon: {
     marginRight: 8,
   },
@@ -718,6 +937,33 @@ const styles = StyleSheet.create({
   },
   marginRight8: {
     marginRight: 8,
+  },
+  switchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  switchIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  switchTextBox: {
+    flex: 1,
+    marginRight: 12,
+  },
+  switchTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  switchSub: {
+    fontSize: 11,
+    lineHeight: 15,
   },
   inputWrapper: {
     marginTop: 14,

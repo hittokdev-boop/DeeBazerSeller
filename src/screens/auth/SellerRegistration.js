@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -19,7 +19,7 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { launchImageLibrary } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
-import { BASE_URL, getSellerCategories } from "../../api/auth";
+import { BASE_URL, getSellerCategories, registerSeller } from "../../api/auth";
 
 const CATEGORIES = [
   "Electronics",
@@ -103,6 +103,7 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
     city: "",
     state: "",
     postalCode: "",
+    country: "India",
     businessType: "individual", // individual, company, partnership
 
     gstin: "",
@@ -148,11 +149,8 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
       if (!form.storeName.trim() || form.storeName.trim().length < 3) {
         stepErrors.storeName = "Store name must be at least 3 characters";
       }
-      if (!form.category) {
-        stepErrors.category = "Please select a store category";
-      }
-      if (!form.address.trim() || form.address.trim().length < 10) {
-        stepErrors.address = "Address must be at least 10 characters";
+      if (!form.address.trim() || form.address.trim().length < 5) {
+        stepErrors.address = "Address must be at least 5 characters";
       }
       if (!form.city.trim()) {
         stepErrors.city = "City is required";
@@ -203,38 +201,46 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
   const handleRegister = async () => {
     setIsSubmitting(true);
     try {
-      const url = `${BASE_URL}register`;
-      const data = new FormData();
+      let payload;
+      const ownerName = (form.ownerName || "").trim();
+      const email = (form.email || "").trim().toLowerCase();
+      const mobile = (form.phone || "").trim();
+      const password = form.password;
+      const storeName = (form.storeName || "").trim();
+      const storeDescription =
+        (form.description || "").trim() || `${storeName} products and accessories`;
+      const businessType = form.businessType || "individual";
+      const address = (form.address || "").trim();
+      const city = (form.city || "").trim();
+      const state = (form.state || "").trim();
+      const postalCode = (form.postalCode || "").trim();
+      const country = (form.country || "India").trim();
 
-      // Mapping screen form fields to API fields
-      data.append("name", form.ownerName || "");
-      data.append("email", form.email || "");
-      data.append("mobile", form.phone || "");
-      data.append("password", form.password || "");
-      data.append("password_confirmation", form.password || "");
-      data.append("store_name", form.storeName || "");
-      data.append("store_description", form.description || "");
-
-      data.append("business_type", form.businessType || "individual");
-      if (form.gstin) {
-        data.append("gst_number", form.gstin);
-      }
-      if (form.panNumber) {
-        data.append("pan_number", form.panNumber);
-      }
-
-      data.append("address", form.address || "");
-      data.append("city", form.city || "");
-      data.append("state", form.state || "");
-      data.append("postal_code", form.postalCode || "");
-
-      data.append("bank_name", form.bankName || "");
-      data.append("bank_account_number", form.accountNo || "");
-      data.append("bank_ifsc_code", form.ifscCode || "");
-      data.append("bank_account_holder_name", form.bankHolderName || form.ownerName || "");
-
-      // Handle Logo Upload if present
       if (form.logoUri) {
+        const data = new FormData();
+        data.append("name", ownerName);
+        data.append("email", email);
+        data.append("mobile", mobile);
+        data.append("password", password);
+        data.append("password_confirmation", password);
+        data.append("store_name", storeName);
+        data.append("store_description", storeDescription);
+        data.append("business_type", businessType);
+        data.append("address", address);
+        data.append("city", city);
+        data.append("state", state);
+        data.append("postal_code", postalCode);
+        data.append("country", country);
+
+        if (form.gstin?.trim()) data.append("gst_number", form.gstin.trim());
+        if (form.panNumber?.trim()) data.append("pan_number", form.panNumber.trim());
+        if (form.bankName?.trim()) data.append("bank_name", form.bankName.trim());
+        if (form.accountNo?.trim()) data.append("bank_account_number", form.accountNo.trim());
+        if (form.ifscCode?.trim()) data.append("bank_ifsc_code", form.ifscCode.trim());
+        if (form.bankHolderName?.trim()) {
+          data.append("bank_account_holder_name", form.bankHolderName.trim());
+        }
+
         const uri = form.logoUri;
         const filename = uri.split("/").pop();
         const match = /\.(\w+)$/.exec(filename);
@@ -245,54 +251,67 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
           name: filename || "logo.jpg",
           type: type,
         });
+
+        payload = data;
+      } else {
+        payload = {
+          name: ownerName,
+          email: email,
+          mobile: mobile,
+          password: password,
+          password_confirmation: password,
+          store_name: storeName,
+          store_description: storeDescription,
+          business_type: businessType,
+          address: address,
+          city: city,
+          state: state,
+          postal_code: postalCode,
+          country: country,
+        };
+
+        if (form.gstin?.trim()) payload.gst_number = form.gstin.trim();
+        if (form.panNumber?.trim()) payload.pan_number = form.panNumber.trim();
+        if (form.bankName?.trim()) payload.bank_name = form.bankName.trim();
+        if (form.accountNo?.trim()) payload.bank_account_number = form.accountNo.trim();
+        if (form.ifscCode?.trim()) payload.bank_ifsc_code = form.ifscCode.trim();
+        if (form.bankHolderName?.trim()) {
+          payload.bank_account_holder_name = form.bankHolderName.trim();
+        }
       }
 
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "multipart/form-data",
-        },
-        body: data,
-      });
-
-      const responseText = await response.text();
-      let responseData;
-      try {
-        responseData = JSON.parse(responseText);
-      } catch (e) {
-        throw new Error(`Invalid response from server: ${responseText}`);
-      }
-
-      if (!response.ok) {
-        const error = new Error(responseData.message || "Registration failed");
-        error.errors = responseData.errors;
-        throw error;
-      }
+      const responseData = await registerSeller(payload);
 
       const profileData = {
         ...form,
         registeredAt: new Date().toISOString(),
-        ...responseData.data,
+        ...(responseData?.data?.seller || responseData?.data || {}),
+        shiprocket_pickup_name: responseData?.shiprocket_pickup_name || null,
       };
 
       await AsyncStorage.setItem("isRegistered", "true");
 
+      const successMessage =
+        responseData?.message ||
+        "Registration successful! Your seller account is under review. We will notify you once approved.";
+
       showAlert(
         "Registration Successful",
-        "Your seller account is registered successfully and is currently pending review. Please wait for administrator approval before logging in.",
+        successMessage,
         "success",
         () => {
           if (onRegisterSuccess) {
             onRegisterSuccess(profileData);
-          } else {
+          } else if (navigation?.navigate) {
             navigation.navigate("Login");
+          } else if (navigation?.goBack) {
+            navigation.goBack();
           }
         }
       );
     } catch (error) {
-      if (error.errors) {
-        const errorList = Object.values(error.errors).flat().join("\n");
+      if (error.errors && typeof error.errors === "object") {
+        const errorList = Object.values(error.errors).flat().filter(Boolean).join("\n");
         showAlert("Validation Error", errorList || error.message, "error");
       } else {
         showAlert("Registration Error", error.message || "Something went wrong. Please try again.", "error");
@@ -661,6 +680,26 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
               </View>
             </View>
 
+            {/* Country */}
+            <View style={styles.inputWrapper}>
+              <Text style={styles.inputLabel}>Country</Text>
+              <View style={styles.inputFieldContainer}>
+                <Ionicons
+                  name="globe-outline"
+                  size={20}
+                  color={COLORS.textGrayLight}
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Country"
+                  placeholderTextColor={COLORS.textGrayPlaceholder}
+                  value={form.country}
+                  onChangeText={(val) => handleInputChange("country", val)}
+                />
+              </View>
+            </View>
+
             {/* Business Description */}
             <View style={styles.inputWrapper}>
               <Text style={styles.inputLabel}>Store Description</Text>
@@ -793,9 +832,9 @@ const SellerRegistration = ({ navigation, onRegisterSuccess }) => {
               <View style={styles.reviewDivider} />
 
               <View style={styles.reviewRow}>
-                <Text style={styles.reviewLabel}>Pickup City</Text>
+                <Text style={styles.reviewLabel}>Pickup Address</Text>
                 <Text style={styles.reviewValue}>
-                  {form.city ? `${form.city}, ${form.state || ""}` : "Not specified"}
+                  {form.city ? `${form.address}, ${form.city}, ${form.state || ""} ${form.postalCode || ""} (${form.country || "India"})` : "Not specified"}
                 </Text>
               </View>
             </View>

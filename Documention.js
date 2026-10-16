@@ -268,15 +268,55 @@
 // | `banner` | file | jpeg/png/jpg/webp, max 4MB |
 
 // **Response** — `200`
-
+//
 // ```json
 // {
-//   "status": 200,
-//   "message": "Store profile updated successfully.",
-//   "data": { "...updated profile object..."
+//   "status": 200,
+//   "message": "Store profile updated successfully.",
+//   "shiprocket_warning": null,
+//   "shiprocket_pickup_name": "DB-1",
+//   "data": {
+//     "id": 1,
+//     "store_name": "Hittok",
+//     "store_slug": "hittokk-1",
+//     "description": "ABCDEFGH",
+//     "logo_url": "https://deebazar.com/admin/images/uploads/sellers/logos/1790236437_hittok.jpg",
+//     "banner_url": "https://deebazar.com/admin/assets/front_end/modern/img/product-placeholder.jpg",
+//     "business_type": "individual",
+//     "tax_number": null,
+//     "phone": "6289833491",
+//     "email": "ananyasaha010@gmail.com",
+//     "address": "A-12/5, Sreenagar West, Srinagar, Panchpota, Garia",
+//     "city": "Kolkata",
+//     "state": "West Bengal",
+//     "postal_code": "700094",
+//     "country": "India",
+//     "latitude": "22.6010232",
+//     "longitude": "88.4051100",
+//     "delivery_radius_km": 10,
+//     "is_location_enabled": false,
+//     "status": "approved",
+//     "is_verified": true,
+//     "is_featured": false,
+//     "commission_rate": 10,
+//     "wallet_balance": 0,
+//     "pending_balance": 0,
+//     "total_earnings": 0,
+//     "total_orders": 0,
+//     "rating": 0,
+//     "total_ratings": 0,
+//     "store_policies": null,
+//     "shipping_settings": null,
+//     "approved_at": null,
+//     "created_at": "2026-09-24T07:53:57.000000Z"
+//   }
 // }
 // ```
-
+//
+// > **Important Note on Delivery Partner / Shiprocket:**
+// > - `shiprocket_pickup_name`: If `null`, Shiprocket could not create/verify the pickup location for the seller. Delivery partners cannot pick up items from this store until the address (street, city, state, postal code) is entered correctly.
+// > - `shiprocket_warning`: Contains any warning or failure explanation from Shiprocket (e.g. invalid pincode, unsupported area, or validation error) if pickup location creation failed.
+//
 // ---
 
 // ## 7. Bank Details
@@ -344,22 +384,46 @@
 
 // ## 9. Shipping Settings
 
-// ### `PUT /api/seller/shipping-settings`
+// ### `POST /api/seller/shipping-settings` (also accepts `PUT`)
 
 // | Field | Type | Description |
 // |---|---|---|
-// | `free_shipping_above` | numeric | Order amount above which shipping is free (e.g. 499) |
-// | `standard_rate` | numeric | Standard shipping charge |
-// | `express_rate` | numeric | Express shipping charge |
-// | `processing_days` | integer | Days to process before dispatch (0–30) |
-// | `ships_from` | string | City/location label shown to buyers |
+// | `is_pickup_enabled` | boolean | Enable / disable in-store customer pickup (`true`/`false`) |
+// | `is_seller_delivery_enabled` | boolean | Enable / disable seller courier delivery (`true`/`false`) |
+// | `free_shipping_above` | numeric | Order amount above which shipping is free (e.g. 999) |
+// | `delivery_radius_km` | integer | Maximum delivery radius in kilometers (e.g. 5, 1–500) |
+// | `standard_delivery_rate` | numeric | Standard shipping charge (e.g. 40) |
+// | `express_delivery_rate` | numeric | Express shipping charge (e.g. 90) |
+// | `order_processing_time` | integer | Days to process before dispatch (e.g. 2, 0–30) |
+
+// **Request Body**
+// ```json
+// {
+//   "is_pickup_enabled": true,
+//   "is_seller_delivery_enabled": true,
+//   "free_shipping_above": 999,
+//   "delivery_radius_km": 5,
+//   "standard_delivery_rate": 40,
+//   "express_delivery_rate": 90,
+//   "order_processing_time": 2
+// }
+// ```
 
 // **Response** — `200`
 
 // ```json
 // {
-//   "status": 200,
-//   "message": "Shipping settings updated successfully."
+//   "status": true,
+//   "message": "Shipping settings updated successfully.",
+//   "data": {
+//     "is_pickup_enabled": true,
+//     "is_seller_delivery_enabled": true,
+//     "free_shipping_above": 999,
+//     "delivery_radius_km": 5,
+//     "standard_delivery_rate": 40,
+//     "express_delivery_rate": 90,
+//     "order_processing_time": 2
+//   }
 // }
 // ```
 
@@ -1304,7 +1368,10 @@
 //     "status": true,
 //     "message": "Shipping settings retrieved successfully.",
 //     "data": {
-//         "free_shipping_above": "500.00",
+//         "is_pickup_enabled": true,
+//         "is_seller_delivery_enabled": true,
+//         "free_shipping_above": "999.00",
+//         "delivery_radius_km": 5,
 //         "standard_delivery_rate": "40.00",
 //         "express_delivery_rate": "90.00",
 //         "order_processing_time": 2
@@ -1315,17 +1382,23 @@
 // authorization : bearer_token
 // body:
 // {
-//   "free_shipping_above": 500,
-//   "standard_delivery_rate": 40,
-//   "express_delivery_rate": 90,
-//   "order_processing_time": 2
+//   "is_pickup_enabled": true,
+//   "is_seller_delivery_enabled": true,
+//   "free_shipping_above": 999,
+//   "delivery_radius_km": 5,
+//   "standard_delivery_rate": 40,
+//   "express_delivery_rate": 90,
+//   "order_processing_time": 2
 // }
 // response:
 // {
 //     "status": true,
 //     "message": "Shipping settings updated successfully.",
 //     "data": {
-//         "free_shipping_above": 500,
+//         "is_pickup_enabled": true,
+//         "is_seller_delivery_enabled": true,
+//         "free_shipping_above": 999,
+//         "delivery_radius_km": 5,
 //         "standard_delivery_rate": 40,
 //         "express_delivery_rate": 90,
 //         "order_processing_time": 2
@@ -1615,6 +1688,9 @@
 // 3. **Case 3: New SKU Add with Multiple Attributes & Photo Differentiator (`image_by`)**:
 //    Create matrix variants (e.g. Color ID 1 + Size ID 2) differentiating photos by color (`image_by: 1`, `images[1]`, `images[2]`).
 //
+// 4. **Case 4: New SKU Add with Custom Design (`design_name`)**:
+//    Create variants under products supporting custom designs. If `design_name` is different, the same attributes can be added as new variants without duplicate errors.
+//
 // **Endpoint:** `POST /api/seller/skus`
 // **Headers:** `Authorization: Bearer {token}`
 // **Request Format:** `multipart/form-data`
@@ -1814,3 +1890,57 @@
 //     }
 // }
 // ```
+//
+// ---
+//
+// ### Flow 4: New SKU Add with Custom Design (`design_name`) & Photo Grouping
+//
+// Used when adding SKU variants for a product that supports custom design variants (`has_design === true`).
+//
+// **Uniqueness & Duplicate Rule:**
+// - Design name যদি এক হয় তাহলে same attribute আলাদা হবে না (duplicate হিসেবে গণ্য হবে)।
+// - Design name যদি আলাদা হয় তাহলে same attribute নিয়ে নতুন SKU add হবে।
+//
+// ```
+// POST : {{base_url}}api/seller/skus
+// Content-Type: multipart/form-data
+//
+// Body:
+// product_id: 1
+// image_by: 1
+// design_name: printed
+// variants[0][attributes][1]: 3
+// variants[0][attributes][2]: 8
+// variants[0][stock_quantity]: 100
+// variants[0][price]: 1099
+// variants[0][sale_price]: 799
+// variants[0][weight]: 0.02
+// variants[0][seller_sku]: GREEN-XS
+// images[3]: file
+// ```
+//
+// ---
+//
+// ## 32. Product Has Design Configuration
+//
+// Check if a catalog product supports custom design variants before adding SKUs.
+//
+// **Endpoint:** `GET /api/seller/products/{id}/has-design-config`
+// **Headers:** `Authorization: Bearer {token}`
+//
+// **Response (200):**
+// ```json
+// {
+//     "status": 200,
+//     "data": {
+//         "product_id": 4,
+//         "has_design": true,
+//         "design_required": true,
+//         "designs": []
+//     }
+// }
+// ```
+//
+// - `has_design` (`boolean`): `true` হলে SKU যোগ করার সময় Design Name ইনপুট আসবে।
+// - `design_required` (`boolean`): `true` হলে Design Name দেওয়া বাধ্যতামূলক (*)।
+// - `designs` (`array`): পূর্বনির্ধারিত বা সাজেস্টেড ডিজাইনের তালিকা (যদি থাকে)।

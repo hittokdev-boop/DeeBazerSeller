@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
   Image,
   PermissionsAndroid,
   RefreshControl,
+  Keyboard,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { launchImageLibrary, launchCamera } from "react-native-image-picker";
@@ -24,6 +25,7 @@ import { updateSellerProfile, getSellerMe } from "../../api/auth";
 
 const EditProfile = ({ navigation }) => {
   const { colors, isDarkMode } = useTheme();
+  const scrollViewRef = useRef(null);
   const [ownerName, setOwnerName] = useState("");
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
@@ -36,6 +38,35 @@ const EditProfile = ({ navigation }) => {
   const [showPhotoPickerModal, setShowPhotoPickerModal] = useState(false);
   const [errors, setErrors] = useState({});
   const [activeField, setActiveField] = useState(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      (e) => {
+        setKeyboardHeight(e?.endCoordinates ? e.endCoordinates.height : 280);
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const handleInputFocus = (fieldKey, yOffset) => {
+    setActiveField(fieldKey);
+    setTimeout(() => {
+      if (scrollViewRef.current) {
+        scrollViewRef.current.scrollTo({ y: yOffset, animated: true });
+      }
+    }, 150);
+  };
 
   // Custom Alert State
   const [alertConfig, setAlertConfig] = useState({
@@ -314,6 +345,7 @@ const EditProfile = ({ navigation }) => {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
         style={styles.keyboardContainer}
       >
         {/* Header */}
@@ -329,9 +361,15 @@ const EditProfile = ({ navigation }) => {
         </View>
 
         <ScrollView
+          ref={scrollViewRef}
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 100 : 40 },
+          ]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
@@ -417,7 +455,7 @@ const EditProfile = ({ navigation }) => {
                     setOwnerName(val);
                     if (errors.ownerName) setErrors((prev) => ({ ...prev, ownerName: null }));
                   }}
-                  onFocus={() => setActiveField("ownerName")}
+                  onFocus={() => handleInputFocus("ownerName", 60)}
                   onBlur={() => setActiveField(null)}
                 />
               </View>
@@ -447,7 +485,7 @@ const EditProfile = ({ navigation }) => {
                     setEmail(val);
                     if (errors.email) setErrors((prev) => ({ ...prev, email: null }));
                   }}
-                  onFocus={() => setActiveField("email")}
+                  onFocus={() => handleInputFocus("email", 140)}
                   onBlur={() => setActiveField(null)}
                 />
               </View>
@@ -477,7 +515,7 @@ const EditProfile = ({ navigation }) => {
                     setMobile(val.replace(/[^0-9]/g, ""));
                     if (errors.mobile) setErrors((prev) => ({ ...prev, mobile: null }));
                   }}
-                  onFocus={() => setActiveField("mobile")}
+                  onFocus={() => handleInputFocus("mobile", 240)}
                   onBlur={() => setActiveField(null)}
                 />
               </View>

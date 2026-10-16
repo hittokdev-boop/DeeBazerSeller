@@ -170,4 +170,6 @@ export {
   addSellerSku,
   updateSkuStock,
   getSellerCategories,
+  registerSeller,
+  getProductDesignConfig,
 } from "./auth";

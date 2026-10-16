@@ -14,7 +14,8 @@ import {
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getApprovedProducts } from "../../api/auth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getApprovedProducts, getSellerCategories, getSellerProducts } from "../../api/auth";
 
 export const normalizeImageUrl = (img) => {
   if (!img) return null;
@@ -51,6 +52,94 @@ const AdminApprovedProducts = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [categoriesList, setCategoriesList] = useState([]);
+  const [savedCats, setSavedCats] = useState({});
+  const [sellerProductsMap, setSellerProductsMap] = useState({});
+
+  useEffect(() => {
+    getSellerCategories()
+      .then((cats) => {
+        const list = Array.isArray(cats) ? cats : cats?.data || [];
+        if (Array.isArray(list) && list.length > 0) setCategoriesList(list);
+      })
+      .catch(() => {});
+
+    AsyncStorage.getItem("@seller_saved_product_categories")
+      .then((raw) => {
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") setSavedCats(parsed);
+        }
+      })
+      .catch(() => {});
+
+    getSellerProducts({ per_page: 50 })
+      .then((res) => {
+        const pList = res?.data?.products || (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(pList) && pList.length > 0) {
+          const catMap = {};
+          pList.forEach((item) => {
+            const p = item.product;
+            if (p) {
+              if (p.id) catMap[String(p.id)] = p.category;
+              if (p.name) catMap[p.name.toLowerCase().trim()] = p.category;
+            }
+          });
+          setSellerProductsMap(catMap);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const resolveItemCategory = useCallback(
+    (item) => {
+      if (!item) return { id: null, name: "Catalog Product" };
+      if (item.category_id || item.categoryId) {
+        const cId = Number(item.category_id || item.categoryId);
+        const match = categoriesList.find((c) => Number(c.id) === cId);
+        if (match) return { id: match.id, name: match.name };
+      }
+      if (typeof item.category === "object" && item.category?.name) {
+        return { id: item.category?.id || null, name: item.category.name };
+      }
+      if (typeof item.category === "string" && item.category.trim()) {
+        const match = categoriesList.find((c) => (c.name || "").toLowerCase() === item.category.toLowerCase().trim());
+        if (match) return { id: match.id, name: match.name };
+        return { id: null, name: item.category };
+      }
+      const pIdStr = String(item.id || "");
+      const pNameLower = (item.name || "").toLowerCase().trim();
+      if (savedCats) {
+        const saved = savedCats[pIdStr] || (pNameLower ? savedCats[pNameLower] : null);
+        if (saved) return { id: saved.id || null, name: saved.name || `Category #${saved.id}` };
+      }
+      if (sellerProductsMap) {
+        const fromSeller = sellerProductsMap[pIdStr] || (pNameLower ? sellerProductsMap[pNameLower] : null);
+        if (fromSeller) {
+          if (typeof fromSeller === "string") {
+            const match = categoriesList.find((c) => (c.name || "").toLowerCase() === fromSeller.toLowerCase());
+            return { id: match ? match.id : null, name: match ? match.name : fromSeller };
+          }
+        }
+      }
+      if (pNameLower) {
+        if (pNameLower.includes("laptop") || pNameLower.includes("phone") || pNameLower.includes("samsung") || pNameLower.includes("mobile")) {
+          const elec = categoriesList.find((c) => (c.slug || c.name || "").toLowerCase().includes("electronics"));
+          if (elec) return { id: elec.id, name: elec.name };
+        }
+        if (pNameLower.includes("dress") || pNameLower.includes("shirt") || pNameLower.includes("tee") || pNameLower.includes("pant") || pNameLower.includes("top")) {
+          const fash = categoriesList.find((c) => (c.slug || c.name || "").toLowerCase().includes("fashion"));
+          if (fash) return { id: fash.id, name: fash.name };
+        }
+        if (pNameLower.includes("dal") || pNameLower.includes("rice") || pNameLower.includes("oil") || pNameLower.includes("grocery")) {
+          const groc = categoriesList.find((c) => (c.slug || c.name || "").toLowerCase().includes("grocery"));
+          if (groc) return { id: groc.id, name: groc.name };
+        }
+      }
+      return { id: null, name: "Catalog Product" };
+    },
+    [categoriesList, savedCats, sellerProductsMap]
+  );
 
   const fetchList = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -80,10 +169,11 @@ const AdminApprovedProducts = ({ navigation }) => {
     const q = searchQuery.toLowerCase().trim();
     return products.filter((item) => {
       const name = (item.name || "").toLowerCase();
-      const cat = (typeof item.category === "object" ? item.category?.name : item.category || "").toLowerCase();
+      const resolved = resolveItemCategory(item);
+      const cat = (resolved?.name || "").toLowerCase();
       return name.includes(q) || cat.includes(q) || String(item.id).includes(q);
     });
-  }, [products, searchQuery]);
+  }, [products, searchQuery, resolveItemCategory]);
 
   const renderItem = ({ item }) => {
     const rawImage =
@@ -92,9 +182,8 @@ const AdminApprovedProducts = ({ navigation }) => {
       (Array.isArray(item.images) ? item.images[0] : item.images) ||
       item.thumbnail;
     const imageUri = normalizeImageUrl(rawImage);
-    const catName =
-      (typeof item.category === "object" ? item.category?.name : item.category) ||
-      "Master Product";
+    const resolvedCat = resolveItemCategory(item);
+    const catName = resolvedCat.name;
 
     return (
       <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
@@ -149,7 +238,12 @@ const AdminApprovedProducts = ({ navigation }) => {
             onPress={() =>
               navigation.navigate("AddSku", {
                 initialTab: "new_variant",
-                preselectedProduct: item,
+                preselectedProduct: {
+                  ...item,
+                  category_id: resolvedCat.id,
+                  category_name: resolvedCat.name,
+                  category: { id: resolvedCat.id, name: resolvedCat.name },
+                },
               })
             }
             activeOpacity={0.85}
