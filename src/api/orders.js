@@ -53,11 +53,12 @@ export const getOrder = async (id) => {
       Authorization: `Bearer ${token}`,
     },
   });
-  // console.log(token)
   const responseText = await response.text();
   let responseData;
   try {
     responseData = JSON.parse(responseText);
+    console.log(responseData, 'jkjfkl')
+
   } catch (e) {
     throw new Error("Invalid response format");
   }

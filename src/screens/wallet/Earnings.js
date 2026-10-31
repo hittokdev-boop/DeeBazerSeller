@@ -22,7 +22,7 @@ import LoggedOutView from "../../components/common/LoggedOutView";
 const Earnings = () => {
   const { colors } = useTheme();
   const navigation = useNavigation();
-  
+
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -44,14 +44,14 @@ const Earnings = () => {
       if (response && response.data) {
         const user = response.data.user || {};
         const seller = response.data.seller || {};
-        
+
         const mergedProfile = {
           ...user,
           ...seller,
           walletBalance: seller.wallet_balance || 0,
           totalEarnings: seller.total_earnings || 0,
         };
-        
+
         setProfile(mergedProfile);
       }
     } catch (err) {

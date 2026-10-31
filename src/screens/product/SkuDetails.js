@@ -717,6 +717,18 @@ const SkuDetails = () => {
               </Text>
             </View>
 
+            {(sku?.hsn_code || listing?.hsn_code || product?.hsn_code || product?.hsn) ? (
+              <View style={[styles.specRow, { borderBottomColor: colors.borderLight }]}>
+                <Text style={[styles.specKey, { color: colors.textSecondary }]}>HSN Code</Text>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="barcode-outline" size={14} color={COLORS.primary} style={{ marginRight: 4 }} />
+                  <Text style={[styles.specVal, { color: COLORS.primary, fontWeight: "700" }]}>
+                    {sku?.hsn_code || listing?.hsn_code || product?.hsn_code || product?.hsn}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
             <View style={[styles.specRow, { borderBottomColor: colors.borderLight }]}>
               <Text style={[styles.specKey, { color: colors.textSecondary }]}>Listing Status</Text>
               <View style={[styles.inlineBadge, { backgroundColor: listingBadge.bg }]}>

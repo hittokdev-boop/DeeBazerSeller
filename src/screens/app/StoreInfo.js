@@ -22,6 +22,7 @@ import { launchImageLibrary, launchCamera } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { getSellerProfile, updateSellerProfile } from "../../api/auth";
+import { fetchAccurateLiveLocation, getStaticMapPreviewUrl, geocodeAddressAPI, openLocationPinInMaps } from "../../services/mapService";
 
 const BUSINESS_TYPES = [
   { id: "individual", label: "Individual / Sole Proprietor" },
@@ -223,8 +224,13 @@ const StoreInfo = ({ navigation }) => {
     setIsVerified(data.is_verified ?? true);
     setRating(data.rating || 4.5);
     setTotalRatings(data.total_ratings || 0);
-    if (data.latitude) setLatitude(String(data.latitude));
-    if (data.longitude) setLongitude(String(data.longitude));
+    const lat = data.latitude || data.lat;
+    const lng = data.longitude || data.lng;
+    if (lat) setLatitude(String(lat));
+    if (lng) setLongitude(String(lng));
+    if (lat || lng) {
+      console.log("📍 [StoreInfo] Loaded existing store location:", { latitude: lat, longitude: lng });
+    }
     const pName =
       data.shiprocket_pickup_name ||
       data.pickup_location ||
@@ -295,112 +301,116 @@ const StoreInfo = ({ navigation }) => {
   };
 
   const handleFetchLiveLocation = async () => {
+    console.log("📍 [StoreInfo] 'Use Current Live Location' clicked");
     setIsLocating(true);
     try {
-      let lat = null;
-      let lng = null;
+      const loc = await fetchAccurateLiveLocation();
 
-      // 1. Live Network/IP Geolocation (zero native dependency, works instantly without rebuilding APK)
-      try {
-        const ipRes = await fetch("https://ipwho.is/", {
-          headers: { Accept: "application/json" },
-        });
-        const ipData = await ipRes.json();
-        if (ipData && ipData.success) {
-          lat = ipData.latitude;
-          lng = ipData.longitude;
-          if (ipData.city) setCity(ipData.city);
-          if (ipData.region) setStateName(ipData.region);
-          if (ipData.postal) setPostalCode(ipData.postal);
-          if (ipData.country) setCountry(ipData.country);
-        }
-      } catch (ipErr) {
-        console.warn("Primary live location lookup error:", ipErr);
-      }
+      console.log("📍 [StoreInfo] ================= LIVE LOCATION DETECTED =================");
+      console.log("📍 [StoreInfo] Latitude :", loc?.latitude);
+      console.log("📍 [StoreInfo] Longitude:", loc?.longitude);
+      console.log("📍 [StoreInfo] Address  :", loc?.address);
+      console.log("📍 [StoreInfo] City     :", loc?.city);
+      console.log("📍 [StoreInfo] State    :", loc?.state);
+      console.log("📍 [StoreInfo] Pincode  :", loc?.postalCode);
+      console.log("📍 [StoreInfo] Provider :", loc?.isGpsAccurate ? "High-Accuracy GPS" : "Network/IP");
+      console.log("📍 [StoreInfo] ==========================================================");
 
-      // 2. Secondary fallback
-      if (!lat || !lng) {
-        try {
-          const fallbackRes = await fetch("https://freeipapi.com/api/json");
-          const fallbackData = await fallbackRes.json();
-          if (fallbackData && fallbackData.latitude) {
-            lat = fallbackData.latitude;
-            lng = fallbackData.longitude;
-            if (fallbackData.cityName) setCity(fallbackData.cityName);
-            if (fallbackData.regionName) setStateName(fallbackData.regionName);
-            if (fallbackData.zipCode) setPostalCode(fallbackData.zipCode);
-            if (fallbackData.countryName) setCountry(fallbackData.countryName);
-          }
-        } catch (fbErr) {
-          console.warn("Secondary live location error:", fbErr);
-        }
-      }
-
-      if (!lat || !lng) {
+      if (!loc || !loc.latitude || !loc.longitude) {
         showAlert({
           type: "error",
           title: "Location Unavailable",
           message:
-            "Could not determine your current location. Please verify your internet connection or GPS settings.",
+            "Could not determine your GPS location. Please turn on device Location/GPS and grant permission.",
           buttonText: "Okay",
         });
-        setIsLocating(false);
         return;
       }
 
-      setLatitude(String(lat));
-      setLongitude(String(lng));
+      setLatitude(String(loc.latitude));
+      setLongitude(String(loc.longitude));
 
-      // 3. Reverse geocode via OpenStreetMap Nominatim for street/area details
-      try {
-        const geoRes = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`,
-          {
-            headers: {
-              "User-Agent": "DeeBazarSellerApp/1.0",
-            },
-          }
-        );
-        const data = await geoRes.json();
-        if (data && data.address) {
-          const addr = data.address;
-          const road = addr.road || addr.street || addr.suburb || addr.neighbourhood || "";
-          const area = addr.suburb || addr.village || addr.city_district || "";
-          const fullStreet = [road, area].filter(Boolean).join(", ");
-          if (fullStreet) {
-            setAddress(fullStreet);
-          } else if (data.display_name) {
-            setAddress(data.display_name.split(",").slice(0, 3).join(","));
-          }
+      if (loc.address) setAddress(loc.address);
+      if (loc.city) setCity(loc.city);
+      if (loc.state) setStateName(loc.state);
+      if (loc.postalCode) setPostalCode(loc.postalCode);
+      if (loc.country) setCountry(loc.country);
 
-          const detectedCity = addr.city || addr.town || addr.village || addr.county || "";
-          if (detectedCity) setCity(detectedCity);
+      setErrors((prev) => ({
+        ...prev,
+        address: null,
+        city: null,
+        state: null,
+        postal_code: null,
+      }));
 
-          const detectedState = addr.state || "";
-          if (detectedState) setStateName(detectedState);
-
-          const detectedPostcode = addr.postcode || "";
-          if (detectedPostcode) setPostalCode(detectedPostcode);
-
-          const detectedCountry = addr.country || "India";
-          if (detectedCountry) setCountry(detectedCountry);
-        }
-      } catch (revErr) {
-        console.warn("Reverse geocode warning:", revErr);
-      }
+      const latDisplay = Number(loc.latitude).toFixed(5);
+      const lngDisplay = Number(loc.longitude).toFixed(5);
+      const accuracyNote = loc.isGpsAccurate
+        ? "High-precision GPS"
+        : "Network Location";
 
       showAlert({
         type: "success",
         title: "Live Location Detected!",
-        message: `Your store coordinates (Lat: ${Number(lat).toFixed(5)}, Lng: ${Number(lng).toFixed(5)}) and address details have been detected successfully.`,
+        message: `Store coordinates (${latDisplay}, ${lngDisplay}) and address have been detected accurately via Google Maps (${accuracyNote}).`,
         buttonText: "Done",
       });
     } catch (err) {
-      console.error("Live location error:", err);
+      console.error("❌ [StoreInfo] Live location error:", err);
       showAlert({
         type: "error",
-        title: "Error",
-        message: err.message || "Failed to detect live location. Please try again.",
+        title: "Location Error",
+        message: err.message || "Failed to detect live location. Please verify GPS and try again.",
+        buttonText: "Okay",
+      });
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
+  const handleLocateByAddress = async () => {
+    const fullQuery = [address, city, stateName, postalCode, country].filter(Boolean).join(", ");
+    if (!fullQuery.trim()) {
+      showAlert({
+        type: "warning",
+        title: "Address Required",
+        message: "Please enter your street address, city, or pincode first to locate on map.",
+        buttonText: "Okay",
+      });
+      return;
+    }
+
+    setIsLocating(true);
+    try {
+      const result = await geocodeAddressAPI(fullQuery);
+      if (result && result.latitude && result.longitude) {
+        setLatitude(String(result.latitude));
+        setLongitude(String(result.longitude));
+        if (result.city && !city) setCity(result.city);
+        if (result.state && !stateName) setStateName(result.state);
+        if (result.postalCode && !postalCode) setPostalCode(result.postalCode);
+        if (result.country && !country) setCountry(result.country);
+
+        showAlert({
+          type: "success",
+          title: "Address Verified!",
+          message: `Coordinates detected: (${Number(result.latitude).toFixed(5)}, ${Number(result.longitude).toFixed(5)}). Address verified via Google Maps.`,
+          buttonText: "Done",
+        });
+      } else {
+        showAlert({
+          type: "error",
+          title: "Address Not Found",
+          message: "Google Maps could not find coordinates for this address. Please check spelling or use the live GPS button.",
+          buttonText: "Okay",
+        });
+      }
+    } catch (err) {
+      showAlert({
+        type: "error",
+        title: "Search Error",
+        message: err.message || "Failed to locate address.",
         buttonText: "Okay",
       });
     } finally {
@@ -532,8 +542,14 @@ const StoreInfo = ({ navigation }) => {
         if (deliveryRadiusKm.trim()) {
           formData.append("delivery_radius_km", String(parseInt(deliveryRadiusKm, 10)));
         }
-        if (latitude) formData.append("latitude", String(latitude));
-        if (longitude) formData.append("longitude", String(longitude));
+        if (latitude !== null && latitude !== undefined && String(latitude).trim() !== "") {
+          formData.append("latitude", String(latitude));
+          formData.append("lat", String(latitude));
+        }
+        if (longitude !== null && longitude !== undefined && String(longitude).trim() !== "") {
+          formData.append("longitude", String(longitude));
+          formData.append("lng", String(longitude));
+        }
 
         if (selectedLogo && selectedLogo.uri) {
           formData.append("logo", {
@@ -574,12 +590,24 @@ const StoreInfo = ({ navigation }) => {
           postal_code: postalCode.trim(),
           country: country.trim(),
           delivery_radius_km: parseInt(deliveryRadiusKm || "15", 10),
-          ...(latitude ? { latitude: parseFloat(latitude) } : {}),
-          ...(longitude ? { longitude: parseFloat(longitude) } : {}),
+          ...(latitude ? { latitude: parseFloat(latitude), lat: parseFloat(latitude) } : {}),
+          ...(longitude ? { longitude: parseFloat(longitude), lng: parseFloat(longitude) } : {}),
         };
       }
 
+      console.log("🚀 [StoreInfo] ================= SAVING STORE PROFILE =================");
+      console.log("🚀 [StoreInfo] Live Latitude to API  :", latitude);
+      console.log("🚀 [StoreInfo] Live Longitude to API :", longitude);
+      if (hasFiles) {
+        console.log("🚀 [StoreInfo] Payload: FormData (multipart/form-data with lat & lng)");
+      } else {
+        console.log("🚀 [StoreInfo] Payload (JSON):", JSON.stringify(payload, null, 2));
+      }
+      console.log("🚀 [StoreInfo] =========================================================");
+
       const response = await updateSellerProfile(payload);
+      console.log("✅ [StoreInfo] Store profile updated successfully!");
+      console.log("✅ [StoreInfo] API Response:", response);
       if (response?.data) {
         populateData(response.data);
       }
@@ -1101,38 +1129,85 @@ const StoreInfo = ({ navigation }) => {
                 <Ionicons name="chevron-forward" size={16} color="#2563EB" />
               </TouchableOpacity>
 
-              {/* Coordinates Chip if detected */}
+              {/* Coordinates Chip & Google Maps Preview if detected */}
               {latitude && longitude ? (
-                <View
-                  style={[
-                    styles.coordsCard,
-                    { backgroundColor: colors.cardBg, borderColor: colors.borderLight },
-                  ]}
-                >
-                  <Ionicons name="location" size={16} color={colors.primary} style={{ marginRight: 6 }} />
-                  <Text style={[styles.coordsText, { color: colors.textSecondary }]}>
-                    GPS:{" "}
-                    <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>
-                      {parseFloat(latitude).toFixed(5)}, {parseFloat(longitude).toFixed(5)}
-                    </Text>
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.coordsClearBtn}
-                    onPress={() => {
-                      setLatitude(null);
-                      setLongitude(null);
-                    }}
+                <View style={styles.storeMapWrapper}>
+                  <View
+                    style={[
+                      styles.coordsCard,
+                      { backgroundColor: colors.cardBg, borderColor: colors.borderLight, marginBottom: 8 },
+                    ]}
                   >
-                    <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
-                  </TouchableOpacity>
+                    <Ionicons name="location" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+                    <Text style={[styles.coordsText, { color: colors.textSecondary }]}>
+                      GPS:{" "}
+                      <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>
+                        {parseFloat(latitude).toFixed(5)}, {parseFloat(longitude).toFixed(5)}
+                      </Text>
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.coordsClearBtn}
+                      onPress={() => {
+                        setLatitude(null);
+                        setLongitude(null);
+                      }}
+                    >
+                      <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {getStaticMapPreviewUrl({ latitude, longitude, width: 600, height: 180, zoom: 16 }) ? (
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onPress={() =>
+                        openLocationPinInMaps({
+                          latitude,
+                          longitude,
+                          address: [address, city, stateName, postalCode].filter(Boolean).join(", "),
+                          customerName: storeName || "My Store Location",
+                        })
+                      }
+                      style={styles.storeMapPreview}
+                    >
+                      <Image
+                        source={{
+                          uri: getStaticMapPreviewUrl({
+                            latitude,
+                            longitude,
+                            width: 600,
+                            height: 180,
+                            zoom: 16,
+                          }),
+                        }}
+                        style={styles.storeMapImage}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.storeMapOverlay}>
+                        <Ionicons name="open-outline" size={12} color="#FFFFFF" />
+                        <Text style={styles.storeMapOverlayText}>Open in Google Maps</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               ) : null}
 
               {/* Pickup / Store Address */}
               <View style={styles.inputWrapper}>
-                <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                  Pickup & Registered Store Address *
-                </Text>
+                <View style={styles.addressLabelRow}>
+                  <Text style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 0 }]}>
+                    Pickup & Registered Store Address *
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.locateAddressBtn}
+                    onPress={handleLocateByAddress}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="search-outline" size={12} color={colors.primary} />
+                    <Text style={[styles.locateAddressBtnText, { color: colors.primary }]}>
+                      Verify on Map
+                    </Text>
+                  </TouchableOpacity>
+                </View>
                 <View
                   style={[
                     styles.inputFieldContainer,
@@ -2186,6 +2261,57 @@ const styles = StyleSheet.create({
   liveLocationBtnSub: {
     fontSize: 12,
     marginTop: 2,
+  },
+  storeMapWrapper: {
+    marginBottom: 16,
+  },
+  storeMapPreview: {
+    height: 140,
+    borderRadius: 12,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    position: "relative",
+  },
+  storeMapImage: {
+    width: "100%",
+    height: "100%",
+  },
+  storeMapOverlay: {
+    position: "absolute",
+    bottom: 8,
+    right: 8,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  storeMapOverlayText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "600",
+    marginLeft: 4,
+  },
+  addressLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  locateAddressBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: "rgba(37, 99, 235, 0.08)",
+  },
+  locateAddressBtnText: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginLeft: 4,
   },
   coordsCard: {
     flexDirection: "row",

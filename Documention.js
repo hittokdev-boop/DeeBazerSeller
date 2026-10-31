@@ -1708,24 +1708,29 @@
 // Body:
 // product_id: 3
 // min_stock_alert: 10
+// hsn_code_id: 13157
 // variants[0][product_sku_id]: 6
 // variants[0][stock_quantity]: 60
 // variants[0][price]: 68
 // variants[0][sale_price]: 63
 // variants[0][seller_sku]: B-MD-250G
+// variants[0][hsn_code_id]: 13157
 // variants[1][product_sku_id]: 7
 // variants[1][stock_quantity]: 30
 // variants[1][price]: 130
 // variants[1][seller_sku]: B-MD-500G
+// variants[1][hsn_code_id]: 13157
 // variants[2][product_sku_id]: 8
 // variants[2][stock_quantity]: 25
 // variants[2][price]: 250
 // variants[2][sale_price]: 238
 // variants[2][seller_sku]: B-MD-1KG
+// variants[2][hsn_code_id]: 13157
 // variants[3][product_sku_id]: 9
 // variants[3][stock_quantity]: 12
 // variants[3][price]: 620
 // variants[3][seller_sku]: B-MD-2KG
+// variants[3][hsn_code_id]: 13157
 // ```
 //
 // ---
@@ -1742,12 +1747,14 @@
 // product_id: 3
 // image_by: 11
 // min_stock_alert: 10
+// hsn_code_id: 13157
 // variants[0][attributes][11]: 50
 // variants[0][stock_quantity]: 100
 // variants[0][price]: 70
 // variants[0][sale_price]: 65
 // variants[0][weight]: 0.5
 // variants[0][seller_sku]: MD-250G
+// variants[0][hsn_code_id]: 13157
 // variants[1][attributes][11]: 51
 // variants[1][stock_quantity]: 80
 // variants[1][price]: 135
@@ -1785,6 +1792,7 @@
 // product_id: 1
 // image_by: 1
 // min_stock_alert: 2
+// hsn_code_id: 13157
 // variants[0][name]: Floral Dress Red S
 // variants[0][attributes][1]: 1
 // variants[0][attributes][2]: 9
@@ -1797,6 +1805,7 @@
 // variants[0][height]: 4
 // variants[0][seller_sku]: FD-RED-S
 // variants[0][min_stock_alert]: 2
+// variants[0][hsn_code_id]: 13157
 // variants[1][name]: Floral Dress Red M
 // variants[1][attributes][1]: 1
 // variants[1][attributes][2]: 10
@@ -1909,6 +1918,7 @@
 // product_id: 1
 // image_by: 1
 // design_name: printed
+// hsn_code_id: 13157
 // variants[0][attributes][1]: 3
 // variants[0][attributes][2]: 8
 // variants[0][stock_quantity]: 100
@@ -1916,6 +1926,7 @@
 // variants[0][sale_price]: 799
 // variants[0][weight]: 0.02
 // variants[0][seller_sku]: GREEN-XS
+// variants[0][hsn_code_id]: 13157
 // images[3]: file
 // ```
 //
@@ -1944,3 +1955,93 @@
 // - `has_design` (`boolean`): `true` হলে SKU যোগ করার সময় Design Name ইনপুট আসবে।
 // - `design_required` (`boolean`): `true` হলে Design Name দেওয়া বাধ্যতামূলক (*)।
 // - `designs` (`array`): পূর্বনির্ধারিত বা সাজেস্টেড ডিজাইনের তালিকা (যদি থাকে)।
+//
+// ---
+//
+// ## 33. HSN List by Search
+//
+// Search HSN (Harmonized System of Nomenclature) tax codes by code number or prefix.
+//
+// **Endpoint:** `POST /api/seller/hsn/search`
+// **Headers:**
+// - `Authorization: Bearer {token}`
+// - `Accept: application/json`
+//
+// **Request Format:** `multipart/form-data` or `application/x-www-form-urlencoded` or `application/json`
+//
+// **Request Body Parameters:**
+// - `hsn_code_like` (string, required): Partial or full HSN code (e.g. `0101`)
+//
+// **Response (200):**
+// ```json
+// {
+//     "status": true,
+//     "data": [
+//         {
+//             "id": 1,
+//             "hsn_code": "01011010",
+//             "description": "LIVE HORSES, ASSES, MULES AND HINNIES PURE-BRED BREEDING ANIMALS HORSES"
+//         },
+//         {
+//             "id": 2,
+//             "hsn_code": "01011020",
+//             "description": "LIVE HORSES, ASSES, MULESANDHINNIES PURE-BRED BREEDING ANIMALS ASSES"
+//         },
+//         {
+//             "id": 3,
+//             "hsn_code": "01011090",
+//             "description": "LIVE HORSES, ASSES, MULES AND HINNIES PURE-BRED BREEDING ANIMAL S OTHER"
+//         },
+//         {
+//             "id": 4,
+//             "hsn_code": "01012100",
+//             "description": "PURE-BRED BREEDING ANIMALS"
+//         },
+//         {
+//             "id": 5,
+//             "hsn_code": "01012910",
+//             "description": "Horses for polo"
+//         },
+//         {
+//             "id": 6,
+//             "hsn_code": "01012990",
+//             "description": "other"
+//         },
+//         {
+//             "id": 7,
+//             "hsn_code": "01013010",
+//             "description": "Pure-bred breeding animals"
+//         },
+//         {
+//             "id": 8,
+//             "hsn_code": "01013020",
+//             "description": "livestock"
+//         },
+//         {
+//             "id": 9,
+//             "hsn_code": "01013090",
+//             "description": "other"
+//         },
+//         {
+//             "id": 10,
+//             "hsn_code": "01019010",
+//             "description": "LIVE HORSES, ASSES, MULES AND HINNIES - OTHER - HORSES FOR POLO"
+//         },
+//         {
+//             "id": 11,
+//             "hsn_code": "01019020",
+//             "description": "LIVE HORSES, ASSES, MULES AND HINNIES - OTHER - ASSES, MULES AND HINNIES AS LIVE STOCK"
+//         },
+//         {
+//             "id": 12,
+//             "hsn_code": "01019030",
+//             "description": "Mules and hinnies as livestock"
+//         },
+//         {
+//             "id": 13,
+//             "hsn_code": "01019090",
+//             "description": "OTHER"
+//         }
+//     ]
+// }
+// ```

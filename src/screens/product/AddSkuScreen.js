@@ -34,6 +34,7 @@ import {
   addSellerSku,
   getProductDesignConfig,
 } from "../../api/auth";
+import HsnPickerModal from "../../components/common/HsnPickerModal";
 
 const formatCurrency = (amount) => {
   if (amount === undefined || amount === null || isNaN(Number(amount))) return "₹0";
@@ -623,6 +624,10 @@ const AddSkuScreen = ({ navigation, route }) => {
   const [mapStock, setMapStock] = useState("");
   const [mapMinStock, setMapMinStock] = useState("5");
   const [mapSellerSku, setMapSellerSku] = useState("");
+  const [mapHsnCodeId, setMapHsnCodeId] = useState(null);
+  const [mapHsnCode, setMapHsnCode] = useState("");
+  const [mapHsnDesc, setMapHsnDesc] = useState("");
+  const [showMapHsnModal, setShowMapHsnModal] = useState(false);
   const [isSubmittingMap, setIsSubmittingMap] = useState(false);
 
   // ================= TAB 1: BATCH MAPPING STATE (Flow 1 Existing SKU Add) =================
@@ -663,6 +668,23 @@ const AddSkuScreen = ({ navigation, route }) => {
   const [selectedProduct, setSelectedProduct] = useState(
     route?.params?.preselectedProduct || route?.params?.product || null
   );
+
+  // HSN Code state for new SKU variants
+  const [variantHsnCodeId, setVariantHsnCodeId] = useState(null);
+  const [variantHsnCode, setVariantHsnCode] = useState("");
+  const [variantHsnDesc, setVariantHsnDesc] = useState("");
+  const [showVariantHsnModal, setShowVariantHsnModal] = useState(false);
+
+  useEffect(() => {
+    if (selectedProduct) {
+      if (selectedProduct.hsn_code_id) {
+        setVariantHsnCodeId(selectedProduct.hsn_code_id);
+      }
+      if (selectedProduct.hsn_code) {
+        setVariantHsnCode(selectedProduct.hsn_code);
+      }
+    }
+  }, [selectedProduct]);
 
   // Log selectedProduct to console
 
@@ -859,13 +881,32 @@ const AddSkuScreen = ({ navigation, route }) => {
 
   // ---------------- Load Seller Attributes (with cache deduplication) ----------------
   const lastFetchedAttrRef = useRef({ catId: undefined, prodId: undefined });
+  const selectedProductRef = useRef(selectedProduct);
+  useEffect(() => {
+    selectedProductRef.current = selectedProduct;
+  }, [selectedProduct]);
+
+  const selectedCategoryIdRef = useRef(selectedCategoryId);
+  useEffect(() => {
+    selectedCategoryIdRef.current = selectedCategoryId;
+  }, [selectedCategoryId]);
+
+  const handleSelectProductRef = useRef(null);
+  const appliedRouteProductKeyRef = useRef(
+    route?.params?.preselectedProduct
+      ? String(route.params.preselectedProduct.id ?? route.params.preselectedProduct.product_id ?? "")
+      : route?.params?.product
+        ? String(route.params.product.id ?? route.params.product.product_id ?? "")
+        : null
+  );
+
   const fetchAttributes = useCallback(
     async (catId = null, prodId = null) => {
-      const resolvedCatId = toValidNumericId(catId) ?? toValidNumericId(selectedCategoryId);
+      const resolvedCatId = toValidNumericId(catId) ?? toValidNumericId(selectedCategoryIdRef.current);
       const resolvedProdId =
         prodId !== null && prodId !== undefined
           ? prodId
-          : (selectedProduct?.id ?? selectedProduct?.product_id);
+          : (selectedProductRef.current?.id ?? selectedProductRef.current?.product_id);
 
       // Prevent redundant identical fetches
       if (
@@ -890,7 +931,7 @@ const AddSkuScreen = ({ navigation, route }) => {
         setLoadingAttributes(false);
       }
     },
-    [selectedCategoryId, selectedProduct?.id, selectedProduct?.product_id]
+    []
   );
 
   useEffect(() => {
@@ -902,6 +943,7 @@ const AddSkuScreen = ({ navigation, route }) => {
   const handleSelectProduct = useCallback(
     (prod) => {
       if (!prod) return;
+      appliedRouteProductKeyRef.current = String(prod.id ?? prod.product_id ?? "");
       setSelectedProduct(prod);
       const cat = resolveProductCategory(prod, categoriesList, savedProductCategories, sellerProductsMap);
       setSelectedCategoryId(cat.id);
@@ -925,6 +967,10 @@ const AddSkuScreen = ({ navigation, route }) => {
     [categoriesList, savedProductCategories, sellerProductsMap, fetchAttributes]
   );
 
+  useEffect(() => {
+    handleSelectProductRef.current = handleSelectProduct;
+  }, [handleSelectProduct]);
+
   // If selectedProduct is present and categories or storage finish loading, resolve category
   useEffect(() => {
     if (selectedProduct && categoriesList.length > 0) {
@@ -939,19 +985,22 @@ const AddSkuScreen = ({ navigation, route }) => {
         fetchAttributes(cat.id, selectedProduct.id);
       }
     }
-  }, [categoriesList, selectedProduct?.id, savedProductCategories, sellerProductsMap, selectedCategoryId, selectedCategoryName]);
+  }, [categoriesList, selectedProduct?.id, savedProductCategories, sellerProductsMap, selectedCategoryId, selectedCategoryName, fetchAttributes]);
 
-  // Initial route params
+  // Initial route params (applied only when route params genuinely provide a new product)
   useEffect(() => {
-    if (route?.params?.preselectedProduct) {
-      handleSelectProduct(route.params.preselectedProduct);
-    } else if (route?.params?.product) {
-      handleSelectProduct(route.params.product);
+    const routeProd = route?.params?.preselectedProduct || route?.params?.product;
+    if (routeProd) {
+      const prodKey = String(routeProd.id ?? routeProd.product_id ?? "");
+      if (appliedRouteProductKeyRef.current !== prodKey) {
+        appliedRouteProductKeyRef.current = prodKey;
+        handleSelectProductRef.current?.(routeProd);
+      }
     }
     if (route?.params?.initialTab) {
       setActiveTab(route.params.initialTab);
     }
-  }, [route?.params?.preselectedProduct, route?.params?.product, route?.params?.initialTab, handleSelectProduct]);
+  }, [route?.params?.preselectedProduct, route?.params?.product, route?.params?.initialTab]);
 
   // If no product selected, select first approved product
   useEffect(() => {
@@ -960,13 +1009,13 @@ const AddSkuScreen = ({ navigation, route }) => {
       if (targetId) {
         const found = approvedProducts.find((p) => String(p.id) === String(targetId));
         if (found) {
-          handleSelectProduct(found);
+          handleSelectProductRef.current?.(found);
           return;
         }
       }
-      handleSelectProduct(approvedProducts[0]);
+      handleSelectProductRef.current?.(approvedProducts[0]);
     }
-  }, [approvedProducts, selectedProduct, route?.params, handleSelectProduct]);
+  }, [approvedProducts, selectedProduct, route?.params]);
 
   // ---------------- Inspect Master Product's Required Attributes Schema (Synchronous useMemo) ----------------
   const productRequiredAttrIds = useMemo(() => {
@@ -1125,6 +1174,9 @@ const AddSkuScreen = ({ navigation, route }) => {
     setMapSellerSku(skuItem.sku ? `SELLER-${skuItem.sku}` : "");
     setMapDesignName("");
     setMapDesignConfig(null);
+    setMapHsnCodeId(skuItem?.hsn_code_id || skuItem?.hsn_id || null);
+    setMapHsnCode(skuItem?.hsn_code || skuItem?.hsn || "");
+    setMapHsnDesc(skuItem?.hsn_description || skuItem?.hsn_desc || "");
     setShowMapModal(true);
 
     const pId = skuItem?.product_id;
@@ -1283,6 +1335,8 @@ const AddSkuScreen = ({ navigation, route }) => {
         min_stock_alert: parseInt(mapMinStock, 10) || 5,
         design_name: mapDesignName.trim() || undefined,
         design: mapDesignName.trim() || undefined,
+        hsn_code_id: mapHsnCodeId || selectedSkuToMap.hsn_code_id || undefined,
+        hsn_code: mapHsnCode || selectedSkuToMap.hsn_code || selectedSkuToMap.hsn || undefined,
         variants: [
           {
             product_sku_id: selectedSkuToMap.id,
@@ -1293,6 +1347,8 @@ const AddSkuScreen = ({ navigation, route }) => {
             min_stock_alert: parseInt(mapMinStock, 10) || 5,
             design_name: mapDesignName.trim() || undefined,
             design: mapDesignName.trim() || undefined,
+            hsn_code_id: mapHsnCodeId || selectedSkuToMap.hsn_code_id || undefined,
+            hsn_code: mapHsnCode || selectedSkuToMap.hsn_code || selectedSkuToMap.hsn || undefined,
           },
         ],
       };
@@ -1532,8 +1588,8 @@ const AddSkuScreen = ({ navigation, route }) => {
       const rawAttrs = Array.isArray(sku.attributes)
         ? sku.attributes
         : Array.isArray(sku.sku_attributes)
-        ? sku.sku_attributes
-        : [];
+          ? sku.sku_attributes
+          : [];
       rawAttrs.forEach((a) => {
         if (a && typeof a === "object") {
           const vid = a.attribute_value_id ?? a.value_id ?? a.val_id ?? a.id;
@@ -2472,6 +2528,13 @@ const AddSkuScreen = ({ navigation, route }) => {
         formData.append("design", designName.trim());
       }
 
+      if (variantHsnCodeId || selectedProduct?.hsn_code_id) {
+        formData.append("hsn_code_id", String(variantHsnCodeId || selectedProduct.hsn_code_id));
+      }
+      if (variantHsnCode || selectedProduct?.hsn_code) {
+        formData.append("hsn_code", String(variantHsnCode || selectedProduct.hsn_code));
+      }
+
       variantsToSubmit.forEach((v, idx) => {
         formData.append(`variants[${idx}][name]`, v.name.trim());
         const vDesign = (v.design_name || designName || "").trim();
@@ -2505,6 +2568,17 @@ const AddSkuScreen = ({ navigation, route }) => {
         }
         if (v.seller_sku && String(v.seller_sku).trim()) {
           formData.append(`variants[${idx}][seller_sku]`, String(v.seller_sku).trim());
+        }
+        const chosenHsnId = v.hsn_code_id || variantHsnCodeId || selectedProduct?.hsn_code_id;
+        if (chosenHsnId) {
+          formData.append(`variants[${idx}][hsn_code_id]`, String(chosenHsnId));
+        }
+        if (v.hsn_code && String(v.hsn_code).trim()) {
+          formData.append(`variants[${idx}][hsn_code]`, String(v.hsn_code).trim());
+        } else if (variantHsnCode) {
+          formData.append(`variants[${idx}][hsn_code]`, String(variantHsnCode).trim());
+        } else if (selectedProduct?.hsn_code) {
+          formData.append(`variants[${idx}][hsn_code]`, String(selectedProduct.hsn_code).trim());
         }
         formData.append(`variants[${idx}][min_stock_alert]`, String(parseInt(v.min_stock_alert, 10) || 2));
       });
@@ -2541,6 +2615,9 @@ const AddSkuScreen = ({ navigation, route }) => {
       setAttributeImages({});
       setImageByAttrId(null);
       setDesignName("");
+      setVariantHsnCodeId(null);
+      setVariantHsnCode("");
+      setVariantHsnDesc("");
     } catch (err) {
       const errMsg = err?.message || "";
       if (errMsg.toLowerCase().includes("different set of attributes")) {
@@ -2824,6 +2901,81 @@ const AddSkuScreen = ({ navigation, route }) => {
               colors={colors}
               onSelectProduct={handleSelectProduct}
             />
+          </View>
+
+          {/* Section 1c: HSN Code (GST Classification for SKU Variants) */}
+          <View style={[styles.formCard, { backgroundColor: colors.cardBg, borderColor: colors.borderLight }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Ionicons name="receipt-outline" size={18} color={COLORS.primary} style={{ marginRight: 6 }} />
+                <Text style={[styles.formCardTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                  HSN Code (GST Classification)
+                </Text>
+              </View>
+              {variantHsnCode ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    setVariantHsnCodeId(null);
+                    setVariantHsnCode("");
+                    setVariantHsnDesc("");
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ fontSize: 12, color: COLORS.error, fontWeight: "600" }}>Clear</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+              Assign an HSN code for tax and GST invoice generation when selling these SKU variants.
+            </Text>
+
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => setShowVariantHsnModal(true)}
+              style={[
+                styles.hsnSelectButton,
+                {
+                  backgroundColor: colors.backgroundAlt,
+                  borderColor: variantHsnCode ? COLORS.primary : colors.borderLight,
+                },
+              ]}
+            >
+              <View style={{ flex: 1, marginRight: 8 }}>
+                {variantHsnCode ? (
+                  <View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text style={{ fontSize: 14, fontWeight: "700", color: COLORS.primary }}>
+                        HSN: {variantHsnCode}
+                      </Text>
+                      {variantHsnCodeId ? (
+                        <View style={[styles.hsnIdTag, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF" }]}>
+                          <Text style={{ fontSize: 11, fontWeight: "700", color: COLORS.primary }}>
+                            ID: {variantHsnCodeId}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    {variantHsnDesc ? (
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 3 }} numberOfLines={2}>
+                        {variantHsnDesc}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Ionicons name="search-outline" size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
+                    <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                      Search HSN Code by 4-8 digits (e.g. 0101)
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Ionicons
+                name={variantHsnCode ? "checkmark-circle" : "chevron-forward"}
+                size={20}
+                color={variantHsnCode ? COLORS.success : colors.textSecondary}
+              />
+            </TouchableOpacity>
           </View>
 
           {/* Section 1b: Product Design Configuration (GET api/seller/products/{id}/has-design-config) */}
@@ -4154,20 +4306,20 @@ const AddSkuScreen = ({ navigation, route }) => {
                     />
                   ))}
 
-                <TouchableOpacity
-                  style={[styles.addMoreVariantRowBtn, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: COLORS.primaryLight }]}
-                  onPress={handleAddCustomVariant}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons name="add-circle-outline" size={18} color={COLORS.primary} style={{ marginRight: 6 }} />
-                  <Text style={[styles.addMoreVariantRowBtnText, { color: COLORS.primary }]}>
-                    + Add Another Custom Variant
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.addMoreVariantRowBtn, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF", borderColor: COLORS.primaryLight }]}
+                    onPress={handleAddCustomVariant}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons name="add-circle-outline" size={18} color={COLORS.primary} style={{ marginRight: 6 }} />
+                    <Text style={[styles.addMoreVariantRowBtnText, { color: COLORS.primary }]}>
+                      + Add Another Custom Variant
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          )}
-        </View>
+            )}
+          </View>
 
           {/* Submit Button */}
           {(() => {
@@ -4588,6 +4740,79 @@ const AddSkuScreen = ({ navigation, route }) => {
                   onChangeText={setMapSellerSku}
                 />
 
+                {/* HSN Code Selector for Single Map SKU */}
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 0 }]}>
+                      HSN Code (GST Classification)
+                    </Text>
+                    {mapHsnCode ? (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setMapHsnCodeId(null);
+                          setMapHsnCode("");
+                          setMapHsnDesc("");
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 12, color: COLORS.error, fontWeight: "600" }}>Clear</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={() => setShowMapHsnModal(true)}
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: colors.backgroundAlt,
+                        borderColor: mapHsnCode ? COLORS.primary : colors.borderLight,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        paddingHorizontal: 12,
+                        minHeight: 46,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      {mapHsnCode ? (
+                        <View>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                            <Text style={{ fontSize: 14, fontWeight: "700", color: COLORS.primary }}>
+                              HSN: {mapHsnCode}
+                            </Text>
+                            {mapHsnCodeId ? (
+                              <View style={[styles.hsnIdTag, { backgroundColor: isDark ? "#1e293b" : "#EFF6FF" }]}>
+                                <Text style={{ fontSize: 11, fontWeight: "700", color: COLORS.primary }}>
+                                  ID: {mapHsnCodeId}
+                                </Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          {mapHsnDesc ? (
+                            <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
+                              {mapHsnDesc}
+                            </Text>
+                          ) : null}
+                        </View>
+                      ) : (
+                        <View style={{ flexDirection: "row", alignItems: "center" }}>
+                          <Ionicons name="search-outline" size={15} color={colors.textSecondary} style={{ marginRight: 6 }} />
+                          <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                            Search HSN Code (e.g. 0101)
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    <Ionicons
+                      name={mapHsnCode ? "checkmark-circle" : "search"}
+                      size={18}
+                      color={mapHsnCode ? COLORS.success : COLORS.primary}
+                    />
+                  </TouchableOpacity>
+                </View>
+
                 <TouchableOpacity
                   style={[styles.confirmBtn, { backgroundColor: COLORS.primary }]}
                   onPress={handleSubmitMapSku}
@@ -4608,7 +4833,41 @@ const AddSkuScreen = ({ navigation, route }) => {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* HSN Picker Modal for Map SKU (Tab 1) */}
+      <HsnPickerModal
+        visible={showMapHsnModal}
+        onClose={() => setShowMapHsnModal(false)}
+        selectedHsnId={mapHsnCodeId}
+        selectedHsnCode={mapHsnCode}
+        onSelect={(item) => {
+          setMapHsnCodeId(item.id);
+          setMapHsnCode(item.hsn_code);
+          setMapHsnDesc(item.description || "");
+        }}
+        onSelectHsn={(item) => {
+          setMapHsnCodeId(item.id);
+          setMapHsnCode(item.hsn_code);
+          setMapHsnDesc(item.description || "");
+        }}
+      />
 
+      {/* HSN Picker Modal for Variant Creation (Tab 2) */}
+      <HsnPickerModal
+        visible={showVariantHsnModal}
+        onClose={() => setShowVariantHsnModal(false)}
+        selectedHsnId={variantHsnCodeId}
+        selectedHsnCode={variantHsnCode}
+        onSelect={(item) => {
+          setVariantHsnCodeId(item.id);
+          setVariantHsnCode(item.hsn_code);
+          setVariantHsnDesc(item.description || "");
+        }}
+        onSelectHsn={(item) => {
+          setVariantHsnCodeId(item.id);
+          setVariantHsnCode(item.hsn_code);
+          setVariantHsnDesc(item.description || "");
+        }}
+      />
 
     </View>
   );
@@ -5934,6 +6193,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     paddingVertical: 10,
     paddingHorizontal: 6,
+  },
+  hsnSelectButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  hsnIdTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: COLORS.primaryLight,
   },
 });
 

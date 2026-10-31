@@ -372,17 +372,26 @@ export const updateSellerProfile = async (formDataOrPayload, customToken = null)
       body = JSON.stringify(formDataOrPayload);
     }
 
+    console.log("📡 [AuthAPI] POSTing to:", `${BASE_URL}profile`);
+    if (isFormData) {
+      console.log("📡 [AuthAPI] Request format: FormData (multipart/form-data)");
+    } else {
+      console.log("📡 [AuthAPI] Request JSON payload:", body);
+    }
+
     let response = await fetch(`${BASE_URL}profile`, {
       method,
       headers,
       body,
     });
-    console.log("updateSellerProfile response status:", response.status);
+    console.log("📡 [AuthAPI] updateSellerProfile response status:", response.status);
     const responseText = await response.text();
     let responseData;
     try {
       responseData = JSON.parse(responseText);
+      console.log("📡 [AuthAPI] updateSellerProfile response data:", responseData);
     } catch (e) {
+      console.error("📡 [AuthAPI] Failed to parse response text:", responseText);
       throw new Error(`Server returned invalid response: ${responseText}`);
     }
 
@@ -738,7 +747,7 @@ export const getSellerProducts = async (params = {}, customToken = null) => {
     });
 
     const responseText = await response.text();
-    // console.log(responseText, 'kjdjf')
+    console.log(responseText, 'kjdjf')
     let responseData;
     try {
       responseData = JSON.parse(responseText);
@@ -1772,6 +1781,9 @@ export const addSellerSku = async (formDataOrPayload, customToken = null) => {
         if (formDataOrPayload.design !== undefined && formDataOrPayload.design !== null && formDataOrPayload.design !== "") {
           formData.append("design", String(formDataOrPayload.design));
         }
+        if (formDataOrPayload.hsn_code_id !== undefined && formDataOrPayload.hsn_code_id !== null && formDataOrPayload.hsn_code_id !== "") {
+          formData.append("hsn_code_id", String(formDataOrPayload.hsn_code_id));
+        }
 
         formDataOrPayload.variants.forEach((v, idx) => {
           if (v.design_name !== undefined && v.design_name !== null && v.design_name !== "") {
@@ -1811,6 +1823,18 @@ export const addSellerSku = async (formDataOrPayload, customToken = null) => {
           }
           if (v.min_stock_alert !== undefined && v.min_stock_alert !== null && v.min_stock_alert !== "") {
             formData.append(`variants[${idx}][min_stock_alert]`, String(v.min_stock_alert));
+          }
+          const variantHsnCodeId =
+            v.hsn_code_id !== undefined && v.hsn_code_id !== null && v.hsn_code_id !== ""
+              ? v.hsn_code_id
+              : (v.hsn_id !== undefined && v.hsn_id !== null && v.hsn_id !== ""
+                ? v.hsn_id
+                : formDataOrPayload.hsn_code_id);
+          if (variantHsnCodeId !== undefined && variantHsnCodeId !== null && variantHsnCodeId !== "") {
+            formData.append(`variants[${idx}][hsn_code_id]`, String(variantHsnCodeId));
+          }
+          if (v.hsn_code !== undefined && v.hsn_code !== null && v.hsn_code !== "") {
+            formData.append(`variants[${idx}][hsn_code]`, String(v.hsn_code));
           }
 
           if (v.attributes && typeof v.attributes === "object") {
@@ -1869,6 +1893,18 @@ export const addSellerSku = async (formDataOrPayload, customToken = null) => {
           if (formDataOrPayload.design !== undefined && formDataOrPayload.design !== null && formDataOrPayload.design !== "") {
             formData.append("variants[0][design]", String(formDataOrPayload.design));
             formData.append("design", String(formDataOrPayload.design));
+          }
+          const fallbackHsnCodeId =
+            formDataOrPayload.hsn_code_id !== undefined && formDataOrPayload.hsn_code_id !== null && formDataOrPayload.hsn_code_id !== ""
+              ? formDataOrPayload.hsn_code_id
+              : formDataOrPayload.hsn_id;
+          if (fallbackHsnCodeId !== undefined && fallbackHsnCodeId !== null && fallbackHsnCodeId !== "") {
+            formData.append("variants[0][hsn_code_id]", String(fallbackHsnCodeId));
+            formData.append("hsn_code_id", String(fallbackHsnCodeId));
+          }
+          if (formDataOrPayload.hsn_code !== undefined && formDataOrPayload.hsn_code !== null && formDataOrPayload.hsn_code !== "") {
+            formData.append("variants[0][hsn_code]", String(formDataOrPayload.hsn_code));
+            formData.append("hsn_code", String(formDataOrPayload.hsn_code));
           }
         }
 
@@ -1997,6 +2033,125 @@ export const getSellerSkuDetails = async (skuId, customToken = null) => {
 export const getSellerSku = getSellerSkuDetails;
 export const showSku = getSellerSkuDetails;
 export const getSku = getSellerSkuDetails;
+
+/**
+ * Search HSN codes by code or prefix
+ * Endpoint: POST /api/seller/hsn/search
+ * Headers: Authorization: Bearer {token}, Accept: application/json
+ * Body: { hsn_code_like: "0101" } (FormData)
+ * Response: { status: true, data: [ { id, hsn_code, description }, ... ] }
+ */
+export const searchHsnCodes = async (hsnCodeLike, customToken = null) => {
+  // Backend validation strictly requires hsn_code_like to be between 4 and 8 digits
+  const rawCode = String(hsnCodeLike || "").trim();
+  const digits = rawCode.replace(/\D/g, "");
+  if (!digits || digits.length < 4) {
+    return [];
+  }
+  const codeToSend = digits.slice(0, 8);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      throw new Error("No authentication token found");
+    }
+
+    let response;
+    let responseText;
+    let responseData = null;
+
+    // 1. Try JSON POST first (standard for Laravel Sanctum API endpoints)
+    try {
+      response = await fetch(`${BASE_URL}hsn/search`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ hsn_code_like: codeToSend }),
+        signal: controller.signal,
+      });
+
+      responseText = await response.text();
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        responseData = null;
+      }
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      responseData = null;
+    }
+
+    // 2. If JSON call didn't succeed with 200 or valid JSON, fallback to multipart FormData
+    if (!response || !response.ok || !responseData) {
+      try {
+        const formData = new FormData();
+        formData.append("hsn_code_like", codeToSend);
+
+        const fdResponse = await fetch(`${BASE_URL}hsn/search`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+          signal: controller.signal,
+        });
+
+        const fdText = await fdResponse.text();
+        let fdData = null;
+        try {
+          fdData = JSON.parse(fdText);
+        } catch (e) {
+          fdData = null;
+        }
+
+        if (fdResponse.ok && fdData) {
+          response = fdResponse;
+          responseData = fdData;
+        } else if (!responseData && fdData) {
+          response = fdResponse;
+          responseData = fdData;
+        }
+      } catch (e) {
+        if (e.name === "AbortError") throw e;
+      }
+    }
+
+    clearTimeout(timeoutId);
+
+    if (!response || !response.ok) {
+      let errorMessage = responseData?.message || "Failed to search HSN codes";
+      if (responseData?.errors?.hsn_code_like) {
+        const errVal = responseData.errors.hsn_code_like;
+        errorMessage = Array.isArray(errVal) ? errVal[0] : String(errVal);
+      }
+      const error = new Error(sanitizeErrorMessage(errorMessage, "Failed to search HSN codes"));
+      error.status = response?.status || 500;
+      error.data = responseData;
+      throw error;
+    }
+
+    const list = Array.isArray(responseData?.data)
+      ? responseData.data
+      : Array.isArray(responseData)
+      ? responseData
+      : [];
+    return list;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === "AbortError") {
+      throw new Error("Request timed out. Please check your network connection.");
+    }
+    console.warn("searchHsnCodes error:", error?.message || error);
+    throw error;
+  }
+};
 
 
 

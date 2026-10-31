@@ -35,6 +35,11 @@
           android:resource="@mipmap/ic_launcher"
           tools:replace="android:resource" />
 
+      <!-- Google Maps API Key -->
+      <meta-data
+          android:name="com.google.android.geo.API_KEY"
+          android:value="AIzaSyA5Jo2sWSApjLojgYNdSgyICND-t3Gzb5M" />
+
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

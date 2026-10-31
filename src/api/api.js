@@ -172,4 +172,5 @@ export {
   getSellerCategories,
   registerSeller,
   getProductDesignConfig,
+  searchHsnCodes,
 } from "./auth";

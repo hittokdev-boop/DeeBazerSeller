@@ -1029,6 +1029,16 @@ const ProductDetails = () => {
                 </View>
               )}
 
+              {/* HSN Code Badge */}
+              {(product?.hsn_code || product?.hsn || product?.product?.hsn_code) ? (
+                <View style={[styles.metaBadge, { backgroundColor: isDark ? "#1e3a5f" : "#EFF6FF" }]}>
+                  <Ionicons name="barcode-outline" size={14} color={COLORS.primary} />
+                  <Text style={[styles.metaBadgeText, { color: COLORS.primary, fontWeight: "700" }]}>
+                    HSN: {product?.hsn_code || product?.hsn || product?.product?.hsn_code}
+                  </Text>
+                </View>
+              ) : null}
+
               {product?.created_at && (
                 <View style={[styles.metaBadge, { backgroundColor: colors.backgroundAlt }]}>
                   <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
