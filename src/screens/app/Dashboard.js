@@ -108,6 +108,7 @@ const SellerDashboard = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+  const [logoError, setLogoError] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(true);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -421,7 +422,7 @@ const SellerDashboard = ({ navigation }) => {
               style={styles.profileBtn}
               onPress={() => navigation.navigate("Account")}
             >
-              {(profile?.logo_url || profile?.logoUri || profile?.logo) ? (
+              {(profile?.logo_url || profile?.logoUri || profile?.logo) && !logoError ? (
                 <Image
                   source={{
                     uri:
@@ -430,6 +431,7 @@ const SellerDashboard = ({ navigation }) => {
                       profile?.logo,
                   }}
                   style={styles.profileImage}
+                  onError={() => setLogoError(true)}
                 />
               ) : (
                 <View style={[styles.profileImage, { backgroundColor: COLORS.primaryBgLight, justifyContent: "center", alignItems: "center" }]}>

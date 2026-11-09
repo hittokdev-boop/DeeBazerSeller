@@ -16,7 +16,7 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getSellerMe, clearAuthSession } from "../../api/auth";
+import { getSellerProfile, clearAuthSession } from "../../api/auth";
 import LoggedOutView from "../../components/common/LoggedOutView";
 
 const Earnings = () => {
@@ -40,16 +40,15 @@ const Earnings = () => {
       }
       setIsLoggedIn(true);
 
-      const response = await getSellerMe();
+      const response = await getSellerProfile();
       if (response && response.data) {
-        const user = response.data.user || {};
-        const seller = response.data.seller || {};
+        const seller = response.data || {};
 
         const mergedProfile = {
-          ...user,
           ...seller,
           walletBalance: seller.wallet_balance || 0,
           totalEarnings: seller.total_earnings || 0,
+          pendingBalance: seller.pending_balance || 0,
         };
 
         setProfile(mergedProfile);

@@ -17,7 +17,7 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { updateSellerAccount, getSellerMe } from "../../api/auth";
+import { getSellerProfile, updateSellerProfile } from "../../api/auth";
 
 const ContactNumber = ({ navigation }) => {
   const { colors } = useTheme();
@@ -41,10 +41,10 @@ const ContactNumber = ({ navigation }) => {
     const loadPhoneData = async () => {
       setIsLoading(true);
       try {
-        const fresh = await getSellerMe();
-        const userObj = fresh?.data?.user || fresh?.data?.seller || fresh?.data;
-        if (userObj?.mobile || userObj?.phone) {
-          setCurrentPhone(userObj.mobile || userObj.phone || "");
+        const fresh = await getSellerProfile();
+        const userObj = fresh?.data;
+        if (userObj?.phone || userObj?.mobile) {
+          setCurrentPhone(userObj.phone || userObj.mobile || "");
         }
       } catch (err) {
         console.error("Error loading contact number", err);
@@ -129,7 +129,20 @@ const ContactNumber = ({ navigation }) => {
     setIsVerifying(true);
     try {
       if (otpString === "1234") {
-        await updateSellerAccount({ mobile: newPhone.trim() });
+        const profileRes = await getSellerProfile();
+        const currentData = profileRes?.data || {};
+
+        const formData = new FormData();
+        formData.append("store_name", currentData.store_name || "My Store");
+        formData.append("description", currentData.description || "");
+        formData.append("phone", newPhone.trim());
+        formData.append("address", currentData.address || "");
+        formData.append("city", currentData.city || "");
+        formData.append("state", currentData.state || "");
+        formData.append("postal_code", currentData.postal_code || "");
+        formData.append("country", currentData.country || "India");
+
+        await updateSellerProfile(formData);
         setCurrentPhone(newPhone.trim());
 
         Alert.alert("Success", "Contact number updated successfully!", [

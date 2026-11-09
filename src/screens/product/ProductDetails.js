@@ -481,14 +481,18 @@ const ProductDetails = () => {
 
     const targetSkuId =
       activeSku?.product_sku_id ||
+      activeSku?.sku?.id ||
+      (typeof activeSku?.sku === "object" ? activeSku.sku?.id : null) ||
       activeSku?.sku_id ||
-      activeSku?.id ||
       primarySku?.product_sku_id ||
+      primarySku?.sku?.id ||
+      (typeof primarySku?.sku === "object" ? primarySku.sku?.id : null) ||
       primarySku?.sku_id ||
-      primarySku?.id ||
       product?.product_sku_id ||
-      product?.sku_id ||
       product?.sku?.id ||
+      product?.sku_id ||
+      activeSku?.id ||
+      primarySku?.id ||
       product?.id;
 
     if (!targetSkuId) {
@@ -542,6 +546,20 @@ const ProductDetails = () => {
       ? (product.product.category?.name || product.product.category?.title)
       : product?.product?.category) ||
     "General";
+
+  const subCategoryName =
+    (typeof product?.sub_category === "string" ? product.sub_category : product?.sub_category?.name) ||
+    (typeof product?.product?.sub_category === "object"
+      ? (product.product.sub_category?.name || product.product.sub_category?.title)
+      : product?.product?.sub_category) ||
+    "";
+
+  const childCategoryName =
+    (typeof product?.child_category === "string" ? product.child_category : product?.child_category?.name) ||
+    (typeof product?.product?.child_category === "object"
+      ? (product.product.child_category?.name || product.product.child_category?.title)
+      : product?.product?.child_category) ||
+    "";
 
   const skusList =
     Array.isArray(product?.skus) && product.skus.length > 0
@@ -1020,6 +1038,24 @@ const ProductDetails = () => {
                 </Text>
               </View>
 
+              {subCategoryName ? (
+                <View style={[styles.metaBadge, { backgroundColor: colors.backgroundAlt }]}>
+                  <Ionicons name="git-branch-outline" size={14} color={COLORS.secondary || "#06B6D4"} />
+                  <Text style={[styles.metaBadgeText, { color: colors.textPrimary }]}>
+                    {subCategoryName}
+                  </Text>
+                </View>
+              ) : null}
+
+              {childCategoryName ? (
+                <View style={[styles.metaBadge, { backgroundColor: colors.backgroundAlt }]}>
+                  <Ionicons name="pricetag-outline" size={14} color="#8B5CF6" />
+                  <Text style={[styles.metaBadgeText, { color: colors.textPrimary }]}>
+                    {childCategoryName}
+                  </Text>
+                </View>
+              ) : null}
+
               {product?.weight !== undefined && product?.weight !== null && (
                 <View style={[styles.metaBadge, { backgroundColor: colors.backgroundAlt }]}>
                   <Ionicons name="barbell-outline" size={14} color={COLORS.menuContact} />
@@ -1158,13 +1194,18 @@ const ProductDetails = () => {
                         },
                       ]}
                       onPress={() => {
-                        const targetSkuId =
+                        const sProductSkuId =
+                          skuItem?.product_sku_id ||
+                          skuItem?.sku_id ||
+                          (typeof skuItem?.sku === "object" && skuItem.sku?.id ? skuItem.sku.id : null);
+
+                        const sellerProdId =
                           skuItem?.seller_sku_id ||
                           skuItem?.seller_product_id ||
                           skuItem?.id ||
-                          (typeof skuItem?.sku === "object" && skuItem.sku?.id ? skuItem.sku.id : null) ||
-                          skuItem?.product_sku_id ||
-                          skuItem?.sku_id;
+                          product?.id;
+
+                        const targetSkuId = sellerProdId;
 
                         const sCode =
                           (typeof skuItem?.sku === "object" ? (skuItem.sku?.code || skuItem.sku?.sku) : "") ||
@@ -1194,15 +1235,14 @@ const ProductDetails = () => {
                           skuItem?.status ||
                           product?.approval_status;
 
-                        const sellerProdId =
-                          skuItem?.seller_sku_id ||
-                          skuItem?.id ||
-                          product?.id;
-
                         navigation.navigate("SkuDetails", {
                           skuId: targetSkuId,
+                          product_sku_id: sProductSkuId,
                           skuData: {
+                            seller_product_id: sellerProdId,
+                            product_sku_id: sProductSkuId,
                             listing: {
+                              product_sku_id: sProductSkuId,
                               id: sellerProdId,
                               price: skuItem?.price !== undefined ? skuItem.price : product?.price,
                               sale_price: skuItem?.sale_price !== undefined ? skuItem.sale_price : product?.sale_price,
@@ -1381,6 +1421,8 @@ const ProductDetails = () => {
               { title: "Product ID", value: `#${product?.product?.id || product?.id || "-"}` },
               { title: "Product Name", value: parentProductName && parentProductName !== productName ? parentProductName : null },
               { title: "Category", value: categoryName },
+              { title: "Sub Category", value: subCategoryName || null },
+              { title: "Child Category", value: childCategoryName || null },
               { title: "SKU Name", value: skuName || productName },
               { title: "Primary SKU", value: skuCode || "N/A" },
               { title: "Total Variants", value: `${skusList.length || 1} Variant(s)` },

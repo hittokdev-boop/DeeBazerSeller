@@ -170,6 +170,8 @@ export {
   addSellerSku,
   updateSkuStock,
   getSellerCategories,
+  getSubCategories,
+  getChildCategories,
   registerSeller,
   getProductDesignConfig,
   searchHsnCodes,

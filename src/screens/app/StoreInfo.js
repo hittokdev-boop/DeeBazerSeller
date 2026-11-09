@@ -532,7 +532,10 @@ const StoreInfo = ({ navigation }) => {
         if (phone.trim()) formData.append("phone", phone.trim());
         if (email.trim()) formData.append("email", email.trim());
         if (businessType) formData.append("business_type", businessType);
-        if (taxNumber.trim()) formData.append("tax_number", taxNumber.trim());
+        if (taxNumber.trim()) {
+          formData.append("tax_number", taxNumber.trim());
+          formData.append("gst_number", taxNumber.trim());
+        }
 
         formData.append("address", address.trim());
         if (city.trim()) formData.append("city", city.trim());
@@ -584,6 +587,7 @@ const StoreInfo = ({ navigation }) => {
           email: email.trim(),
           business_type: businessType,
           tax_number: taxNumber.trim(),
+          gst_number: taxNumber.trim(),
           address: address.trim(),
           city: city.trim(),
           state: stateName.trim(),
@@ -844,7 +848,7 @@ const StoreInfo = ({ navigation }) => {
                 {logoUri ? (
                   <Image source={{ uri: logoUri }} style={styles.logoImage} resizeMode="cover" />
                 ) : (
-                  <Ionicons name="storefront" size={38} color={colors.primary} />
+                  <Ionicons name="person" size={40} color={colors.primary} />
                 )}
                 <View style={[styles.logoEditBadge, { backgroundColor: colors.primary }]}>
                   <Ionicons name="camera" size={14} color="#FFFFFF" />
@@ -1394,7 +1398,7 @@ const StoreInfo = ({ navigation }) => {
                     {logoUri ? (
                       <Image source={{ uri: logoUri }} style={styles.logoSquareImg} resizeMode="cover" />
                     ) : (
-                      <Ionicons name="storefront-outline" size={40} color={colors.primary} />
+                      <Ionicons name="person-outline" size={40} color={colors.primary} />
                     )}
                   </View>
                   <TouchableOpacity

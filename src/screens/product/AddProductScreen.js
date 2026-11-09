@@ -18,7 +18,7 @@ import { launchImageLibrary, launchCamera } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { CustomAlert } from "../../context/AlertContext";
-import { createSellerProduct, getSellerCategories } from "../../api/auth";
+import { createSellerProduct, getSellerCategories, getSubCategories, getChildCategories } from "../../api/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const AddProduct = ({ navigation, route }) => {
@@ -32,6 +32,23 @@ const AddProduct = ({ navigation, route }) => {
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState(null);
   const [categoryName, setCategoryName] = useState("");
+
+  // Dynamic sub-categories list from API
+  const [subCategoriesList, setSubCategoriesList] = useState([]);
+  const [isLoadingSubCategories, setIsLoadingSubCategories] = useState(false);
+  const [subCategoryId, setSubCategoryId] = useState(null);
+  const [subCategoryName, setSubCategoryName] = useState("");
+  const [showSubCategoryModal, setShowSubCategoryModal] = useState(false);
+  const [subCategorySearchQuery, setSubCategorySearchQuery] = useState("");
+
+  // Dynamic child-categories list from API
+  const [childCategoriesList, setChildCategoriesList] = useState([]);
+  const [isLoadingChildCategories, setIsLoadingChildCategories] = useState(false);
+  const [childCategoryId, setChildCategoryId] = useState(null);
+  const [childCategoryName, setChildCategoryName] = useState("");
+  const [showChildCategoryModal, setShowChildCategoryModal] = useState(false);
+  const [childCategorySearchQuery, setChildCategorySearchQuery] = useState("");
+
   const [shortDescription, setShortDescription] = useState("");
   const [description, setDescription] = useState("");
 
@@ -214,16 +231,81 @@ const AddProduct = ({ navigation, route }) => {
     setTags((prev) => prev.filter((t) => t !== tagToRemove));
   };
 
+  const fetchSubCats = async (catId) => {
+    if (!catId) return;
+    setIsLoadingSubCategories(true);
+    try {
+      const list = await getSubCategories(catId);
+      setSubCategoriesList(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.warn("[AddProduct] Could not fetch sub-categories:", err?.message);
+      setSubCategoriesList([]);
+    } finally {
+      setIsLoadingSubCategories(false);
+    }
+  };
+
   const handleSelectCategory = (cat) => {
     setCategoryId(cat.id);
     setCategoryName(cat.name);
     setShowCategoryModal(false);
+
+    // Reset sub and child categories
+    setSubCategoryId(null);
+    setSubCategoryName("");
+    setSubCategoriesList([]);
+    setChildCategoryId(null);
+    setChildCategoryName("");
+    setChildCategoriesList([]);
+
+    // Fetch sub categories
+    fetchSubCats(cat.id);
+  };
+
+  const fetchChildCats = async (catId, subCatId) => {
+    if (!catId || !subCatId) return;
+    setIsLoadingChildCategories(true);
+    try {
+      const list = await getChildCategories(catId, subCatId);
+      setChildCategoriesList(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.warn("[AddProduct] Could not fetch child-categories:", err?.message);
+      setChildCategoriesList([]);
+    } finally {
+      setIsLoadingChildCategories(false);
+    }
+  };
+
+  const handleSelectSubCategory = (subCat) => {
+    setSubCategoryId(subCat.id);
+    setSubCategoryName(subCat.name);
+    setShowSubCategoryModal(false);
+
+    // Reset child category
+    setChildCategoryId(null);
+    setChildCategoryName("");
+    setChildCategoriesList([]);
+
+    // Fetch child categories
+    fetchChildCats(categoryId, subCat.id);
+  };
+
+  const handleSelectChildCategory = (childCat) => {
+    setChildCategoryId(childCat.id);
+    setChildCategoryName(childCat.name);
+    setShowChildCategoryModal(false);
   };
 
   const resetForm = () => {
     setName("");
     setCategoryId(null);
     setCategoryName("");
+    setSubCategoryId(null);
+    setSubCategoryName("");
+    setSubCategoriesList([]);
+    setChildCategoryId(null);
+    setChildCategoryName("");
+    setChildCategoriesList([]);
     setShortDescription("");
     setDescription("");
     setGender("");
@@ -258,6 +340,12 @@ const AddProduct = ({ navigation, route }) => {
       // Required Core Fields
       formData.append("name", name.trim());
       formData.append("category_id", String(categoryId));
+      if (subCategoryId) {
+        formData.append("sub_category_id", String(subCategoryId));
+      }
+      if (childCategoryId) {
+        formData.append("child_category_id", String(childCategoryId));
+      }
 
       // Optional Text Fields
       if (shortDescription.trim()) {
@@ -322,6 +410,12 @@ const AddProduct = ({ navigation, route }) => {
         category: { id: categoryId, name: categoryName },
         category_id: categoryId,
         category_name: categoryName,
+        sub_category: subCategoryId ? { id: subCategoryId, name: subCategoryName } : null,
+        sub_category_id: subCategoryId || null,
+        sub_category_name: subCategoryName || null,
+        child_category: childCategoryId ? { id: childCategoryId, name: childCategoryName } : null,
+        child_category_id: childCategoryId || null,
+        child_category_name: childCategoryName || null,
         short_description: shortDescription.trim(),
         description: description.trim(),
         tags,
@@ -370,6 +464,14 @@ const AddProduct = ({ navigation, route }) => {
 
   const filteredCategories = categoriesList.filter((cat) =>
     (cat.name || "").toLowerCase().includes(categorySearchQuery.toLowerCase())
+  );
+
+  const filteredSubCategories = subCategoriesList.filter((subCat) =>
+    (subCat.name || "").toLowerCase().includes(subCategorySearchQuery.toLowerCase())
+  );
+
+  const filteredChildCategories = childCategoriesList.filter((childCat) =>
+    (childCat.name || "").toLowerCase().includes(childCategorySearchQuery.toLowerCase())
   );
 
   return (
@@ -516,6 +618,125 @@ const AddProduct = ({ navigation, route }) => {
               <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
             )}
           </TouchableOpacity>
+
+          {/* Sub Category Selector */}
+          {categoryId ? (
+            <>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginTop: 14 }]}>
+                Sub Category
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.dropdownSelector,
+                  {
+                    backgroundColor: colors.backgroundAlt,
+                    borderColor: colors.borderLight,
+                  },
+                ]}
+                onPress={() => {
+                  if (subCategoriesList.length === 0 && !isLoadingSubCategories) {
+                    fetchSubCats(categoryId);
+                  }
+                  setShowSubCategoryModal(true);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.dropdownText,
+                    { color: subCategoryName ? colors.textPrimary : colors.textSecondary },
+                  ]}
+                >
+                  {subCategoryName ||
+                    (isLoadingSubCategories
+                      ? "Loading sub-categories..."
+                      : subCategoriesList.length === 0
+                      ? "No sub-categories available"
+                      : "Select Sub Category...")}
+                </Text>
+                {isLoadingSubCategories ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    {subCategoryId ? (
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          setSubCategoryId(null);
+                          setSubCategoryName("");
+                          setChildCategoryId(null);
+                          setChildCategoryName("");
+                          setChildCategoriesList([]);
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ marginRight: 6 }}
+                      >
+                        <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                    ) : null}
+                    <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            </>
+          ) : null}
+
+          {/* Child Category Selector */}
+          {subCategoryId ? (
+            <>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginTop: 14 }]}>
+                Child Category
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.dropdownSelector,
+                  {
+                    backgroundColor: colors.backgroundAlt,
+                    borderColor: colors.borderLight,
+                  },
+                ]}
+                onPress={() => {
+                  if (childCategoriesList.length === 0 && !isLoadingChildCategories) {
+                    fetchChildCats(categoryId, subCategoryId);
+                  }
+                  setShowChildCategoryModal(true);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.dropdownText,
+                    { color: childCategoryName ? colors.textPrimary : colors.textSecondary },
+                  ]}
+                >
+                  {childCategoryName ||
+                    (isLoadingChildCategories
+                      ? "Loading child-categories..."
+                      : childCategoriesList.length === 0
+                      ? "No child-categories available"
+                      : "Select Child Category...")}
+                </Text>
+                {isLoadingChildCategories ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    {childCategoryId ? (
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          setChildCategoryId(null);
+                          setChildCategoryName("");
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ marginRight: 6 }}
+                      >
+                        <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                    ) : null}
+                    <Ionicons name="chevron-down" size={18} color={colors.textSecondary} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            </>
+          ) : null}
         </View>
 
         {/* Section 2b: Gender & Design Config */}
@@ -812,6 +1033,8 @@ const AddProduct = ({ navigation, route }) => {
                   </Text>
                   <Text style={[styles.submittedPreviewCategory, { color: colors.textSecondary }]}>
                     {submittedProduct.category?.name || categoryName || "General"}
+                    {submittedProduct.sub_category?.name || subCategoryName ? ` > ${submittedProduct.sub_category?.name || subCategoryName}` : ""}
+                    {submittedProduct.child_category?.name || childCategoryName ? ` > ${submittedProduct.child_category?.name || childCategoryName}` : ""}
                   </Text>
                   <View style={styles.pendingStatusPill}>
                     <Ionicons name="hourglass-outline" size={11} color={COLORS.warning} />
@@ -933,6 +1156,202 @@ const AddProduct = ({ navigation, route }) => {
                       >
                         {cat.name}
                       </Text>
+                      {isSelected && <Ionicons name="checkmark-circle" size={20} color={COLORS.primary} />}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Sub Category Selection Modal */}
+      <Modal visible={showSubCategoryModal} transparent animationType="slide" onRequestClose={() => setShowSubCategoryModal(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalDismissArea} activeOpacity={1} onPress={() => setShowSubCategoryModal(false)} />
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBg }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Select Sub Category</Text>
+                {categoryName ? (
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                    For {categoryName}
+                  </Text>
+                ) : null}
+              </View>
+              <TouchableOpacity onPress={() => setShowSubCategoryModal(false)}>
+                <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Sub Category Search */}
+            <View style={[styles.modalSearchBox, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight }]}>
+              <Ionicons name="search-outline" size={18} color={colors.textSecondary} />
+              <TextInput
+                style={[styles.modalSearchInput, { color: colors.textPrimary }]}
+                placeholder="Search sub-categories..."
+                placeholderTextColor={colors.textSecondary}
+                value={subCategorySearchQuery}
+                onChangeText={setSubCategorySearchQuery}
+              />
+            </View>
+
+            <ScrollView style={{ maxHeight: 320 }}>
+              {isLoadingSubCategories ? (
+                <View style={{ padding: 32, alignItems: "center", justifyContent: "center" }}>
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                  <Text style={{ marginTop: 10, color: colors.textSecondary, fontSize: 13 }}>
+                    Loading sub-categories...
+                  </Text>
+                </View>
+              ) : filteredSubCategories.length === 0 ? (
+                <View style={{ padding: 32, alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="alert-circle-outline" size={32} color={colors.textSecondary} />
+                  <Text style={{ marginTop: 8, color: colors.textSecondary, fontSize: 13 }}>
+                    {subCategorySearchQuery ? "No matching sub-categories" : "No sub-categories found for this category"}
+                  </Text>
+                  <TouchableOpacity
+                    style={{
+                      marginTop: 12,
+                      paddingVertical: 8,
+                      paddingHorizontal: 16,
+                      backgroundColor: COLORS.primary,
+                      borderRadius: 6,
+                    }}
+                    onPress={() => fetchSubCats(categoryId)}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                filteredSubCategories.map((subCat) => {
+                  const isSelected = subCategoryId === subCat.id;
+                  return (
+                    <TouchableOpacity
+                      key={subCat.id}
+                      style={[styles.categoryItem, { borderBottomColor: colors.borderLight }]}
+                      onPress={() => {
+                        handleSelectSubCategory(subCat);
+                        setSubCategorySearchQuery("");
+                      }}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            styles.categoryItemText,
+                            {
+                              color: isSelected ? COLORS.primary : colors.textPrimary,
+                              fontWeight: isSelected ? "700" : "500",
+                            },
+                          ]}
+                        >
+                          {subCat.name}
+                        </Text>
+                        {subCat.count_child_category !== undefined && (
+                          <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
+                            {subCat.count_child_category} child {subCat.count_child_category === 1 ? "category" : "categories"}
+                          </Text>
+                        )}
+                      </View>
+                      {isSelected && <Ionicons name="checkmark-circle" size={20} color={COLORS.primary} />}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Child Category Selection Modal */}
+      <Modal visible={showChildCategoryModal} transparent animationType="slide" onRequestClose={() => setShowChildCategoryModal(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalDismissArea} activeOpacity={1} onPress={() => setShowChildCategoryModal(false)} />
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBg }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Select Child Category</Text>
+                {subCategoryName ? (
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                    For {subCategoryName}
+                  </Text>
+                ) : null}
+              </View>
+              <TouchableOpacity onPress={() => setShowChildCategoryModal(false)}>
+                <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Child Category Search */}
+            <View style={[styles.modalSearchBox, { backgroundColor: colors.backgroundAlt, borderColor: colors.borderLight }]}>
+              <Ionicons name="search-outline" size={18} color={colors.textSecondary} />
+              <TextInput
+                style={[styles.modalSearchInput, { color: colors.textPrimary }]}
+                placeholder="Search child-categories..."
+                placeholderTextColor={colors.textSecondary}
+                value={childCategorySearchQuery}
+                onChangeText={setChildCategorySearchQuery}
+              />
+            </View>
+
+            <ScrollView style={{ maxHeight: 320 }}>
+              {isLoadingChildCategories ? (
+                <View style={{ padding: 32, alignItems: "center", justifyContent: "center" }}>
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                  <Text style={{ marginTop: 10, color: colors.textSecondary, fontSize: 13 }}>
+                    Loading child-categories...
+                  </Text>
+                </View>
+              ) : filteredChildCategories.length === 0 ? (
+                <View style={{ padding: 32, alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="alert-circle-outline" size={32} color={colors.textSecondary} />
+                  <Text style={{ marginTop: 8, color: colors.textSecondary, fontSize: 13 }}>
+                    {childCategorySearchQuery ? "No matching child-categories" : "No child-categories found for this sub-category"}
+                  </Text>
+                  <TouchableOpacity
+                    style={{
+                      marginTop: 12,
+                      paddingVertical: 8,
+                      paddingHorizontal: 16,
+                      backgroundColor: COLORS.primary,
+                      borderRadius: 6,
+                    }}
+                    onPress={() => fetchChildCats(categoryId, subCategoryId)}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                filteredChildCategories.map((childCat) => {
+                  const isSelected = childCategoryId === childCat.id;
+                  return (
+                    <TouchableOpacity
+                      key={childCat.id}
+                      style={[styles.categoryItem, { borderBottomColor: colors.borderLight }]}
+                      onPress={() => {
+                        handleSelectChildCategory(childCat);
+                        setChildCategorySearchQuery("");
+                      }}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            styles.categoryItemText,
+                            {
+                              color: isSelected ? COLORS.primary : colors.textPrimary,
+                              fontWeight: isSelected ? "700" : "500",
+                            },
+                          ]}
+                        >
+                          {childCat.name}
+                        </Text>
+                        {childCat.count_product !== undefined && (
+                          <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
+                            {childCat.count_product} {childCat.count_product === 1 ? "product" : "products"}
+                          </Text>
+                        )}
+                      </View>
                       {isSelected && <Ionicons name="checkmark-circle" size={20} color={COLORS.primary} />}
                     </TouchableOpacity>
                   );

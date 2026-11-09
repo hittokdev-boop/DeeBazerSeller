@@ -274,14 +274,21 @@ const SkuDetails = () => {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const imageUrl = allImages[selectedImageIndex] || normalizeImageUrl(sku?.image_url);
 
-  const activeSkuId =
-    skuId ||
+  // For updating stock via PATCH /api/seller/skus/{id}/stock, the backend requires the master product_sku_id (e.g. 11),
+  // whereas GET /api/seller/skus/{id} expects the seller listing id (e.g. 10).
+  const stockSkuId =
     sku?.id ||
     sku?.product_sku_id ||
     listing?.product_sku_id ||
     data?.product_sku_id ||
+    route.params?.product_sku_id ||
+    route.params?.skuData?.product_sku_id ||
+    route.params?.skuData?.sku?.id ||
+    skuId ||
     listing?.id ||
     data?.id;
+
+  const activeSkuId = stockSkuId || skuId || listing?.id || data?.id;
 
   const handleStockEdit = () => {
     setStockInputValue(String(stock));
@@ -295,14 +302,15 @@ const SkuDetails = () => {
       return;
     }
 
-    if (!activeSkuId) {
+    const targetId = stockSkuId || activeSkuId;
+    if (!targetId) {
       CustomAlert.showWarning("Missing SKU ID", "Cannot update stock: SKU ID not found.");
       return;
     }
 
     setIsUpdatingStock(true);
     try {
-      const res = await updateSkuStock(activeSkuId, newQty);
+      const res = await updateSkuStock(targetId, newQty);
       const updatedQty = res?.data?.stock_quantity !== undefined ? Number(res.data.stock_quantity) : newQty;
       const updatedInStock = res?.data?.in_stock !== undefined ? Boolean(res.data.in_stock) : updatedQty > 0;
 

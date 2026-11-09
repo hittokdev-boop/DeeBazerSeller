@@ -160,10 +160,11 @@ export async function getFCMToken() {
       token = await AsyncStorage.getItem(FCM_TOKEN_KEY);
     }
 
-    // console.log('\n========================================');
-    console.log('🔥 [FCM TOKEN] 🔥 :');
-    // console.log(token);
-    // console.log('========================================\n');
+    if (token) {
+      console.log('🔥 [FCM TOKEN] 🔥 :', token);
+    } else {
+      console.warn('⚠️ [FCM TOKEN] Token is null or empty');
+    }
 
     return token;
   } catch (error) {
@@ -174,10 +175,7 @@ export async function getFCMToken() {
     try {
       const cached = await AsyncStorage.getItem(FCM_TOKEN_KEY);
       if (cached) {
-        // console.log('\n========================================');
-        // console.log('🔥 [CACHED FCM TOKEN] 🔥 :');
-        console.log(cached);
-        console.log('========================================\n');
+        console.log('🔥 [CACHED FCM TOKEN] 🔥 :', cached);
         return cached;
       }
     } catch (e) { }
@@ -265,10 +263,7 @@ export function setupNotificationListeners(onNotificationClick) {
       const refreshHandler = async (token) => {
         try {
           await AsyncStorage.setItem(FCM_TOKEN_KEY, token);
-          console.log('\n========================================');
-          // console.log('🔥 [REFRESHED FCM TOKEN] 🔥 :');
-          // console.log(token);
-          // console.log('========================================\n');
+          console.log('🔥 [REFRESHED FCM TOKEN] 🔥 :', token);
         } catch (err) {
           console.error('[NotificationService] Error saving refreshed FCM token:', err?.message || err);
         }

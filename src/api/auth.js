@@ -178,6 +178,7 @@ export const getSellerMe = async (customToken = null) => {
 export const getSellerProfile = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const err = new Error("No authentication token found");
       err.status = 401;
@@ -200,7 +201,6 @@ export const getSellerProfile = async (customToken = null) => {
     let responseData;
     try {
       responseData = JSON.parse(responseText);
-      console.log("DEBUG: getSellerProfile responseData keys:", Object.keys(responseData), "root pickup:", responseData?.shiprocket_pickup_name, "data pickup:", responseData?.data?.shiprocket_pickup_name || responseData?.data?.pickup_location);
     } catch (e) {
       throw new Error(`Server returned invalid response: ${responseText}`);
     }
@@ -247,6 +247,7 @@ export const getSellerProfile = async (customToken = null) => {
 export const logoutSeller = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) return { success: true };
 
     const response = await fetch(`${BASE_URL}logout`, {
@@ -353,6 +354,7 @@ export const updateSellerAccount = async (payload, customToken = null) => {
 export const updateSellerProfile = async (formDataOrPayload, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -417,6 +419,113 @@ export const updateSellerProfile = async (formDataOrPayload, customToken = null)
 };
 
 /**
+ * Fetch seller's bank details
+ * Endpoint: GET /api/seller/bank-details
+ * Headers: Authorization: Bearer {token}
+ */
+export const getSellerBankDetails = async (customToken = null) => {
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      const error = new Error("No authentication token found");
+      error.status = 401;
+      throw error;
+    }
+
+    const response = await fetch(`${BASE_URL}bank-details`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      const error = new Error(responseData.message || "Failed to fetch bank details");
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData;
+  } catch (error) {
+    console.error("Error in getSellerBankDetails API:", error?.message || error);
+    throw error;
+  }
+};
+
+/**
+ * Add / Update seller's bank details
+ * Endpoint: POST /api/seller/bank-details
+ * Headers: Authorization: Bearer {token}, Content-Type: application/json
+ * Body:
+ * {
+ *   account_number: string (required, max: 20),
+ *   ifsc_code: string (required, max: 11),
+ *   account_holder_name: string (required, max: 255),
+ *   bank_name: string (required, max: 255),
+ *   branch_name: string|null (optional, max: 255),
+ *   upi_id: string|null (optional, max: 100)
+ * }
+ */
+export const updateSellerBankDetails = async (payload, customToken = null) => {
+  try {
+    const token = customToken || (await AsyncStorage.getItem("token"));
+    if (!token) {
+      const error = new Error("No authentication token found");
+      error.status = 401;
+      throw error;
+    }
+
+    const response = await fetch(`${BASE_URL}bank-details`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(`Server returned invalid response: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      let errorMessage = responseData.message || "Failed to update bank details";
+      if (responseData.errors) {
+        const errorList = Object.values(responseData.errors).flat();
+        if (errorList.length > 0) {
+          errorMessage = errorList.join("\n");
+        }
+      }
+      const error = new Error(errorMessage);
+      error.status = response.status;
+      error.data = responseData;
+      throw error;
+    }
+
+    return responseData;
+  } catch (error) {
+    console.error("Error in updateSellerBankDetails API:", error?.message || error);
+    throw error;
+  }
+};
+
+
+/**
  * Fetch available store return policy options list
  * Endpoint: GET /api/seller/store-policies
  * Headers: Authorization: Bearer {token}
@@ -424,6 +533,7 @@ export const updateSellerProfile = async (formDataOrPayload, customToken = null)
 export const getStorePoliciesList = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const error = new Error("No authentication token found");
       error.status = 401;
@@ -468,6 +578,7 @@ export const getStorePoliciesList = async (customToken = null) => {
 export const getSellerStorePolicy = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const error = new Error("No authentication token found");
       error.status = 401;
@@ -512,6 +623,7 @@ export const getSellerStorePolicy = async (customToken = null) => {
 export const updateStorePolicy = async (policyIdOrPayload, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -570,6 +682,7 @@ export const updateStorePolicies = updateStorePolicy;
 export const getShippingSettings = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const error = new Error("No authentication token found");
       error.status = 401;
@@ -615,6 +728,7 @@ export const getShippingSettings = async (customToken = null) => {
 export const updateShippingSettings = async (payload, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -666,6 +780,7 @@ export const updateShippingSettings = async (payload, customToken = null) => {
 export const getSellerDashboard = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -712,6 +827,7 @@ export const getSellerDashboard = async (customToken = null) => {
 export const getSellerProducts = async (params = {}, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const err = new Error("No authentication token found");
       err.status = 401;
@@ -747,7 +863,7 @@ export const getSellerProducts = async (params = {}, customToken = null) => {
     });
 
     const responseText = await response.text();
-    console.log(responseText, 'kjdjf')
+
     let responseData;
     try {
       responseData = JSON.parse(responseText);
@@ -779,6 +895,7 @@ export const getSellerProducts = async (params = {}, customToken = null) => {
 export const getSellerProductDetails = async (productId, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -841,6 +958,7 @@ export const getSellerProductDetails = async (productId, customToken = null) => 
 export const getProductDesignConfig = async (productId, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const err = new Error("No authentication token found");
       err.status = 401;
@@ -912,6 +1030,7 @@ export const createSellerProduct = async (formDataOrPayload, customToken = null)
 
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -1079,6 +1198,161 @@ export const getSellerCategories = async (customToken = null) => {
 };
 
 /**
+ * Fetch sub-categories by category_id
+ * Endpoint: POST {{base_url}}api/sub-category
+ * Request format: multipart/form-data
+ * Body: category_id: integer
+ */
+export const getSubCategories = async (categoryId, customToken = null) => {
+  if (!categoryId) return [];
+  try {
+    const token =
+      customToken ||
+      (await AsyncStorage.getItem("token")) ||
+      (await AsyncStorage.getItem("TOKEN"));
+
+    const formData = new FormData();
+    formData.append("category_id", String(categoryId));
+
+    const headers = {
+      Accept: "application/json",
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    // 1. Primary endpoint: https://deebazar.com/admin/api/sub-category
+    const primaryUrl = "https://deebazar.com/admin/api/sub-category";
+    try {
+      const response = await fetch(primaryUrl, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      if (response.ok) {
+        const responseData = await response.json();
+        const list = Array.isArray(responseData.data)
+          ? responseData.data
+          : Array.isArray(responseData)
+            ? responseData
+            : Array.isArray(responseData?.sub_categories)
+              ? responseData.sub_categories
+              : [];
+        return list;
+      }
+    } catch (primaryErr) {
+      console.warn("[getSubCategories] primary endpoint error:", primaryErr?.message);
+    }
+
+    // 2. Fallback endpoint: {{base_url}}api/seller/sub-category
+    try {
+      const fallbackUrl = `${BASE_URL}sub-category`;
+      const fallbackResponse = await fetch(fallbackUrl, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      if (fallbackResponse.ok) {
+        const fallbackData = await fallbackResponse.json();
+        const list = Array.isArray(fallbackData.data)
+          ? fallbackData.data
+          : Array.isArray(fallbackData)
+            ? fallbackData
+            : [];
+        return list;
+      }
+    } catch (fallbackErr) {
+      console.warn("[getSubCategories] fallback endpoint error:", fallbackErr?.message);
+    }
+
+    return [];
+  } catch (error) {
+    console.error("Error in getSubCategories API:", error);
+    return [];
+  }
+};
+
+/**
+ * Fetch child-categories by category_id and sub_category_id
+ * Endpoint: POST {{base_url}}api/child-category
+ * Request format: multipart/form-data
+ * Body: category_id: integer, sub_category_id: integer
+ */
+export const getChildCategories = async (categoryId, subCategoryId, customToken = null) => {
+  if (!categoryId || !subCategoryId) return [];
+  try {
+    const token =
+      customToken ||
+      (await AsyncStorage.getItem("token")) ||
+      (await AsyncStorage.getItem("TOKEN"));
+
+    const formData = new FormData();
+    formData.append("category_id", String(categoryId));
+    formData.append("sub_category_id", String(subCategoryId));
+
+    const headers = {
+      Accept: "application/json",
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    // 1. Primary endpoint: https://deebazar.com/admin/api/child-category
+    const primaryUrl = "https://deebazar.com/admin/api/child-category";
+    try {
+      const response = await fetch(primaryUrl, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      if (response.ok) {
+        const responseData = await response.json();
+        const list = Array.isArray(responseData.data)
+          ? responseData.data
+          : Array.isArray(responseData)
+            ? responseData
+            : Array.isArray(responseData?.child_categories)
+              ? responseData.child_categories
+              : [];
+        return list;
+      }
+    } catch (primaryErr) {
+      console.warn("[getChildCategories] primary endpoint error:", primaryErr?.message);
+    }
+
+    // 2. Fallback endpoint: {{base_url}}api/seller/child-category
+    try {
+      const fallbackUrl = `${BASE_URL}child-category`;
+      const fallbackResponse = await fetch(fallbackUrl, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      if (fallbackResponse.ok) {
+        const fallbackData = await fallbackResponse.json();
+        const list = Array.isArray(fallbackData.data)
+          ? fallbackData.data
+          : Array.isArray(fallbackData)
+            ? fallbackData
+            : [];
+        return list;
+      }
+    } catch (fallbackErr) {
+      console.warn("[getChildCategories] fallback endpoint error:", fallbackErr?.message);
+    }
+
+    return [];
+  } catch (error) {
+    console.error("Error in getChildCategories API:", error);
+    return [];
+  }
+};
+
+/**
  * Update an existing seller product
  * Endpoint: POST /api/seller/products/{id}
  * Headers: Authorization: Bearer {token}, Content-Type: multipart/form-data
@@ -1089,6 +1363,7 @@ export const updateSellerProduct = async (productId, formDataOrPayload, customTo
 
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -1175,6 +1450,7 @@ export const updateSellerProduct = async (productId, formDataOrPayload, customTo
 export const deleteSellerProduct = async (productId, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -1229,6 +1505,7 @@ export const deleteSellerProduct = async (productId, customToken = null) => {
 export const updateSkuStock = async (skuId, stockQuantity, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -1282,6 +1559,7 @@ export const updateProductStock = updateSkuStock;
 export const getUnmappedApprovedSkus = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const err = new Error("No authentication token found");
       err.status = 401;
@@ -1327,6 +1605,7 @@ export const getUnmappedApprovedSkus = async (customToken = null) => {
 export const getApprovedProducts = async (customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const err = new Error("No authentication token found");
       err.status = 401;
@@ -1739,6 +2018,7 @@ export const addSellerSku = async (formDataOrPayload, customToken = null) => {
 
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -1987,6 +2267,7 @@ export const addSellerSku = async (formDataOrPayload, customToken = null) => {
 export const getSellerSkuDetails = async (skuId, customToken = null) => {
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       const err = new Error("No authentication token found");
       err.status = 401;
@@ -2055,6 +2336,7 @@ export const searchHsnCodes = async (hsnCodeLike, customToken = null) => {
 
   try {
     const token = customToken || (await AsyncStorage.getItem("token"));
+    console.log('ACTIVE_AUTH_TOKEN_IS:', token);
     if (!token) {
       throw new Error("No authentication token found");
     }
@@ -2140,8 +2422,8 @@ export const searchHsnCodes = async (hsnCodeLike, customToken = null) => {
     const list = Array.isArray(responseData?.data)
       ? responseData.data
       : Array.isArray(responseData)
-      ? responseData
-      : [];
+        ? responseData
+        : [];
     return list;
   } catch (error) {
     clearTimeout(timeoutId);

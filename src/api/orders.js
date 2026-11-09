@@ -20,6 +20,7 @@ export const getOrders = async () => {
   });
 
   const responseText = await response.text();
+  console.log(responseText, 'jjjfk')
   let responseData;
   try {
     responseData = JSON.parse(responseText);

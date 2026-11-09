@@ -35,6 +35,7 @@ const Account = ({ navigation }) => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [showLoggedOutModal, setShowLoggedOutModal] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(true);
+  const [imageError, setImageError] = useState(false);
 
   const isFocused = useIsFocused();
   const { isDarkMode, toggleTheme, colors } = useTheme();
@@ -64,6 +65,7 @@ const Account = ({ navigation }) => {
         return;
       }
       setIsLoggedIn(true);
+      setImageError(false);
 
       const response = await getSellerProfile();
       if (response && response.data) {
@@ -118,6 +120,7 @@ const Account = ({ navigation }) => {
     const authListener = DeviceEventEmitter.addListener("authStateChanged", (token) => {
       if (token) {
         setIsLoggedIn(true);
+        setImageError(false);
         fetchSellerDetails(false);
       } else {
         setIsLoggedIn(false);
@@ -151,6 +154,7 @@ const Account = ({ navigation }) => {
           setIsLoading(false);
         } else {
           setIsLoggedIn(true);
+          setImageError(false);
           fetchSellerDetails(false);
         }
       });
@@ -210,6 +214,30 @@ const Account = ({ navigation }) => {
     DeviceEventEmitter.emit("authStateChanged", null);
   };
 
+  const handleOpenUrl = async (url) => {
+    try {
+      if (!url) return;
+      const formattedUrl =
+        url.trim().startsWith("http://") || url.trim().startsWith("https://")
+          ? url.trim()
+          : `https://${url.trim()}`;
+
+      const supported = await Linking.canOpenURL(formattedUrl).catch(() => false);
+      if (supported) {
+        await Linking.openURL(formattedUrl);
+      } else {
+        await Linking.openURL(formattedUrl);
+      }
+    } catch (err) {
+      console.error("Error opening URL:", err);
+      Alert.alert(
+        "Open Link",
+        `Could not open the browser automatically. Please visit:\n${url}`,
+        [{ text: "OK" }]
+      );
+    }
+  };
+
   const handleMenuPress = (item) => {
     if (item.screen) {
       navigation.navigate(item.screen);
@@ -262,11 +290,11 @@ const Account = ({ navigation }) => {
 
   // Cache-bust the profile image so it reloads dynamically when the backend image changes
   const displayLogo =
-    baseLogo.includes("pravatar.cc") || baseLogo.startsWith("file://")
-      ? baseLogo
-      : baseLogo
-        ? `${baseLogo}${baseLogo.includes("?") ? "&" : "?"}t=${new Date().getTime()}`
-        : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName || "Store")}`;
+    baseLogo && !imageError
+      ? baseLogo.includes("pravatar.cc") || baseLogo.startsWith("file://")
+        ? baseLogo
+        : `${baseLogo}${baseLogo.includes("?") ? "&" : "?"}t=${new Date().getTime()}`
+      : null;
 
   const accountStatus = (
     sellerData?.status ||
@@ -325,10 +353,27 @@ const Account = ({ navigation }) => {
         {/* Profile Card */}
         <View style={[styles.profileCard, { backgroundColor: colors.cardBg }]}>
           <View style={styles.avatarContainer}>
-            <Image
-              source={{ uri: displayLogo }}
-              style={[styles.profileImage, { borderColor: colors.primary }]}
-            />
+            {displayLogo ? (
+              <Image
+                source={{ uri: displayLogo }}
+                style={[styles.profileImage, { borderColor: colors.primary }]}
+                onError={() => setImageError(true)}
+              />
+            ) : (
+              <View
+                style={[
+                  styles.profileImage,
+                  {
+                    borderColor: colors.primary,
+                    backgroundColor: colors.primaryBgLight || "#EEF2FF",
+                    justifyContent: "center",
+                    alignItems: "center",
+                  },
+                ]}
+              >
+                <Ionicons name="person" size={44} color={colors.primary} />
+              </View>
+            )}
             <View
               style={[
                 styles.statusBadgeDot,
@@ -487,6 +532,12 @@ const Account = ({ navigation }) => {
             screen: "StorePolicies",
           },
           {
+            icon: "card-outline",
+            title: "Bank Details",
+            color: "#6366F1",
+            screen: "BankDetails",
+          },
+          {
             icon: "person-outline",
             title: "Edit Profile",
             color: colors.menuProfile || "#10B981",
@@ -503,30 +554,28 @@ const Account = ({ navigation }) => {
             title: "Help & Support",
             color: colors.menuHelp || "#06B6D4",
             onPress: () =>
-              Alert.alert(
-                "Help & Support",
-                "Support ticket system will be active soon. Please contact us at support@deebazar.com."
-              ),
+              handleOpenUrl("https://deebazar.com/admin/seller/help-support"),
           },
           {
             icon: "document-text-outline",
             title: "Terms & Conditions",
             color: "#8B5CF6",
-            onPress: () => {
-
-              const url = 'https://deebazar.com/admin/seller/terms-conditions'
-              // console.log(url)
-              Linking.openURL(url).catch(err => console.error("Error opening URL:", err));
-            },
+            onPress: () =>
+              handleOpenUrl("https://deebazar.com/admin/seller/terms-conditions"),
           },
           {
             icon: "shield-half-outline",
             title: "Privacy Policy",
             color: "#10B981",
-            onPress: () => {
-              const url = 'https://deebazar.com/admin/seller/help-support';
-              Linking.openURL(url).catch(err => console.error("Error opening URL:", err));
-            },
+            onPress: () =>
+              handleOpenUrl("https://deebazar.com/admin/seller/privacy-policy"),
+          },
+          {
+            icon: "return-down-back-outline",
+            title: "Return Policy",
+            color: "#EC4899",
+            onPress: () =>
+              handleOpenUrl("https://deebazar.com/admin/seller/return-policy"),
           },
         ].map((item, index) => (
           <TouchableOpacity

@@ -511,8 +511,10 @@ const Products = () => {
       stockEditProduct.sku_id ||
       stockEditProduct.skus?.[0]?.product_sku_id ||
       stockEditProduct.skus?.[0]?.sku_id ||
-      stockEditProduct.skus?.[0]?.id ||
+      (typeof stockEditProduct.skus?.[0]?.sku === "object" ? stockEditProduct.skus[0].sku?.id : null) ||
       stockEditProduct.sku?.id ||
+      (typeof stockEditProduct.sku === "object" ? stockEditProduct.sku?.id : null) ||
+      stockEditProduct.skus?.[0]?.id ||
       stockEditProduct.id;
 
     if (!targetSkuId) {

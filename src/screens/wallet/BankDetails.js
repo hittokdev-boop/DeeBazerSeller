@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -12,62 +12,126 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  RefreshControl,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
-import { getSellerProfile, updateSellerProfile } from "../../api/auth";
+import { getSellerBankDetails, updateSellerBankDetails } from "../../api/auth";
+import {
+  validateAccountNumber,
+  validateIfscCode,
+  validateAccountHolderName,
+  validateBankName,
+  sanitizeAccountNumber,
+  sanitizeIfscCode,
+} from "../../utils/bankValidation";
 
 const BankDetails = ({ navigation }) => {
   const { colors } = useTheme();
-  const [gstin, setGstin] = useState("");
+
+  // Form states
   const [bankName, setBankName] = useState("");
+  const [bankHolderName, setBankHolderName] = useState("");
   const [accountNo, setAccountNo] = useState("");
   const [ifscCode, setIfscCode] = useState("");
+  const [branchName, setBranchName] = useState("");
+  const [upiId, setUpiId] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [activeField, setActiveField] = useState(null);
 
-  useEffect(() => {
-    const loadBankData = async () => {
+  const loadBankData = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
       setIsLoading(true);
-      try {
-        const res = await getSellerProfile();
-        if (res?.data) {
-          const d = res.data;
-          setGstin(d.gstin || d.gst_number || "");
-          setBankName(d.bank_name || d.bankName || "");
-          setAccountNo(d.bank_account_number || d.accountNo || d.account_number || "");
-          setIfscCode(d.bank_ifsc_code || d.ifscCode || d.ifsc_code || "");
-        }
-      } catch (err) {
-        console.error("Error loading bank details", err);
-      } finally {
-        setIsLoading(false);
+    }
+    try {
+      const res = await getSellerBankDetails();
+      if (res?.data) {
+        const d = res.data;
+        setBankName(d.bank_name || "");
+        setBankHolderName(d.account_holder_name || "");
+        setAccountNo(d.account_number || "");
+        setIfscCode(d.ifsc_code || "");
+        setBranchName(d.branch_name || "");
+        setUpiId(d.upi_id || "");
       }
-    };
-
-    loadBankData();
+    } catch (err) {
+      console.warn("Error loading bank details:", err?.message || err);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadBankData();
+  }, [loadBankData]);
 
   const validate = () => {
     let tempErrors = {};
-    const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-    const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 
-    if (gstin.trim() && !gstinRegex.test(gstin.trim().toUpperCase())) {
-      tempErrors.gstin = "Format must match a 15-character GSTIN (e.g. 19AAAAA0000A1Z5)";
+    // 1. Bank Name (required, max: 255)
+    const bankNameCheck = validateBankName(bankName, true);
+    if (!bankNameCheck.isValid) {
+      tempErrors.bankName = bankNameCheck.error;
+    } else if (bankName.trim().length > 255) {
+      tempErrors.bankName = "Bank name must not exceed 255 characters";
     }
-    if (!bankName.trim()) {
-      tempErrors.bankName = "Bank name is required";
+
+    // 2. Account Holder Name (required, max: 255)
+    const holderCheck = validateAccountHolderName(bankHolderName, true);
+    if (!holderCheck.isValid) {
+      tempErrors.bankHolderName = holderCheck.error;
+    } else if (bankHolderName.trim().length > 255) {
+      tempErrors.bankHolderName = "Account holder name must not exceed 255 characters";
     }
-    if (!accountNo.trim() || accountNo.trim().length < 9) {
-      tempErrors.accountNo = "Enter a valid bank account number (9+ digits)";
+
+    // 3. Account Number (required, max: 20)
+    if (!accountNo.trim()) {
+      tempErrors.accountNo = "Bank account number is required";
+    } else if (accountNo.trim().length > 20) {
+      tempErrors.accountNo = "Account number must not exceed 20 characters";
+    } else if (!accountNo.includes("*")) {
+      const accountCheck = validateAccountNumber(accountNo, true);
+      if (!accountCheck.isValid) {
+        tempErrors.accountNo = accountCheck.error;
+      }
     }
-    if (!ifscCode.trim() || !ifscRegex.test(ifscCode.trim().toUpperCase())) {
-      tempErrors.ifscCode = "Enter a valid 11-digit IFSC code (e.g. SBIN0001234)";
+
+    // 4. IFSC Code (required, max: 11)
+    const ifscClean = ifscCode.trim().toUpperCase();
+    if (!ifscClean) {
+      tempErrors.ifscCode = "IFSC code is required";
+    } else if (ifscClean.length > 11) {
+      tempErrors.ifscCode = "IFSC code must not exceed 11 characters";
+    } else {
+      const ifscCheck = validateIfscCode(ifscClean, true);
+      if (!ifscCheck.isValid) {
+        tempErrors.ifscCode = ifscCheck.error;
+      }
+    }
+
+    // 5. Branch Name (optional, max: 255)
+    if (branchName.trim().length > 255) {
+      tempErrors.branchName = "Branch name must not exceed 255 characters";
+    }
+
+    // 6. UPI ID (optional, max: 100)
+    if (upiId.trim()) {
+      if (upiId.trim().length > 100) {
+        tempErrors.upiId = "UPI ID must not exceed 100 characters";
+      } else {
+        const upiRegex = /^[\w.\-_]{2,256}@[a-zA-Z]{2,64}$/;
+        if (!upiRegex.test(upiId.trim())) {
+          tempErrors.upiId = "Please enter a valid UPI ID (e.g. username@okhdfcbank)";
+        }
+      }
     }
 
     setErrors(tempErrors);
@@ -79,20 +143,36 @@ const BankDetails = ({ navigation }) => {
 
     setIsSaving(true);
     try {
-      await updateSellerProfile({
-        gstin: gstin.trim().toUpperCase(),
-        gst_number: gstin.trim().toUpperCase(),
+      const payload = {
+        account_number: accountNo.trim(),
+        ifsc_code: ifscCode.trim().toUpperCase(),
+        account_holder_name: bankHolderName.trim(),
         bank_name: bankName.trim(),
-        bank_account_number: accountNo.trim(),
-        bank_ifsc_code: ifscCode.trim().toUpperCase(),
-      });
+        branch_name: branchName.trim() || null,
+        upi_id: upiId.trim() || null,
+      };
 
-      Alert.alert("Success", "Bank details updated successfully!", [
-        { text: "OK", onPress: () => navigation.goBack() }
-      ]);
+      const res = await updateSellerBankDetails(payload);
+
+      Alert.alert(
+        "Success",
+        res?.message || "Bank details updated successfully!",
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              loadBankData();
+              navigation.goBack();
+            },
+          },
+        ]
+      );
     } catch (err) {
-      console.error("Error saving bank details", err);
-      Alert.alert("Notice", err.message || "Failed to update bank details.");
+      console.error("Error saving bank details:", err);
+      Alert.alert(
+        "Validation Error",
+        err.message || "Failed to update bank details. Please check all fields."
+      );
     } finally {
       setIsSaving(false);
     }
@@ -100,27 +180,28 @@ const BankDetails = ({ navigation }) => {
 
   if (isLoading) {
     return (
-      <View style={[styles.loaderContainer, { backgroundColor: colors.backgroundAlt }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
+      <View style={[styles.loaderContainer, { backgroundColor: colors.backgroundAlt || COLORS.backgroundAlt }]}>
+        <ActivityIndicator size="large" color={colors.primary || COLORS.primary} />
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt }]}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt || COLORS.backgroundAlt }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboardContainer}
       >
         {/* Header */}
-        <View style={[styles.header, { backgroundColor: colors.cardBg, borderBottomColor: colors.borderLight }]}>
+        <View style={[styles.header, { backgroundColor: colors.cardBg || COLORS.cardBg, borderBottomColor: colors.borderLight || COLORS.borderLight }]}>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
           >
-            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary || COLORS.textPrimary} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Bank Details</Text>
+          <Text style={[styles.headerTitle, { color: colors.textPrimary || COLORS.textPrimary }]}>Bank Details</Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -128,63 +209,55 @@ const BankDetails = ({ navigation }) => {
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={() => loadBankData(true)}
+              colors={[colors.primary || COLORS.primary]}
+            />
+          }
         >
           {/* Top Banner decoration */}
           <View style={styles.bankBanner}>
-            <View style={styles.cardOutline}>
-              <Ionicons name="card" size={40} color={COLORS.primary} />
+            <View style={[styles.cardOutline, { backgroundColor: colors.primaryBgLight || COLORS.primaryBgLight }]}>
+              <Ionicons name="card" size={40} color={colors.primary || COLORS.primary} />
             </View>
-            <Text style={styles.bannerTitle}>Payout & Tax Information</Text>
-            <Text style={styles.bannerSubtitle}>
-              Please enter valid bank details to ensure timely payouts for your completed orders.
+            <Text style={[styles.bannerTitle, { color: colors.textPrimary || COLORS.textPrimary }]}>
+              Payout & Bank Account
+            </Text>
+            <Text style={[styles.bannerSubtitle, { color: colors.textSecondary || COLORS.textSecondary }]}>
+              Add or update your bank account information to receive settlements and payouts directly.
             </Text>
           </View>
 
-          {/* Form */}
+          {/* Form Fields */}
           <View style={styles.formContainer}>
-            {/* GSTIN (Optional) */}
+            {/* 1. Bank Name */}
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>GSTIN (Optional)</Text>
-              <View
-                style={[
-                  styles.inputFieldContainer,
-                  activeField === "gstin" && styles.inputFieldFocus,
-                  errors.gstin && styles.inputFieldError,
-                ]}
-              >
-                <Ionicons name="document-text-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
-                <TextInput
-                  style={[styles.textInput, styles.autoCaps]}
-                  placeholder="Enter 15-character GSTIN number"
-                  placeholderTextColor={COLORS.textGrayPlaceholder}
-                  autoCapitalize="characters"
-                  maxLength={15}
-                  value={gstin}
-                  onChangeText={setGstin}
-                  onFocus={() => setActiveField("gstin")}
-                  onBlur={() => setActiveField(null)}
-                />
+              <View style={styles.labelRow}>
+                <Text style={[styles.inputLabel, { color: colors.textSlateDark || COLORS.textSlateDark }]}>
+                  Bank Name <Text style={styles.requiredStar}>*</Text>
+                </Text>
               </View>
-              {errors.gstin && <Text style={styles.errorText}>{errors.gstin}</Text>}
-            </View>
-
-            {/* Bank Name */}
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Bank Name</Text>
               <View
                 style={[
                   styles.inputFieldContainer,
-                  activeField === "bankName" && styles.inputFieldFocus,
+                  { backgroundColor: colors.cardBg || COLORS.cardBg, borderColor: colors.borderMedium || COLORS.borderMedium },
+                  activeField === "bankName" && { borderColor: colors.primary || COLORS.primary },
                   errors.bankName && styles.inputFieldError,
                 ]}
               >
                 <Ionicons name="business-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
                 <TextInput
-                  style={styles.textInput}
+                  style={[styles.textInput, { color: colors.textPrimary || COLORS.textPrimary }]}
                   placeholder="e.g. State Bank of India"
                   placeholderTextColor={COLORS.textGrayPlaceholder}
+                  maxLength={255}
                   value={bankName}
-                  onChangeText={setBankName}
+                  onChangeText={(val) => {
+                    setBankName(val);
+                    if (errors.bankName) setErrors((prev) => ({ ...prev, bankName: null }));
+                  }}
                   onFocus={() => setActiveField("bankName")}
                   onBlur={() => setActiveField(null)}
                 />
@@ -192,24 +265,70 @@ const BankDetails = ({ navigation }) => {
               {errors.bankName && <Text style={styles.errorText}>{errors.bankName}</Text>}
             </View>
 
-            {/* Account Number */}
+            {/* 2. Account Holder Name */}
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Account Number</Text>
+              <View style={styles.labelRow}>
+                <Text style={[styles.inputLabel, { color: colors.textSlateDark || COLORS.textSlateDark }]}>
+                  Account Holder Name <Text style={styles.requiredStar}>*</Text>
+                </Text>
+              </View>
               <View
                 style={[
                   styles.inputFieldContainer,
-                  activeField === "accountNo" && styles.inputFieldFocus,
+                  { backgroundColor: colors.cardBg || COLORS.cardBg, borderColor: colors.borderMedium || COLORS.borderMedium },
+                  activeField === "bankHolderName" && { borderColor: colors.primary || COLORS.primary },
+                  errors.bankHolderName && styles.inputFieldError,
+                ]}
+              >
+                <Ionicons name="person-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.textInput, { color: colors.textPrimary || COLORS.textPrimary }]}
+                  placeholder="e.g. Rajan Sharma"
+                  placeholderTextColor={COLORS.textGrayPlaceholder}
+                  maxLength={255}
+                  value={bankHolderName}
+                  onChangeText={(val) => {
+                    setBankHolderName(val);
+                    if (errors.bankHolderName) setErrors((prev) => ({ ...prev, bankHolderName: null }));
+                  }}
+                  onFocus={() => setActiveField("bankHolderName")}
+                  onBlur={() => setActiveField(null)}
+                />
+              </View>
+              {errors.bankHolderName && <Text style={styles.errorText}>{errors.bankHolderName}</Text>}
+            </View>
+
+            {/* 3. Account Number */}
+            <View style={styles.inputWrapper}>
+              <View style={styles.labelRow}>
+                <Text style={[styles.inputLabel, { color: colors.textSlateDark || COLORS.textSlateDark }]}>
+                  Account Number <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                {accountNo ? (
+                  <Text style={styles.charCounter}>{accountNo.length}/20</Text>
+                ) : null}
+              </View>
+              <View
+                style={[
+                  styles.inputFieldContainer,
+                  { backgroundColor: colors.cardBg || COLORS.cardBg, borderColor: colors.borderMedium || COLORS.borderMedium },
+                  activeField === "accountNo" && { borderColor: colors.primary || COLORS.primary },
                   errors.accountNo && styles.inputFieldError,
                 ]}
               >
                 <Ionicons name="wallet-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
                 <TextInput
-                  style={styles.textInput}
-                  placeholder="Enter account number"
+                  style={[styles.textInput, { color: colors.textPrimary || COLORS.textPrimary }]}
+                  placeholder="Enter 9 to 20 digit account number"
                   placeholderTextColor={COLORS.textGrayPlaceholder}
-                  keyboardType="numeric"
+                  keyboardType="number-pad"
+                  maxLength={20}
                   value={accountNo}
-                  onChangeText={(val) => setAccountNo(val.replace(/[^0-9]/g, ""))}
+                  onChangeText={(val) => {
+                    const clean = sanitizeAccountNumber(val);
+                    setAccountNo(clean);
+                    if (errors.accountNo) setErrors((prev) => ({ ...prev, accountNo: null }));
+                  }}
                   onFocus={() => setActiveField("accountNo")}
                   onBlur={() => setActiveField(null)}
                 />
@@ -217,39 +336,120 @@ const BankDetails = ({ navigation }) => {
               {errors.accountNo && <Text style={styles.errorText}>{errors.accountNo}</Text>}
             </View>
 
-            {/* IFSC Code */}
+            {/* 4. IFSC Code */}
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>IFSC Code</Text>
+              <View style={styles.labelRow}>
+                <Text style={[styles.inputLabel, { color: colors.textSlateDark || COLORS.textSlateDark }]}>
+                  IFSC Code <Text style={styles.requiredStar}>*</Text>
+                </Text>
+                {ifscCode ? (
+                  <Text style={styles.charCounter}>{ifscCode.length}/11</Text>
+                ) : null}
+              </View>
               <View
                 style={[
                   styles.inputFieldContainer,
-                  activeField === "ifscCode" && styles.inputFieldFocus,
+                  { backgroundColor: colors.cardBg || COLORS.cardBg, borderColor: colors.borderMedium || COLORS.borderMedium },
+                  activeField === "ifscCode" && { borderColor: colors.primary || COLORS.primary },
                   errors.ifscCode && styles.inputFieldError,
                 ]}
               >
                 <Ionicons name="barcode-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
                 <TextInput
-                  style={[styles.textInput, styles.autoCaps]}
+                  style={[styles.textInput, styles.autoCaps, { color: colors.textPrimary || COLORS.textPrimary }]}
                   placeholder="e.g. SBIN0001234"
                   placeholderTextColor={COLORS.textGrayPlaceholder}
                   autoCapitalize="characters"
+                  autoCorrect={false}
                   maxLength={11}
                   value={ifscCode}
-                  onChangeText={setIfscCode}
+                  onChangeText={(val) => {
+                    const clean = sanitizeIfscCode(val);
+                    setIfscCode(clean);
+                    if (errors.ifscCode) setErrors((prev) => ({ ...prev, ifscCode: null }));
+                  }}
                   onFocus={() => setActiveField("ifscCode")}
                   onBlur={() => setActiveField(null)}
                 />
               </View>
               {errors.ifscCode && <Text style={styles.errorText}>{errors.ifscCode}</Text>}
             </View>
+
+            {/* 5. Branch Name (Optional) */}
+            <View style={styles.inputWrapper}>
+              <View style={styles.labelRow}>
+                <Text style={[styles.inputLabel, { color: colors.textSlateDark || COLORS.textSlateDark }]}>
+                  Branch Name <Text style={styles.optionalTag}>(Optional)</Text>
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.inputFieldContainer,
+                  { backgroundColor: colors.cardBg || COLORS.cardBg, borderColor: colors.borderMedium || COLORS.borderMedium },
+                  activeField === "branchName" && { borderColor: colors.primary || COLORS.primary },
+                  errors.branchName && styles.inputFieldError,
+                ]}
+              >
+                <Ionicons name="location-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.textInput, { color: colors.textPrimary || COLORS.textPrimary }]}
+                  placeholder="e.g. Salt Lake Sector 5, Kolkata"
+                  placeholderTextColor={COLORS.textGrayPlaceholder}
+                  maxLength={255}
+                  value={branchName}
+                  onChangeText={(val) => {
+                    setBranchName(val);
+                    if (errors.branchName) setErrors((prev) => ({ ...prev, branchName: null }));
+                  }}
+                  onFocus={() => setActiveField("branchName")}
+                  onBlur={() => setActiveField(null)}
+                />
+              </View>
+              {errors.branchName && <Text style={styles.errorText}>{errors.branchName}</Text>}
+            </View>
+
+            {/* 6. UPI ID (Optional) */}
+            <View style={styles.inputWrapper}>
+              <View style={styles.labelRow}>
+                <Text style={[styles.inputLabel, { color: colors.textSlateDark || COLORS.textSlateDark }]}>
+                  UPI ID / VPA <Text style={styles.optionalTag}>(Optional)</Text>
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.inputFieldContainer,
+                  { backgroundColor: colors.cardBg || COLORS.cardBg, borderColor: colors.borderMedium || COLORS.borderMedium },
+                  activeField === "upiId" && { borderColor: colors.primary || COLORS.primary },
+                  errors.upiId && styles.inputFieldError,
+                ]}
+              >
+                <Ionicons name="phone-portrait-outline" size={20} color={COLORS.textGrayLight} style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.textInput, { color: colors.textPrimary || COLORS.textPrimary }]}
+                  placeholder="e.g. sellername@okhdfcbank"
+                  placeholderTextColor={COLORS.textGrayPlaceholder}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={100}
+                  value={upiId}
+                  onChangeText={(val) => {
+                    setUpiId(val.trim());
+                    if (errors.upiId) setErrors((prev) => ({ ...prev, upiId: null }));
+                  }}
+                  onFocus={() => setActiveField("upiId")}
+                  onBlur={() => setActiveField(null)}
+                />
+              </View>
+              {errors.upiId && <Text style={styles.errorText}>{errors.upiId}</Text>}
+            </View>
           </View>
         </ScrollView>
 
         {/* Save Button */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { backgroundColor: colors.cardBg || COLORS.cardBg, borderTopColor: colors.borderLight || COLORS.borderLight }]}>
           <TouchableOpacity
-            style={styles.saveBtn}
-            activeOpacity={0.9}
+            style={[styles.saveBtn, { backgroundColor: colors.primary || COLORS.primary }]}
+            activeOpacity={0.88}
             onPress={handleSave}
             disabled={isSaving}
           >
@@ -258,7 +458,7 @@ const BankDetails = ({ navigation }) => {
             ) : (
               <>
                 <Ionicons name="checkmark-circle-outline" size={20} color={COLORS.textContrast} style={styles.btnIconMarginRight6} />
-                <Text style={styles.saveBtnText}>Save Account Details</Text>
+                <Text style={styles.saveBtnText}>Save Bank Details</Text>
               </>
             )}
           </TouchableOpacity>
@@ -274,7 +474,7 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: COLORS.backgroundAlt,
-    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 20,
+    paddingTop: (Platform.OS === "android" ? (StatusBar.currentHeight || 24) : 0) + 10,
   },
   keyboardContainer: {
     flex: 1,
@@ -318,25 +518,25 @@ const styles = StyleSheet.create({
   },
   bankBanner: {
     alignItems: "center",
-    marginVertical: 24,
+    marginVertical: 20,
     paddingHorizontal: 24,
   },
   cardOutline: {
-    width: 80,
-    height: 80,
-    borderRadius: 20,
+    width: 76,
+    height: 76,
+    borderRadius: 22,
     backgroundColor: COLORS.primaryBgLight,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 1.5,
     borderColor: COLORS.primaryLight,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   bannerTitle: {
     fontSize: 18,
     fontWeight: "800",
     color: COLORS.textPrimary,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   bannerSubtitle: {
     fontSize: 13,
@@ -348,13 +548,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   inputWrapper: {
-    marginBottom: 20,
+    marginBottom: 18,
+  },
+  labelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  charCounter: {
+    fontSize: 12,
+    color: COLORS.textGrayLight,
+    fontWeight: "500",
   },
   inputLabel: {
     fontSize: 14,
     fontWeight: "600",
     color: COLORS.textSlateDark,
-    marginBottom: 8,
+  },
+  requiredStar: {
+    color: COLORS.error,
+    fontWeight: "700",
+  },
+  optionalTag: {
+    fontSize: 12,
+    fontWeight: "400",
+    color: COLORS.textGrayLight,
   },
   inputFieldContainer: {
     height: 52,

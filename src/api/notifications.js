@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { isTechnicalError } from "./auth";
 
 const SELLER_API_URL = "https://deebazar.com/admin/api/seller/";
 const GENERAL_API_URL = "https://deebazar.com/admin/api/";
@@ -46,7 +47,11 @@ export const getSellerNotifications = async (page = 1) => {
         error.message.toLowerCase().includes("no authentication token")
       ));
     if (!isAuth) {
-      console.error("Error in getSellerNotifications API:", error);
+      if (isTechnicalError(error?.message)) {
+        console.warn("[getSellerNotifications] Backend database error:", error?.message);
+      } else {
+        console.warn("[getSellerNotifications] Error:", error?.message || error);
+      }
     }
     return { data: { notifications: [] }, notifications: [] };
   }
@@ -97,7 +102,11 @@ export const getUnreadNotificationCount = async () => {
         error.message.toLowerCase().includes("no authentication token")
       ));
     if (!isAuth) {
-      console.error("Error in getUnreadNotificationCount API:", error);
+      if (isTechnicalError(error?.message)) {
+        console.warn("[getUnreadNotificationCount] Backend database error:", error?.message);
+      } else {
+        console.warn("[getUnreadNotificationCount] Error:", error?.message || error);
+      }
     }
     return { data: { unread_count: 0 }, unread_count: 0 };
   }
@@ -155,8 +164,12 @@ export const markNotificationAsRead = async (id) => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in markNotificationAsRead API:", error);
-    throw error;
+    if (isTechnicalError(error?.message)) {
+      console.warn("[markNotificationAsRead] Backend technical error:", error?.message);
+    } else {
+      console.warn("[markNotificationAsRead] Error:", error?.message || error);
+    }
+    return { status: 500, message: error?.message };
   }
 };
 
@@ -209,7 +222,11 @@ export const markAllNotificationsAsRead = async () => {
 
     return responseData;
   } catch (error) {
-    console.error("Error in markAllNotificationsAsRead API:", error);
-    throw error;
+    if (isTechnicalError(error?.message)) {
+      console.warn("[markAllNotificationsAsRead] Backend technical error:", error?.message);
+    } else {
+      console.warn("[markAllNotificationsAsRead] Error:", error?.message || error);
+    }
+    return { status: 500, message: error?.message };
   }
 };

@@ -11,6 +11,7 @@ import {
   StatusBar,
   Modal,
   RefreshControl,
+  Linking,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import COLORS from "../../constants/theme";
@@ -201,6 +202,20 @@ const StorePolicies = ({ navigation }) => {
   }
 
   const currentSelection = policies.find((p) => p.id === selectedPolicyId);
+
+  const openReturnPolicyLink = async () => {
+    const url = "https://deebazar.com/admin/seller/return-policy";
+    try {
+      const supported = await Linking.canOpenURL(url).catch(() => false);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        await Linking.openURL(url);
+      }
+    } catch (err) {
+      console.warn("Could not open return policy URL:", err);
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.backgroundAlt }]}>
@@ -408,6 +423,29 @@ const StorePolicies = ({ navigation }) => {
               : "Select a policy above to preview."}
           </Text>
         </View>
+
+        {/* Official Return Policy Document Link */}
+        <TouchableOpacity
+          style={[
+            styles.docLinkCard,
+            { backgroundColor: colors.cardBg, borderColor: colors.borderLight },
+          ]}
+          activeOpacity={0.85}
+          onPress={openReturnPolicyLink}
+        >
+          <View style={[styles.docLinkIconWrap, { backgroundColor: isDarkMode ? "rgba(236, 72, 153, 0.15)" : "#FDF2F8" }]}>
+            <Ionicons name="document-text-outline" size={22} color="#EC4899" />
+          </View>
+          <View style={styles.docLinkTextCol}>
+            <Text style={[styles.docLinkTitle, { color: colors.textPrimary }]}>
+              Official Return Policy
+            </Text>
+            <Text style={[styles.docLinkSub, { color: colors.textSecondary }]}>
+              Read detailed seller guidelines & customer return rules online
+            </Text>
+          </View>
+          <Ionicons name="open-outline" size={18} color="#EC4899" />
+        </TouchableOpacity>
       </ScrollView>
 
       {/* Footer Button */}
@@ -795,5 +833,40 @@ const styles = StyleSheet.create({
   },
   alertBtnIcon: {
     marginLeft: 8,
+  },
+  docLinkCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  docLinkIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 14,
+  },
+  docLinkTextCol: {
+    flex: 1,
+    marginRight: 10,
+  },
+  docLinkTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    marginBottom: 3,
+  },
+  docLinkSub: {
+    fontSize: 12,
+    lineHeight: 16,
   },
 });

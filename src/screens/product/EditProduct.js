@@ -17,7 +17,7 @@ import { launchImageLibrary, launchCamera } from "react-native-image-picker";
 import COLORS from "../../constants/theme";
 import { useTheme } from "../../context/ThemeContext";
 import { CustomAlert } from "../../context/AlertContext";
-import { updateSellerProduct, getSellerProductDetails, getSellerCategories } from "../../api/auth";
+import { updateSellerProduct, getSellerProductDetails, getSellerCategories, getSubCategories, getChildCategories } from "../../api/auth";
 
 const PRESET_CATEGORIES = [
   { id: 1, name: "Electronics & Gadgets" },
@@ -72,6 +72,21 @@ const EditProduct = ({ route, navigation }) => {
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState(null);
   const [categoryName, setCategoryName] = useState("");
+
+  // Sub Category State
+  const [subCategoriesList, setSubCategoriesList] = useState([]);
+  const [isLoadingSubCategories, setIsLoadingSubCategories] = useState(false);
+  const [subCategoryId, setSubCategoryId] = useState(null);
+  const [subCategoryName, setSubCategoryName] = useState("");
+  const [showSubCategoryModal, setShowSubCategoryModal] = useState(false);
+
+  // Child Category State
+  const [childCategoriesList, setChildCategoriesList] = useState([]);
+  const [isLoadingChildCategories, setIsLoadingChildCategories] = useState(false);
+  const [childCategoryId, setChildCategoryId] = useState(null);
+  const [childCategoryName, setChildCategoryName] = useState("");
+  const [showChildCategoryModal, setShowChildCategoryModal] = useState(false);
+
   const [price, setPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [stockQuantity, setStockQuantity] = useState("");
@@ -114,6 +129,34 @@ const EditProduct = ({ route, navigation }) => {
     } catch { }
   };
 
+  const fetchSubCats = async (catId) => {
+    if (!catId) return;
+    setIsLoadingSubCategories(true);
+    try {
+      const list = await getSubCategories(catId);
+      setSubCategoriesList(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.warn("[EditProduct] Could not fetch sub-categories:", err?.message);
+      setSubCategoriesList([]);
+    } finally {
+      setIsLoadingSubCategories(false);
+    }
+  };
+
+  const fetchChildCats = async (catId, subCatId) => {
+    if (!catId || !subCatId) return;
+    setIsLoadingChildCategories(true);
+    try {
+      const list = await getChildCategories(catId, subCatId);
+      setChildCategoriesList(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.warn("[EditProduct] Could not fetch child-categories:", err?.message);
+      setChildCategoriesList([]);
+    } finally {
+      setIsLoadingChildCategories(false);
+    }
+  };
+
   const populateForm = (p) => {
     if (!p) return;
     const firstSku = Array.isArray(p.skus) && p.skus.length > 0 ? p.skus[0] : null;
@@ -125,12 +168,27 @@ const EditProduct = ({ route, navigation }) => {
       firstSku?.name ||
       ""
     );
-    setCategoryId(p.category_id || p.category?.id || p.product?.category_id || p.product?.category?.id || null);
+    const resolvedCatId = p.category_id || p.category?.id || p.product?.category_id || p.product?.category?.id || null;
+    setCategoryId(resolvedCatId);
     setCategoryName(
       (typeof p.product?.category === "object" ? p.product?.category?.name : p.product?.category) ||
       (typeof p.category === "object" ? p.category?.name : (typeof p.category === "string" ? p.category : "")) ||
       ""
     );
+    const resolvedSubCatId = p.sub_category_id || p.sub_category?.id || p.product?.sub_category_id || p.product?.sub_category?.id || null;
+    const resolvedSubCatName = (typeof p.sub_category === "object" ? p.sub_category?.name : p.sub_category) || (typeof p.product?.sub_category === "object" ? p.product?.sub_category?.name : p.product?.sub_category) || "";
+    setSubCategoryId(resolvedSubCatId);
+    setSubCategoryName(resolvedSubCatName);
+    if (resolvedCatId) {
+      fetchSubCats(resolvedCatId);
+    }
+    const resolvedChildCatId = p.child_category_id || p.child_category?.id || p.product?.child_category_id || p.product?.child_category?.id || null;
+    const resolvedChildCatName = (typeof p.child_category === "object" ? p.child_category?.name : p.child_category) || (typeof p.product?.child_category === "object" ? p.product?.child_category?.name : p.product?.child_category) || "";
+    setChildCategoryId(resolvedChildCatId);
+    setChildCategoryName(resolvedChildCatName);
+    if (resolvedCatId && resolvedSubCatId) {
+      fetchChildCats(resolvedCatId, resolvedSubCatId);
+    }
     const resolvedPrice = p.price !== undefined && p.price !== null && p.price !== "" ? p.price : (firstSku?.price || "");
     setPrice(String(resolvedPrice));
 
@@ -359,6 +417,8 @@ const EditProduct = ({ route, navigation }) => {
       formData.append("stock_quantity", String(parseInt(stockQuantity, 10)));
       formData.append("min_stock_alert", String(parseInt(minStockAlert, 10) || 5));
       if (categoryId) formData.append("category_id", String(categoryId));
+      if (subCategoryId) formData.append("sub_category_id", String(subCategoryId));
+      if (childCategoryId) formData.append("child_category_id", String(childCategoryId));
       if (sku) formData.append("sku", sku.trim());
       if (weight) formData.append("weight", String(weight));
       if (shortDescription) formData.append("short_description", shortDescription.trim());
@@ -625,6 +685,97 @@ const EditProduct = ({ route, navigation }) => {
             </TouchableOpacity>
           </FormField>
 
+          {categoryId ? (
+            <FormField label="Sub Category" colors={colors}>
+              <TouchableOpacity
+                style={[styles.input, styles.selector, { borderColor: colors.borderMedium }]}
+                onPress={() => {
+                  if (subCategoriesList.length === 0 && !isLoadingSubCategories) {
+                    fetchSubCats(categoryId);
+                  }
+                  setShowSubCategoryModal(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.selectorText, { color: subCategoryName ? colors.textPrimary : colors.textMuted }]}>
+                  {subCategoryName ||
+                    (isLoadingSubCategories
+                      ? "Loading sub-categories..."
+                      : subCategoriesList.length === 0
+                      ? "No sub-categories available"
+                      : "Select sub-category")}
+                </Text>
+                {isLoadingSubCategories ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    {subCategoryId ? (
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          setSubCategoryId(null);
+                          setSubCategoryName("");
+                          setChildCategoryId(null);
+                          setChildCategoryName("");
+                          setChildCategoriesList([]);
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ marginRight: 6 }}
+                      >
+                        <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                      </TouchableOpacity>
+                    ) : null}
+                    <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            </FormField>
+          ) : null}
+
+          {subCategoryId ? (
+            <FormField label="Child Category" colors={colors}>
+              <TouchableOpacity
+                style={[styles.input, styles.selector, { borderColor: colors.borderMedium }]}
+                onPress={() => {
+                  if (childCategoriesList.length === 0 && !isLoadingChildCategories) {
+                    fetchChildCats(categoryId, subCategoryId);
+                  }
+                  setShowChildCategoryModal(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.selectorText, { color: childCategoryName ? colors.textPrimary : colors.textMuted }]}>
+                  {childCategoryName ||
+                    (isLoadingChildCategories
+                      ? "Loading child-categories..."
+                      : childCategoriesList.length === 0
+                      ? "No child-categories available"
+                      : "Select child-category")}
+                </Text>
+                {isLoadingChildCategories ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    {childCategoryId ? (
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          setChildCategoryId(null);
+                          setChildCategoryName("");
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ marginRight: 6 }}
+                      >
+                        <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                      </TouchableOpacity>
+                    ) : null}
+                    <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            </FormField>
+          ) : null}
+
           <FormField label="SKU" colors={colors}>
             <TextInput
               style={[styles.input, { color: colors.textPrimary, borderColor: colors.borderMedium }]}
@@ -815,6 +966,13 @@ const EditProduct = ({ route, navigation }) => {
                     setCategoryId(cat.id);
                     setCategoryName(cat.name);
                     setShowCategoryModal(false);
+                    setSubCategoryId(null);
+                    setSubCategoryName("");
+                    setSubCategoriesList([]);
+                    setChildCategoryId(null);
+                    setChildCategoryName("");
+                    setChildCategoriesList([]);
+                    fetchSubCats(cat.id);
                   }}
                   activeOpacity={0.8}
                 >
@@ -824,6 +982,144 @@ const EditProduct = ({ route, navigation }) => {
                   {categoryId === cat.id && <Ionicons name="checkmark" size={18} color={colors.primary} />}
                 </TouchableOpacity>
               ))}
+            </ScrollView>
+          </View>
+        </View>
+      )}
+
+      {/* Sub Category Modal */}
+      {showSubCategoryModal && (
+        <View style={[styles.modalOverlay, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBg }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Select Sub Category</Text>
+                {categoryName ? (
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                    For {categoryName}
+                  </Text>
+                ) : null}
+              </View>
+              <TouchableOpacity onPress={() => setShowSubCategoryModal(false)}>
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 360 }}>
+              {isLoadingSubCategories ? (
+                <View style={{ padding: 24, alignItems: "center" }}>
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                  <Text style={{ marginTop: 8, color: colors.textMuted, fontSize: 13 }}>
+                    Loading sub-categories...
+                  </Text>
+                </View>
+              ) : subCategoriesList.length === 0 ? (
+                <View style={{ padding: 24, alignItems: "center" }}>
+                  <Ionicons name="alert-circle-outline" size={28} color={colors.textMuted} />
+                  <Text style={{ marginTop: 8, color: colors.textMuted, fontSize: 13 }}>
+                    No sub-categories available
+                  </Text>
+                </View>
+              ) : (
+                subCategoriesList.map((subCat) => (
+                  <TouchableOpacity
+                    key={subCat.id}
+                    style={[
+                      styles.categoryRow,
+                      { borderBottomColor: colors.borderLight },
+                      subCategoryId === subCat.id && { backgroundColor: colors.primaryBgLight || "#EFF6FF" },
+                    ]}
+                    onPress={() => {
+                      setSubCategoryId(subCat.id);
+                      setSubCategoryName(subCat.name);
+                      setShowSubCategoryModal(false);
+                      setChildCategoryId(null);
+                      setChildCategoryName("");
+                      setChildCategoriesList([]);
+                      fetchChildCats(categoryId, subCat.id);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.categoryRowText, { color: subCategoryId === subCat.id ? colors.primary : colors.textPrimary }]}>
+                        {subCat.name}
+                      </Text>
+                      {subCat.count_child_category !== undefined && (
+                        <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                          {subCat.count_child_category} child {subCat.count_child_category === 1 ? "category" : "categories"}
+                        </Text>
+                      )}
+                    </View>
+                    {subCategoryId === subCat.id && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      )}
+
+      {/* Child Category Modal */}
+      {showChildCategoryModal && (
+        <View style={[styles.modalOverlay, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBg }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Select Child Category</Text>
+                {subCategoryName ? (
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                    For {subCategoryName}
+                  </Text>
+                ) : null}
+              </View>
+              <TouchableOpacity onPress={() => setShowChildCategoryModal(false)}>
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 360 }}>
+              {isLoadingChildCategories ? (
+                <View style={{ padding: 24, alignItems: "center" }}>
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                  <Text style={{ marginTop: 8, color: colors.textMuted, fontSize: 13 }}>
+                    Loading child-categories...
+                  </Text>
+                </View>
+              ) : childCategoriesList.length === 0 ? (
+                <View style={{ padding: 24, alignItems: "center" }}>
+                  <Ionicons name="alert-circle-outline" size={28} color={colors.textMuted} />
+                  <Text style={{ marginTop: 8, color: colors.textMuted, fontSize: 13 }}>
+                    No child-categories available
+                  </Text>
+                </View>
+              ) : (
+                childCategoriesList.map((childCat) => (
+                  <TouchableOpacity
+                    key={childCat.id}
+                    style={[
+                      styles.categoryRow,
+                      { borderBottomColor: colors.borderLight },
+                      childCategoryId === childCat.id && { backgroundColor: colors.primaryBgLight || "#EFF6FF" },
+                    ]}
+                    onPress={() => {
+                      setChildCategoryId(childCat.id);
+                      setChildCategoryName(childCat.name);
+                      setShowChildCategoryModal(false);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.categoryRowText, { color: childCategoryId === childCat.id ? colors.primary : colors.textPrimary }]}>
+                        {childCat.name}
+                      </Text>
+                      {childCat.count_product !== undefined && (
+                        <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                          {childCat.count_product} {childCat.count_product === 1 ? "product" : "products"}
+                        </Text>
+                      )}
+                    </View>
+                    {childCategoryId === childCat.id && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+                  </TouchableOpacity>
+                ))
+              )}
             </ScrollView>
           </View>
         </View>

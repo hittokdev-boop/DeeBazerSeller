@@ -77,12 +77,13 @@ export const getDeviceGPSLocation = () => {
       return;
     }
 
-    console.log("📍 [MapService] Requesting GPS coordinates via standard android location provider...");
+    console.log("📍 [MapService] Requesting high-accuracy GPS coordinates...");
 
+    // 1. Try high accuracy (GPS hardware) first
     Geolocation.getCurrentPosition(
       (position) => {
-        if (position?.coords) {
-          console.log("📍 [MapService] GPS fix acquired:", {
+        if (position?.coords?.latitude && position?.coords?.longitude) {
+          console.log("📍 [MapService] High-accuracy GPS fix acquired:", {
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
             accuracy: position.coords.accuracy,
@@ -93,15 +94,36 @@ export const getDeviceGPSLocation = () => {
             accuracy: position.coords.accuracy,
           });
         } else {
-          console.warn("⚠️ [MapService] Position returned empty coords");
           reject(new Error("No coordinates in GPS response."));
         }
       },
-      (error) => {
-        console.warn("⚠️ [MapService] Location fetch error:", error?.message || error);
-        reject(error);
+      (gpsError) => {
+        console.warn("⚠️ [MapService] High-accuracy GPS failed, trying standard provider:", gpsError?.message);
+        // 2. Fallback to standard network provider if high-accuracy times out
+        Geolocation.getCurrentPosition(
+          (position) => {
+            if (position?.coords?.latitude && position?.coords?.longitude) {
+              console.log("📍 [MapService] Standard location fix acquired:", {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+              });
+              resolve({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+              });
+            } else {
+              reject(gpsError);
+            }
+          },
+          (standardError) => {
+            console.warn("⚠️ [MapService] Standard location also failed:", standardError?.message);
+            reject(standardError);
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+        );
       },
-      { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
     );
   });
 };
@@ -144,10 +166,10 @@ export const reverseGeocodeGoogle = async (latitude, longitude) => {
 
       const streetParts = [premise, streetNumber, route, sublocality].filter(Boolean);
       let street = streetParts.join(", ");
-      if (!street || street.length < 5) {
+      if (!street || street.length < 10) {
         const parts = best.formatted_address.split(",");
         if (parts.length >= 3) {
-          street = parts.slice(0, 2).join(",").trim();
+          street = parts.slice(0, Math.max(1, parts.length - 2)).join(", ").trim();
         } else {
           street = best.formatted_address;
         }

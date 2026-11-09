@@ -1,32 +1,76 @@
 // ## 1. Seller Registration
 // Creates a new seller account and profile.
-
+//
 // **Endpoint:** `POST /api/seller/register`
-
-// **Request Format:** `multipart/form-data`
-
-// **Request Body Fields:**
-// - `name` (string, required): Full name of the seller
-// - `email` (string, required): Unique email address
-// - `mobile` (string, required): Unique mobile number
-// - `password` (string, required): Password (min 6 characters)
-// - `password_confirmation` (string, required): Must match password
-// - `store_name` (string, required): Name of the store
-// - `store_description` (string, optional): Short description of the store
-// - `logo` (file, optional): Logo image file
-// - `business_type` (string, required): individual, company, or partnership
-// - `gst_number` (string, optional): GST number
-// - `pan_number` (string, optional): PAN number
-// - `address` (string, required): Full street address
-// - `city` (string, required): City name
-// - `state` (string, required): State name
-// - `postal_code` (string, required): ZIP/PIN code
-// - `bank_account_number` (string, required): Bank account number
-// - `bank_ifsc_code` (string, required): IFSC code
-// - `bank_account_holder_name` (string, required): Account holder name
-// - `bank_name` (string, required): Bank name
-
-// **Response (201):**
+//
+// **Request Format:** `multipart/form-data` (with logo file) or `application/json` (without logo)
+//
+// **Laravel Validation Rules & Request Body Fields:**
+//
+// ### 1. User Account:
+// - `name` (string, required, max:255): Full name of the merchant/owner
+// - `email` (string, required, email, unique:sellers,email): Unique business email
+// - `mobile` (string, required, max:15, unique:sellers,phone): Contact phone number
+// - `password` (string, required, min:6, confirmed): Login password
+// - `password_confirmation` (string, required, min:6): Password confirmation matching password
+//
+// ### 2. Store Basics:
+// - `store_name` (string, required, max:255): Public name of the store
+// - `store_description` (string, nullable, max:1000): Description of goods and store bio
+// - `logo` (file, nullable, image, mimes:jpeg,png,jpg,webp, max:2048): Store logo or avatar image
+//
+// ### 3. Business Info:
+// - `business_type` (string, required, in:individual,company,partnership): Legal entity structure
+// - `gst_number` (string, nullable, max:15): GSTIN tax identifier
+// - `pan_number` (string, nullable, max:10): Business or personal PAN number
+//
+// ### 4. Address:
+// - `address` (string, required, min:10, max:500): Physical warehouse or pickup address
+// - `city` (string, required, max:100): City name
+// - `state` (string, required, max:100): State / Province
+// - `postal_code` (string, required, max:10): ZIP / PIN code
+// - `country` (string, nullable, max:100): Country name (e.g., "India")
+//
+// ### 5. Location (optional — enables delivery radius features):
+// - `latitude` (numeric, nullable, between:-90,90): GPS Latitude coordinate (e.g., 22.572645)
+// - `longitude` (numeric, nullable, between:-180,180): GPS Longitude coordinate (e.g., 88.363892)
+// - `delivery_radius_km` (integer, nullable, min:1, max:500): Maximum local delivery coverage in KM
+//
+// ### 6. Bank Details (required for payouts):
+// - `bank_account_number` (string, nullable, max:20): Bank account number for sales proceeds
+// - `bank_ifsc_code` (string, nullable, max:11): IFSC routing code
+// - `bank_account_holder_name` (string, nullable, max:255): Beneficiary account holder name
+// - `bank_name` (string, nullable, max:255): Name of the banking institution
+//
+// **Request Example (application/json):**
+// ```json
+// {
+//   "name": "Rajan Sharma",
+//   "email": "rajan@example.com",
+//   "mobile": "9876543210",
+//   "password": "Password123!",
+//   "password_confirmation": "Password123!",
+//   "store_name": "Rajan Electronics & Gadgets",
+//   "store_description": "Premier seller of mobile accessories and smart gadgets in Kolkata.",
+//   "business_type": "individual",
+//   "gst_number": "19AAAAA0000A1Z5",
+//   "pan_number": "ABCDE1234F",
+//   "address": "12/A Netaji Subhash Road, Garia",
+//   "city": "Kolkata",
+//   "state": "West Bengal",
+//   "postal_code": "700084",
+//   "country": "India",
+//   "latitude": 22.464102,
+//   "longitude": 88.388701,
+//   "delivery_radius_km": 25,
+//   "bank_account_number": "123456789012",
+//   "bank_ifsc_code": "SBIN0001234",
+//   "bank_account_holder_name": "Rajan Sharma",
+//   "bank_name": "State Bank of India"
+// }
+// ```
+//
+// **Response (201 Created):**
 // ```json
 // {
 //   "status": 201,
@@ -43,21 +87,27 @@
 //     },
 //     "seller": {
 //       "id": 15,
-//       "store_name": "Rajan's Electronics",
+//       "store_name": "Rajan Electronics & Gadgets",
+//       "business_type": "individual",
+//       "latitude": 22.464102,
+//       "longitude": 88.388701,
+//       "delivery_radius_km": 25,
 //       "status": "pending"
 //     }
 //   }
 // }
 // ```
-
+//
 // **Response (422 - Validation Error):**
 // ```json
 // {
 //   "status": 422,
-//   "message": "Validation failed",
+//   "message": "The given data was invalid.",
 //   "errors": {
 //     "email": ["The email has already been taken."],
-//     "mobile": ["The mobile has already been taken."]
+//     "mobile": ["The mobile has already been taken."],
+//     "address": ["The address must be at least 10 characters."],
+//     "password": ["The password confirmation does not match."]
 //   }
 // }
 // ```
@@ -97,44 +147,6 @@
 // }
 // ```
 
-// ## 3. Get Current Seller (Me)
-
-// ### `GET /api/seller/me`
-
-// Returns the authenticated user + seller profile. Useful on app launch to restore session.
-
-// **Headers:** `Authorization: Bearer {token}`
-
-// **Response** — `200`
-
-// ```json
-// {
-//   "status": 200,
-//   "data": {
-//     "user": {
-//       "id": 42,
-//       "name": "Rajan Sharma",
-//       "email": "rajan@example.com",
-//       "mobile": "9876543210",
-//       "role": "seller",
-//       "status": "active",
-//       "approval_status": "pending",
-//       "logo_url": "https://...",
-//       "last_login_at": "2026-08-06T09:30:00.000000Z"
-//     },
-//     "seller": {
-//       "id": 15,
-//       "store_name": "Rajan's Electronics",
-//       "store_slug": "rajans-electronics-42",
-//       "status": "approved",
-//       "wallet_balance": 1250.50,
-//       "total_earnings": 45000.00,
-//       "rating": 4.5,
-//       "total_ratings": 128
-//     }
-//   }
-// }
-// ```
 
 // ---
 
@@ -158,43 +170,18 @@
 
 // ---
 
-// ## 5. Update Account
 
-// ### `PUT /api/seller/account`
-
-// Updates the seller's login credentials (name, email, mobile, password). All fields are optional — only send what you want to change. To change password, `current_password` must also be provided.
-
-// **Headers:** `Authorization: Bearer {token}`
-// **Body:** `application/json`
-
-// | Field | Type | Required | Notes |
-// |---|---|---|---|
-// | `name` | string | :x: | |
-// | `email` | string | :x: | Must be unique |
-// | `mobile` | string | :x: | Must be unique |
-// | `current_password` | string | Required if changing password | |
-// | `password` | string | :x: | Min 6 chars |
-// | `password_confirmation` | string | Required if `password` sent | |
-
-// **Response** — `200`
-
-// ```json
-// {
-//   "status": 200,
-//   "message": "Account updated successfully.",
-//   "data": {
-//     "user": { "id": 42, "name": "Rajan Kumar", "email": "rajan@example.com", "..." }
-//   }
-// }
-// ```
-
-// ---
-
-// ## 6. Store Profile
+// ## 6. Store Profile & Bank Details
+//
+// > **IMPORTANT ARCHITECTURAL UPDATE:**
+// > The legacy endpoints `/api/seller/me`, `/api/seller/account`, and `/api/seller/bank-details` are **DISABLED** on the backend.
+// > All seller profile data, user contact details, store settings, and payout bank information are handled exclusively by:
+// > 1. **`GET /api/seller/profile`** — Retrieves full store, user, wallet, and bank details.
+// > 2. **`POST /api/seller/profile`** — Updates store basics, address, tax numbers, payout bank details, and logo/banner.
 
 // ### `GET /api/seller/profile`
 
-// Returns full store profile including policies, shipping settings and financial summary.
+// Returns full store profile including policies, shipping settings, bank details, and financial summary.
 
 // **Headers:** `Authorization: Bearer {token}`
 
@@ -202,70 +189,100 @@
 
 // ```json
 // {
-//   "status": 200,
-//   "data": {
-//     "id": 15,
-//     "store_name": "Rajan's Electronics",
-//     "store_slug": "rajans-electronics-42",
-//     "description": "Best electronics in town",
-//     "logo_url": "https://...",
-//     "banner_url": "https://...",
-//     "business_type": "individual",
-//     "tax_number": "22AAAAA0000A1Z5",
-//     "phone": "9876543210",
-//     "email": "rajan@example.com",
-//     "address": "123 MG Road",
-//     "city": "Bengaluru",
-//     "state": "Karnataka",
-//     "postal_code": "560001",
-//     "country": "India",
-//     "latitude": "12.9716000",
-//     "longitude": "77.5946000",
-//     "delivery_radius_km": 15,
-//     "is_location_enabled": true,
-//     "status": "approved",
-//     "is_verified": true,
-//     "is_featured": false,
-//     "commission_rate": 10.0,
-//     "wallet_balance": 1250.50,
-//     "pending_balance": 320.00,
-//     "total_earnings": 45000.00,
-//     "total_orders": 230,
-//     "rating": 4.5,
-//     "total_ratings": 128,
-//     "store_policies": {
-//       "return_policy": "7-day returns accepted",
-//       "shipping_policy": "Ships within 2 business days",
-//       "privacy_policy": null
-//     },
-//     "shipping_settings": {
-//       "free_shipping_above": 499,
-//       "standard_rate": 49,
-//       "express_rate": 99,
-//       "processing_days": 1,
-//       "ships_from": "Bengaluru"
-//     },
-//     "approved_at": "2026-07-01T12:00:00.000000Z",
-//     "created_at": "2026-06-15T08:00:00.000000Z"
-//   }
+//   "status": 200,
+//   "data": {
+//     "id": 6,
+//     "store_name": "Hittok",
+//     "store_slug": "hittok-",
+//     "description": "ABCDEFGH",
+//     "logo_url": "https://deebazar.com/admin/images/uploads/sellers/logos/logo.jpg",
+//     "banner_url": "https://deebazar.com/admin/assets/front_end/modern/img/product-placeholder.jpg",
+//     "business_type": "individual",
+//     "tax_number": "19AAACH7409R1ZZ",
+//     "phone": "6289833491",
+//     "email": "hittokdev@gmail.com",
+//     "address": "A-12/5, Sreenagar West, Srinagar, Panchpota, Garia",
+//     "city": "Kolkata",
+//     "state": "West Bengal",
+//     "postal_code": "700094",
+//     "country": "India",
+//     "latitude": "22.4690770",
+//     "longitude": "88.4054000",
+//     "delivery_radius_km": 10,
+//     "is_location_enabled": true,
+//     "bank_account_number": "123456789012",
+//     "bank_ifsc_code": "SBIN0001234",
+//     "bank_account_holder_name": "Hittok",
+//     "bank_name": "State Bank of India",
+//     "status": "approved",
+//     "is_verified": true,
+//     "is_featured": false,
+//     "commission_rate": 10,
+//     "wallet_balance": 0,
+//     "pending_balance": 0,
+//     "total_earnings": 0,
+//     "total_orders": 0,
+//     "rating": 0,
+//     "total_ratings": 0,
+//     "store_policies": null,
+//     "shipping_settings": null,
+//     "approved_at": null,
+//     "created_at": "2026-11-02T11:19:17.000000Z"
+//   }
 // }
 // ```
 
-// ### `PUT /api/seller/profile`
-
-// Update store details. **Requires approved status.**
-// Send as `multipart/form-data` if uploading logo/banner, otherwise `application/json`.
-
-// | Field | Type | Notes |
-// |---|---|---|
-// | `store_name` | string | Regenerates `store_slug` automatically |
-// | `store_description` / `description` | string | Either key accepted |
-// | `phone` | string | |
-// | `address`, `city`, `state`, `postal_code`, `country` | string | |
-// | `latitude`, `longitude` | numeric | Enables location-based features |
-// | `delivery_radius_km` | integer | 1–500 |
-// | `logo` | file | jpeg/png/jpg/webp, max 2MB |
-// | `banner` | file | jpeg/png/jpg/webp, max 4MB |
+// ### `POST /api/seller/profile`
+//
+// Update store details, address, business tax numbers, payout bank details, and logo/banner. **Requires approved status.**
+// Send as `multipart/form-data` with Bearer token authentication.
+//
+// **Headers:**
+// - `Authorization: Bearer {token}`
+// - `Accept: application/json`
+// - `Content-Type: multipart/form-data`
+//
+// | Field | Type | Validation / Rules | Notes |
+// |---|---|---|---|
+// | `store_name` | string | `required\|string\|max:255` | Regenerates `store_slug` automatically |
+// | `description` | string | `nullable\|string\|max:1000` | Store overview and details |
+// | `phone` | string | `required\|string\|max:15` | Contact phone / mobile number |
+// | `gst_number` | string | `nullable\|string\|max:15` | GST identification number |
+// | `pan_number` | string | `nullable\|string\|max:10` | PAN card number |
+// | `address` | string | `required\|string\|min:10\|max:500` | Full pickup and registered address |
+// | `city` | string | `required\|string\|max:100` | City name |
+// | `state` | string | `required\|string\|max:100` | State name |
+// | `postal_code` | string | `required\|string\|max:10` | 6-10 digit PIN code |
+// | `country` | string | `nullable\|string\|max:100` | Country (default: "India") |
+// | `delivery_radius_km` | integer | `nullable\|integer\|min:1\|max:500` | Serviceable coverage radius in KM |
+// | `bank_account_number` | string | `nullable\|string\|max:20` | Bank account number for earnings payout |
+// | `bank_ifsc_code` | string | `nullable\|string\|max:11` | Bank IFSC branch code |
+// | `bank_account_holder_name` | string | `nullable\|string\|max:255` | Beneficiary name in bank records |
+// | `bank_name` | string | `nullable\|string\|max:255` | Bank institution name |
+// | `logo` | file | `nullable\|image\|mimes:jpeg,png,jpg,webp\|max:2048` | Store logo / avatar image file |
+// | `banner` | file | `nullable\|image\|mimes:jpeg,png,jpg,webp\|max:4096` | Store banner background image file |
+//
+// **Example Body (multipart/form-data):**
+//
+// ```text
+// store_name: Hittok
+// description: ABCDEFGH
+// phone: 6289833491
+// gst_number: 19KIVPS1234gvZ3
+// pan_number: KIVPS1234g
+// address: A-12/5, Sreenagar West, Srinagar, Panchpota, Garia
+// city: Kolkata
+// state: West Bengal
+// postal_code: 700094
+// country: India
+// delivery_radius_km: 10
+// bank_account_number: 123456789012
+// bank_ifsc_code: SBIN0001234
+// bank_account_holder_name: Hittok
+// bank_name: State Bank of India
+// logo: [image_file.jpg]
+// banner: [banner_file.jpg]
+// ```
 
 // **Response** — `200`
 //
@@ -319,45 +336,83 @@
 //
 // ---
 
-// ## 7. Bank Details
-
-// ### `GET /api/seller/bank-details`
-
-// Returns saved bank details. The account number is **masked** (last 4 digits visible).
-
-// **Response** — `200`
-
+// ## 7. Payout Bank Details (Dedicated Endpoint)
+//
+// Sellers can view and update their payout bank account details via `/api/seller/bank-details`.
+//
+// ### 7.1 `GET /api/seller/bank-details`
+//
+// **Headers:**
+// - `Authorization: Bearer <token>`
+// - `Accept: application/json`
+//
+// **Response (200):**
 // ```json
 // {
-//   "status": 200,
-//   "data": {
-//     "account_number": "**********3456",
-//     "ifsc_code": "SBIN0001234",
-//     "account_holder_name": "Rajan Sharma",
-//     "bank_name": "State Bank of India",
-//     "branch_name": "MG Road Branch",
-//     "upi_id": "rajan@upi"
-//   }
+//   "status": 200,
+//   "data": {
+//     "account_number": "********9012",
+//     "ifsc_code": "SBIN0001234",
+//     "account_holder_name": "Hittok Owner",
+//     "bank_name": "State Bank of India",
+//     "branch_name": "Kolkata Main",
+//     "upi_id": "hittok@oksbi"
+//   }
 // }
 // ```
-
-// ### `PUT /api/seller/bank-details`
-
-// | Field | Type | Required |
-// |---|---|---|
-// | `account_number` | string | :white_check_mark: |
-// | `ifsc_code` | string | :white_check_mark: |
-// | `account_holder_name` | string | :white_check_mark: |
-// | `bank_name` | string | :white_check_mark: |
-// | `branch_name` | string | :x: |
-// | `upi_id` | string | :x: |
-
-// **Response** — `200`
-
+//
+// ---
+//
+// ### 7.2 `POST /api/seller/bank-details`
+//
+// Add or update payout bank account and UPI details.
+//
+// **Headers:**
+// - `Authorization: Bearer <token>`
+// - `Accept: application/json`
+// - `Content-Type: application/json`
+//
+// **Validation Rules:**
+// | Field | Type | Rule | Description |
+// |---|---|---|---|
+// | `account_number` | string | `required|string|max:20` | Bank account number (9 to 20 digits or masked) |
+// | `ifsc_code` | string | `required|string|max:11` | Bank IFSC routing code (e.g. `SBIN0001234`) |
+// | `account_holder_name` | string | `required|string|max:255` | Beneficiary account holder name |
+// | `bank_name` | string | `required|string|max:255` | Banking institution name |
+// | `branch_name` | string | `nullable|string|max:255` | Branch name / location |
+// | `upi_id` | string | `nullable|string|max:100` | Optional UPI VPA (e.g. `seller@upi`) |
+//
+// **Request Body (JSON):**
 // ```json
 // {
-//   "status": 200,
-//   "message": "Bank details updated successfully."
+//   "account_number": "123456789012",
+//   "ifsc_code": "SBIN0001234",
+//   "account_holder_name": "Hittok Owner",
+//   "bank_name": "State Bank of India",
+//   "branch_name": "Kolkata Main Branch",
+//   "upi_id": "hittok@oksbi"
+// }
+// ```
+//
+// **Success Response (200):**
+// ```json
+// {
+//   "status": 200,
+//   "message": "Bank details updated successfully."
+// }
+// ```
+//
+// **Validation Error Response (422):**
+// ```json
+// {
+//   "status": 422,
+//   "message": "Validation failed",
+//   "errors": {
+//     "account_number": ["The account number field is required."],
+//     "ifsc_code": ["The ifsc code must not be greater than 11 characters."],
+//     "account_holder_name": ["The account holder name field is required."],
+//     "bank_name": ["The bank name field is required."]
+//   }
 // }
 // ```
 
@@ -379,6 +434,9 @@
 //   "message": "Store policies updated successfully."
 // }
 // ```
+//
+// **Official Return Policy Link:**
+// `https://deebazar.com/admin/seller/return-policy`
 
 // ---
 
@@ -734,6 +792,77 @@
 //
 // ---
 //
+// ## 13.2. Sub Categories by Category
+//
+// Fetch sub-categories based on selected primary category.
+//
+// **Endpoint:** `POST {{base_url}}api/sub-category`
+// **Method:** `POST`
+// **Request Format:** `multipart/form-data`
+// **Headers:**
+// - `Accept: application/json`
+// - `Authorization: Bearer {token}` (Optional)
+//
+// **Body:**
+// - `category_id`: 1
+//
+// **Response** — `200`
+// ```json
+// {
+//     "status": 200,
+//     "message": "Sub Category List",
+//     "data": [
+//         {
+//             "id": 1,
+//             "name": "Torch",
+//             "category_id": 1,
+//             "category_name": "Electronics",
+//             "image": "https://deebazar.com/images/uploads/categories/default-category.png",
+//             "count_child_category": 1
+//         }
+//     ]
+// }
+// ```
+//
+// ---
+//
+// ## 13.3. Child Categories by Category & Subcategory
+//
+// Fetch child-categories based on selected category and sub-category.
+//
+// **Endpoint:** `POST {{base_url}}api/child-category`
+// **Method:** `POST`
+// **Request Format:** `multipart/form-data`
+// **Headers:**
+// - `Accept: application/json`
+// - `Authorization: Bearer {token}` (Optional)
+//
+// **Body:**
+// - `category_id`: 1
+// - `sub_category_id`: 1
+//
+// **Response** — `200`
+// ```json
+// {
+//     "status": 200,
+//     "message": "Child Category List",
+//     "data": [
+//         {
+//             "id": 1,
+//             "name": "mini torch",
+//             "image": "https://deebazar.com/admin/images/uploads/childcategories/436617338_clips.png",
+//             "category_name": "Electronics",
+//             "sub_category_name": "Torch",
+//             "category_id": 1,
+//             "sub_category_id": 1,
+//             "count_product": 0
+//         }
+//     ]
+// }
+// ```
+//
+// ---
+//
 // ## 14. Products — Create
 // Product add by seller :
 // {{base_url}}api/seller/products
@@ -745,6 +874,8 @@
 // short_description:Updated short description text
 // description:Updated full description goes here
 // category_id:1
+// sub_category_id:1
+// child_category_id:1
 // tags[]:cotton, mes
 // image : file
 // gallery[] : files
@@ -1567,13 +1698,11 @@
 // |---|---|---|---|
 // | POST | `/api/seller/register` | No | No |
 // | POST | `/api/seller/login` | No | No |
-// | GET | `/api/seller/me` | Yes | No |
 // | POST | `/api/seller/logout` | Yes | No |
-// | PUT | `/api/seller/account` | Yes | No |
-// | GET | `/api/seller/profile` | Yes | No |
-// | PUT | `/api/seller/profile` | Yes | **Yes** |
-// | GET | `/api/seller/bank-details` | Yes | **Yes** |
-// | PUT | `/api/seller/bank-details` | Yes | **Yes** |
+// | GET | `/api/seller/profile` | Yes | No (Returns full profile & bank details) |
+// | POST | `/api/seller/profile` | Yes | **Yes** (Updates profile, address & bank details) |
+// | GET | `/api/seller/bank-details` | Yes | **Yes** (Fetch payout bank details) |
+// | POST | `/api/seller/bank-details` | Yes | **Yes** (Update payout bank & UPI details) |
 // | PUT | `/api/seller/store-policies` | Yes | **Yes** |
 // | PUT | `/api/seller/shipping-settings` | Yes | **Yes** |
 // | GET | `/api/seller/wallet` | Yes | No |
